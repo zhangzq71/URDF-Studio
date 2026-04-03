@@ -8,7 +8,6 @@ import { useResponsivePanelLayout } from '../hooks/useResponsivePanelLayout';
 
 interface URDFViewerPanelsProps {
   lang: Language;
-  mode: 'detail' | 'hardware';
   controller: URDFViewerController;
   onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
   showToolbar?: boolean;
@@ -21,7 +20,6 @@ interface URDFViewerPanelsProps {
 
 export const URDFViewerPanels = ({
   lang,
-  mode,
   controller,
   onUpdate,
   showToolbar = true,
@@ -32,14 +30,15 @@ export const URDFViewerPanels = ({
   setShowJointPanel,
 }: URDFViewerPanelsProps) => {
   const t = translations[lang];
-  const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
-    containerRef: controller.containerRef,
-    optionsPanelRef: controller.optionsPanelRef,
-    jointPanelRef: controller.jointPanelRef,
-    showOptionsPanel,
-    showJointPanel,
-    showToolbar,
-  });
+  const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } =
+    useResponsivePanelLayout({
+      containerRef: controller.containerRef,
+      optionsPanelRef: controller.optionsPanelRef,
+      jointPanelRef: controller.jointPanelRef,
+      showOptionsPanel,
+      showJointPanel,
+      showToolbar,
+    });
 
   return (
     <>
@@ -49,18 +48,16 @@ export const URDFViewerPanels = ({
         optionsPanelPos={controller.optionsPanelPos}
         defaultPosition={optionsDefaultPosition}
         onMouseDown={(event) => controller.handleMouseDown('options', event)}
-        mode={mode}
         t={t}
         isOptionsCollapsed={controller.isOptionsCollapsed}
         toggleOptionsCollapsed={controller.toggleOptionsCollapsed}
         setShowOptionsPanel={setShowOptionsPanel}
-        lang={lang}
-        highlightMode={controller.highlightMode}
-        setHighlightMode={controller.setHighlightMode}
         showVisual={controller.showVisual}
         setShowVisual={controller.setShowVisual}
         showCollision={controller.showCollision}
         setShowCollision={controller.setShowCollision}
+        showCollisionAlwaysOnTop={controller.showCollisionAlwaysOnTop}
+        setShowCollisionAlwaysOnTop={controller.setShowCollisionAlwaysOnTop}
         modelOpacity={controller.modelOpacity}
         setModelOpacity={controller.setModelOpacity}
         showOrigins={controller.showOrigins}
@@ -86,6 +83,9 @@ export const URDFViewerPanels = ({
         showInertiaOverlay={controller.showInertiaOverlay}
         setShowInertiaOverlay={controller.setShowInertiaOverlay}
         onAutoFitGround={controller.handleAutoFitGround}
+        groundPlaneOffset={controller.groundPlaneOffset}
+        groundPlaneOffsetReadOnly={controller.groundPlaneOffsetReadOnly}
+        setGroundPlaneOffset={controller.setGroundPlaneOffset}
       />
 
       <JointsPanel
@@ -118,6 +118,7 @@ export const URDFViewerPanels = ({
           setMode={controller.handleToolModeChange}
           onClose={setShowToolbar ? () => setShowToolbar(false) : undefined}
           lang={lang}
+          containerRef={controller.containerRef}
         />
       )}
 

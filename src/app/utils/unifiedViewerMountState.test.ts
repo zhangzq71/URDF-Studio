@@ -4,59 +4,106 @@ import test from 'node:test';
 import {
   createInitialUnifiedViewerMountState,
   resolveUnifiedViewerMountState,
+  resolveUnifiedViewerSessionState,
 } from './unifiedViewerMountState.ts';
 
-test('starts with only the visualizer mounted in skeleton mode', () => {
+test('starts with only the viewer mounted when appMode is `editor`', () => {
   assert.deepEqual(
     createInitialUnifiedViewerMountState({
-      mode: 'skeleton',
+      mode: 'editor',
       isPreviewing: false,
     }),
     {
-      viewerMounted: false,
-      visualizerMounted: true,
+      viewerMounted: true,
+      visualizerMounted: false,
     },
   );
 });
 
-test('keeps the viewer mounted after visiting detail mode and switching back to skeleton', () => {
+test('keeps the viewer mounted across repeated editor sessions', () => {
   const initialState = createInitialUnifiedViewerMountState({
-    mode: 'skeleton',
+    mode: 'editor',
     isPreviewing: false,
   });
-  const detailState = resolveUnifiedViewerMountState(initialState, {
-    mode: 'detail',
-    isPreviewing: false,
-  });
-  const backToSkeleton = resolveUnifiedViewerMountState(detailState, {
-    mode: 'skeleton',
+  const nextState = resolveUnifiedViewerMountState(initialState, {
+    mode: 'editor',
     isPreviewing: false,
   });
 
-  assert.deepEqual(detailState, {
+  assert.deepEqual(nextState, {
     viewerMounted: true,
-    visualizerMounted: true,
-  });
-  assert.deepEqual(backToSkeleton, {
-    viewerMounted: true,
-    visualizerMounted: true,
+    visualizerMounted: false,
   });
 });
 
 test('treats standalone file preview as a viewer session for keep-alive purposes', () => {
   const initialState = createInitialUnifiedViewerMountState({
-    mode: 'skeleton',
+    mode: 'editor',
     isPreviewing: false,
   });
 
   assert.deepEqual(
     resolveUnifiedViewerMountState(initialState, {
-      mode: 'skeleton',
+      mode: 'editor',
       isPreviewing: true,
     }),
     {
       viewerMounted: true,
-      visualizerMounted: true,
+      visualizerMounted: false,
+    },
+  );
+});
+
+test('treats a forced viewer session as viewer mode while appMode stays `editor`', () => {
+  assert.deepEqual(
+    resolveUnifiedViewerSessionState({
+      mode: 'editor',
+      forceViewerSession: true,
+    }),
+    {
+      activePreview: undefined,
+      isPreviewing: false,
+      isViewerMode: true,
+      viewerSceneMode: 'editor',
+    },
+  );
+});
+
+test('keeps the viewer mounted when an editor session forces the viewer open', () => {
+  const initialState = createInitialUnifiedViewerMountState({
+    mode: 'editor',
+    isPreviewing: false,
+  });
+
+  assert.deepEqual(
+    resolveUnifiedViewerMountState(initialState, {
+      mode: 'editor',
+      isPreviewing: false,
+      forceViewerSession: true,
+    }),
+    {
+      viewerMounted: true,
+      visualizerMounted: false,
+    },
+  );
+});
+
+test('keeps file preview active while appMode is `editor`', () => {
+  const preview = {
+    urdfContent: '<robot name="preview" />',
+    fileName: 'preview/demo.urdf',
+  };
+
+  assert.deepEqual(
+    resolveUnifiedViewerSessionState({
+      mode: 'editor',
+      filePreview: preview,
+    }),
+    {
+      activePreview: preview,
+      isPreviewing: true,
+      isViewerMode: true,
+      viewerSceneMode: 'editor',
     },
   );
 });

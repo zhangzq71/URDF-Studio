@@ -1,10 +1,12 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { translations } from '@/shared/i18n';
 import { useEffectiveTheme, useResolvedTheme } from '@/shared/hooks';
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 import type { URDFViewerProps } from '../types';
 import { useURDFViewerController } from '../hooks/useURDFViewerController';
+import { buildURDFViewerSceneProps } from '../utils/viewerSceneProps';
+import { resolveDefaultViewerToolMode } from '../utils/scopedToolMode';
 import { URDFViewerCanvas } from './URDFViewerCanvas';
 import { URDFViewerPanels } from './URDFViewerPanels';
 import { URDFViewerScene } from './URDFViewerScene';
@@ -22,7 +24,7 @@ export const URDFViewer = memo(function URDFViewer({
   jointMotionState,
   lang,
   theme,
-  mode = 'detail',
+  mode = 'editor',
   onSelect,
   onMeshSelect,
   onHover,
@@ -50,12 +52,24 @@ export const URDFViewer = memo(function URDFViewer({
 }: URDFViewerProps) {
   const t = translations[lang];
   const storeGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
-  const storeHoveredSelection = useSelectionStore((state) => state.hoveredSelection);
+  const setStoreGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
+  const shouldSubscribeToStoreHoveredSelection =
+    hoveredSelection === undefined && sourceFile?.format === 'usd' && !isMeshPreview;
+  const storeHoveredSelection = useSelectionStore(
+    useCallback(
+      (state) => (shouldSubscribeToStoreHoveredSelection ? state.hoveredSelection : undefined),
+      [shouldSubscribeToStoreHoveredSelection],
+    ),
+  );
   const groundPlaneOffset = propGroundPlaneOffset ?? storeGroundPlaneOffset;
   const resolvedHoveredSelection = hoveredSelection ?? storeHoveredSelection;
   const inheritedTheme = useEffectiveTheme();
   const explicitTheme = useResolvedTheme(theme ?? 'system');
   const resolvedTheme = theme ? explicitTheme : inheritedTheme;
+  const defaultToolMode = resolveDefaultViewerToolMode(sourceFile?.format);
+  const toolModeScopeKey = sourceFile
+    ? `${sourceFile.format}:${sourceFile.name}`
+    : (sourceFilePath ? `inline:${sourceFilePath}` : 'inline:urdf-viewer');
   const controller = useURDFViewerController({
     onJointChange,
     syncJointChangesToApp,
@@ -70,8 +84,35 @@ export const URDFViewer = memo(function URDFViewer({
     setShowVisual,
     onTransformPendingChange,
     groundPlaneOffset,
+    setGroundPlaneOffset: setStoreGroundPlaneOffset,
+    groundPlaneOffsetReadOnly: propGroundPlaneOffset !== undefined,
+    defaultToolMode,
+    toolModeScopeKey,
   });
   const hoverSelectionEnabled = resolvedHoveredSelection !== undefined;
+  const sceneProps = buildURDFViewerSceneProps({
+    controller,
+    sourceFile,
+    availableFiles,
+    urdfContent,
+    assets,
+    onRobotDataResolved,
+    onDocumentLoadEvent,
+    sourceFilePath,
+    groundPlaneOffset,
+    mode,
+    selection,
+    hoveredSelection: resolvedHoveredSelection,
+    hoverSelectionEnabled,
+    onHover,
+    onMeshSelect,
+    robotLinks,
+    robotJoints,
+    focusTarget,
+    onCollisionTransformPreview,
+    onCollisionTransform,
+    isMeshPreview,
+  });
 
   return (
     <div
@@ -82,7 +123,6 @@ export const URDFViewer = memo(function URDFViewer({
     >
       <URDFViewerPanels
         lang={lang}
-        mode={mode}
         controller={controller}
         onUpdate={onUpdate}
         showToolbar={showToolbar}
@@ -109,31 +149,7 @@ export const URDFViewer = memo(function URDFViewer({
         onPointerMissed={controller.handlePointerMissed}
         contextLostMessage={t.webglContextRestoring}
       >
-        <URDFViewerScene
-          controller={controller}
-          sourceFile={sourceFile}
-          availableFiles={availableFiles}
-          urdfContent={urdfContent}
-          assets={assets}
-          onRobotDataResolved={onRobotDataResolved}
-          onDocumentLoadEvent={onDocumentLoadEvent}
-          sourceFilePath={sourceFilePath}
-          groundPlaneOffset={groundPlaneOffset}
-          mode={mode}
-          selection={selection}
-          hoveredSelection={resolvedHoveredSelection}
-          hoverSelectionEnabled={hoverSelectionEnabled}
-          onHover={onHover}
-          onMeshSelect={onMeshSelect}
-          robotLinks={robotLinks}
-          robotJoints={robotJoints}
-          focusTarget={focusTarget}
-          toolMode={controller.toolMode}
-          onCollisionTransformPreview={onCollisionTransformPreview}
-          onCollisionTransform={onCollisionTransform}
-          isMeshPreview={isMeshPreview}
-          t={t}
-        />
+        <URDFViewerScene {...sceneProps} t={t} />
       </URDFViewerCanvas>
     </div>
   );

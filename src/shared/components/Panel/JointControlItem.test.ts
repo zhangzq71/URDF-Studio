@@ -118,6 +118,31 @@ test('clicking elsewhere in the joint card exits the upper limit edit mode', asy
   dom.window.close();
 });
 
+test('joint card prefers the authored joint name for display when the internal key differs', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root, {
+    name: 'joint_1743499999999',
+    joint: {
+      id: 'joint_1743499999999',
+      name: 'joint_1',
+      jointType: 'revolute',
+      limit: { lower: -1.57, upper: 3.49, effort: 1, velocity: 1 },
+    },
+  });
+
+  const nameLabel = Array.from(container.querySelectorAll('span')).find(
+    (node) => node.textContent === 'joint_1',
+  );
+  assert.ok(nameLabel, 'joint card should display the authored joint name');
+  assert.equal(nameLabel.getAttribute('title'), 'joint_1');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
 test('the main joint value editor uses the compact width and font sizing', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -262,6 +287,92 @@ test('joint slider keeps a visible track shell around the native range input', a
   assert.ok(sliderThumb, 'joint slider should render the thumb');
   assert.match(sliderFill.getAttribute('style') ?? '', /width:/);
   assert.match(sliderThumb.getAttribute('style') ?? '', /left:/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('joint slider thumb surfaces a visible hover state when the pointer nears the handle', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root);
+
+  const sliderShell = container.querySelector('[data-testid="joint-slider-shell"]') as HTMLDivElement | null;
+  const sliderThumb = container.querySelector('[data-testid="joint-slider-thumb"]') as HTMLDivElement | null;
+  const rangeInput = container.querySelector('input[type="range"]') as HTMLInputElement | null;
+
+  assert.ok(sliderShell, 'joint slider shell should render');
+  assert.ok(sliderThumb, 'joint slider thumb should render');
+  assert.ok(rangeInput, 'joint slider input should render');
+
+  Object.defineProperty(sliderShell, 'getBoundingClientRect', {
+    value: () => ({
+      bottom: 24,
+      height: 20,
+      left: 0,
+      right: 100,
+      toJSON: () => ({}),
+      top: 4,
+      width: 100,
+      x: 0,
+      y: 4,
+    }),
+    configurable: true,
+  });
+
+  const sliderMin = Number.parseFloat(rangeInput.min);
+  const sliderMax = Number.parseFloat(rangeInput.max);
+  const sliderValue = Number.parseFloat(rangeInput.value);
+  const sliderPercentage = ((sliderValue - sliderMin) / (sliderMax - sliderMin)) * 100;
+
+  await act(async () => {
+    sliderShell.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: sliderPercentage,
+      clientY: 14,
+    }));
+  });
+
+  assert.equal(sliderThumb.getAttribute('data-hovered'), 'true');
+
+  await act(async () => {
+    sliderShell.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: 90,
+      clientY: 14,
+    }));
+  });
+
+  assert.equal(sliderThumb.getAttribute('data-hovered'), 'false');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('joint card hover stays local to the panel item', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderJointControlItem(root);
+
+  const jointCard = container.querySelector('[data-panel-hovered]') as HTMLDivElement | null;
+  assert.ok(jointCard, 'joint card should render a local hover marker');
+  assert.equal(jointCard.getAttribute('data-panel-hovered'), 'false');
+
+  await act(async () => {
+    jointCard.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  });
+
+  assert.equal(jointCard.getAttribute('data-panel-hovered'), 'true');
+
+  await act(async () => {
+    jointCard.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+  });
+
+  assert.equal(jointCard.getAttribute('data-panel-hovered'), 'false');
 
   await act(async () => {
     root.unmount();

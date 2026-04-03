@@ -5,8 +5,8 @@
  */
 import React from 'react';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { JointType, type RobotState, type AppMode, type UrdfLink, type MotorSpec, type Theme } from '@/types';
-import { getChildJointsByParentLink, getParentJointByChildLink, resolveJointKey, resolveLinkKey } from '@/core/robot';
+import type { RobotState, AppMode, UrdfLink, MotorSpec, Theme } from '@/types';
+import { resolveJointKey, resolveLinkKey } from '@/core/robot';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/store';
 import { useResizablePanel } from '../hooks/useResizablePanel';
@@ -21,7 +21,11 @@ export interface PropertyEditorProps {
   robot: RobotState;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
   onSelect?: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
-  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
+  onHover?: (
+    type: 'link' | 'joint' | null,
+    id: string | null,
+    subType?: 'visual' | 'collision',
+  ) => void;
   mode: AppMode;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
@@ -49,7 +53,9 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   const { selection } = robot;
   const isLink = selection.type === 'link';
   const resolvedSelectionId = selection.id
-    ? (isLink ? resolveLinkKey(robot.links, selection.id) : resolveJointKey(robot.joints, selection.id))
+    ? isLink
+      ? resolveLinkKey(robot.links, selection.id)
+      : resolveJointKey(robot.joints, selection.id)
     : null;
   const resolvedRobot = React.useMemo<RobotState>(() => {
     if (!resolvedSelectionId) return robot;
@@ -61,32 +67,11 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       },
     };
   }, [resolvedSelectionId, robot]);
-  const resolvedHardwareJoint = React.useMemo(() => {
-    if (mode !== 'hardware' || !isLink || !resolvedSelectionId) {
-      return null;
-    }
-
-    const childJoints = getChildJointsByParentLink(resolvedRobot).get(resolvedSelectionId) ?? [];
-    const parentJoint = getParentJointByChildLink(resolvedRobot).get(resolvedSelectionId) ?? null;
-
-    return (
-      childJoints.find((joint) => joint.type !== JointType.FIXED)
-      ?? childJoints[0]
-      ?? (parentJoint?.type !== JointType.FIXED ? parentJoint : null)
-      ?? parentJoint
-      ?? null
-    );
-  }, [isLink, mode, resolvedRobot, resolvedSelectionId]);
-  const effectiveIsLink = !(mode === 'hardware' && isLink && resolvedHardwareJoint);
-  const effectiveSelectionId = resolvedHardwareJoint?.id ?? resolvedSelectionId;
-  const data = effectiveSelectionId
-    ? (effectiveIsLink ? resolvedRobot.links[effectiveSelectionId] : resolvedRobot.joints[effectiveSelectionId])
+  const data = resolvedSelectionId
+    ? isLink
+      ? resolvedRobot.links[resolvedSelectionId]
+      : resolvedRobot.joints[resolvedSelectionId]
     : null;
-  const effectiveSelection = React.useMemo(() => (
-    resolvedHardwareJoint
-      ? { type: 'joint' as const, id: resolvedHardwareJoint.id }
-      : resolvedRobot.selection
-  ), [resolvedHardwareJoint, resolvedRobot.selection]);
   const t = translations[lang];
 
   const { displayWidth, isDragging, handleResizeMouseDown } = useResizablePanel(collapsed);
@@ -104,32 +89,44 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     >
       {/* Side Toggle Button (Centered & Protruding Left) */}
       <button
-          onClick={(e) => { e.stopPropagation(); onToggle?.(); }}
-          className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-panel-bg hover:bg-system-blue-solid hover:text-white border border-border-strong rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-text-tertiary transition-all group"
-          title={collapsed ? t.properties : t.collapseSidebar}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggle?.();
+        }}
+        className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-16 bg-panel-bg hover:bg-system-blue-solid hover:text-white border border-border-strong rounded-l-lg shadow-md flex flex-col items-center justify-center z-50 cursor-pointer text-text-tertiary transition-all group"
+        title={collapsed ? t.properties : t.collapseSidebar}
       >
-          <div className="flex flex-col gap-0.5 items-center">
-            <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
-            {collapsed ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
-          </div>
+        <div className="flex flex-col gap-0.5 items-center">
+          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
+          {collapsed ? (
+            <ChevronLeft className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+          <div className="w-1 h-1 rounded-full bg-text-tertiary/40 group-hover:bg-white/80" />
+        </div>
       </button>
 
       {/* Content Container - use visibility to prevent flash but allow smooth transition */}
       <div className="h-full w-full flex flex-col overflow-hidden">
-        <div style={{ width: `${displayWidth}px` }} className="h-full flex flex-col bg-element-bg dark:bg-panel-bg transition-all duration-200 ease-out">
+        <div
+          style={{ width: `${displayWidth}px` }}
+          className="h-full flex flex-col bg-element-bg dark:bg-panel-bg transition-all duration-200 ease-out"
+        >
           {/* Header */}
           <div className="w-full flex items-center justify-between px-2 py-1 border-b border-border-black bg-panel-bg shrink-0 relative z-30">
             <span className={PROPERTY_EDITOR_PANEL_EYEBROW_CLASS}>{t.properties}</span>
             {isReadOnlyPreview && (
-              <span className="ml-1.5 rounded-md border border-system-blue/20 bg-system-blue/10 px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] text-system-blue">
+              <span className="ui-static-copy-guard ml-1.5 rounded-md border border-system-blue/20 bg-system-blue/10 px-1.5 py-px text-[9px] font-semibold tracking-[0.02em] text-system-blue">
                 {t.preview}
               </span>
             )}
             {data && (
               <div className="ml-1.5 flex min-w-0 flex-1 items-center gap-1.5">
-                <span className={`rounded-md px-1.5 py-px text-[9px] font-bold uppercase tracking-[0.1em] shrink-0 ${effectiveIsLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}>
-                  {effectiveSelection.type}
+                <span
+                  className={`ui-static-copy-guard rounded-md px-1.5 py-px text-[9px] font-semibold capitalize tracking-[0.02em] shrink-0 ${isLink ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue' : 'bg-orange-100 dark:bg-orange-900/25 text-orange-700 dark:text-orange-300'}`}
+                >
+                  {resolvedRobot.selection.type}
                 </span>
                 <h2 className={`${PROPERTY_EDITOR_PANEL_TITLE_CLASS} truncate`}>{data.name}</h2>
               </div>
@@ -139,11 +136,13 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
           {/* Content */}
           {!data || isReadOnlyPreview ? (
             <div className="w-full flex-1 flex items-center justify-center p-8 text-text-tertiary text-center">
-              <p className="text-[11px] leading-5">{readOnlyMessage ?? t.selectLinkOrJoint}</p>
+              <p className="ui-static-copy-guard text-[11px] leading-5">
+                {readOnlyMessage ?? t.selectLinkOrJoint}
+              </p>
             </div>
           ) : (
             <div className="w-full flex-1 overflow-y-auto custom-scrollbar p-1 space-y-1.5">
-              {effectiveIsLink ? (
+              {isLink ? (
                 <LinkProperties
                   data={data as UrdfLink}
                   robot={resolvedRobot}
@@ -160,7 +159,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 <JointProperties
                   data={data}
                   mode={mode}
-                  selection={effectiveSelection}
+                  selection={resolvedRobot.selection}
                   onUpdate={onUpdate}
                   motorLibrary={motorLibrary}
                   t={t}
@@ -175,8 +174,8 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
       {/* Resize Handle - only show when expanded */}
       {!collapsed && (
         <div
-            className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue/40 transition-colors z-40"
-            onMouseDown={handleResizeMouseDown}
+          className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-system-blue/40 transition-colors z-40"
+          onMouseDown={handleResizeMouseDown}
         />
       )}
     </div>

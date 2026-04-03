@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { TranslationKeys } from '@/shared/i18n';
+import { isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { RenameRobotFolderResult } from '@/store/assetsStore';
 import type { AssemblyState, RobotData, RobotFile } from '@/types';
 
@@ -14,7 +15,11 @@ interface UseLibraryFileActionsParams {
   removeRobotFile: (path: string) => void;
   removeRobotFolder: (path: string) => void;
   renameRobotFolder: (path: string, nextName: string) => RenameRobotFolderResult;
-  renameComponentSourceFolder: (fromPath: string, toPath: string, options?: { skipHistory?: boolean; label?: string }) => void;
+  renameComponentSourceFolder: (
+    fromPath: string,
+    toPath: string,
+    options?: { skipHistory?: boolean; label?: string },
+  ) => void;
   clearRobotLibrary: () => void;
   resetRobot: (data: { name: string } & EmptyRobotState) => void;
   clearSelection: () => void;
@@ -42,9 +47,12 @@ export function useLibraryFileActions({
   showToast,
   t,
 }: UseLibraryFileActionsParams) {
-  const handleUploadAsset = useCallback((file: File) => {
-    uploadAsset(file);
-  }, [uploadAsset]);
+  const handleUploadAsset = useCallback(
+    (file: File) => {
+      uploadAsset(file);
+    },
+    [uploadAsset],
+  );
 
   const clearLoadedModel = useCallback(() => {
     resetRobot({
@@ -61,110 +69,105 @@ export function useLibraryFileActions({
     return path === normalized || path.startsWith(`${normalized}/`);
   }, []);
 
-  const handleDeleteLibraryFile = useCallback((file: RobotFile) => {
-    const isCurrentModel = selectedFile?.name === file.name;
-    const relatedComponentIds = assemblyState
-      ? Object.values(assemblyState.components)
-          .filter((component) => component.sourceFile === file.name)
-          .map((component) => component.id)
-      : [];
+  const handleDeleteLibraryFile = useCallback(
+    (file: RobotFile) => {
+      const isCurrentModel = selectedFile?.name === file.name;
+      const relatedComponentIds = assemblyState
+        ? Object.values(assemblyState.components)
+            .filter((component) => component.sourceFile === file.name)
+            .map((component) => component.id)
+        : [];
 
-    removeRobotFile(file.name);
-    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
-    if (isCurrentModel) {
-      clearLoadedModel();
-    }
+      removeRobotFile(file.name);
+      relatedComponentIds.forEach((componentId) => removeComponent(componentId));
+      if (isCurrentModel) {
+        clearLoadedModel();
+      }
 
-    const fileLabel = file.name.split('/').pop() ?? file.name;
-    showToast(
-      t.removedFromAssetLibrary.replace('{name}', fileLabel),
-      'success',
-    );
-  }, [
-    assemblyState,
-    clearLoadedModel,
-    removeComponent,
-    removeRobotFile,
-    selectedFile?.name,
-    showToast,
-    t,
-  ]);
+      const fileLabel = file.name.split('/').pop() ?? file.name;
+      showToast(t.removedFromAssetLibrary.replace('{name}', fileLabel), 'success');
+    },
+    [
+      assemblyState,
+      clearLoadedModel,
+      removeComponent,
+      removeRobotFile,
+      selectedFile?.name,
+      showToast,
+      t,
+    ],
+  );
 
-  const handleDeleteLibraryFolder = useCallback((folderPath: string) => {
-    const normalizedFolder = folderPath.replace(/\/+$/, '');
-    if (!normalizedFolder) return;
+  const handleDeleteLibraryFolder = useCallback(
+    (folderPath: string) => {
+      const normalizedFolder = folderPath.replace(/\/+$/, '');
+      if (!normalizedFolder) return;
 
-    const isCurrentModel = selectedFile?.name
-      ? isPathInFolder(selectedFile.name, normalizedFolder)
-      : false;
-    const relatedComponentIds = assemblyState
-      ? Object.values(assemblyState.components)
-          .filter((component) => isPathInFolder(component.sourceFile, normalizedFolder))
-          .map((component) => component.id)
-      : [];
+      const isCurrentModel = selectedFile?.name
+        ? isPathInFolder(selectedFile.name, normalizedFolder)
+        : false;
+      const relatedComponentIds = assemblyState
+        ? Object.values(assemblyState.components)
+            .filter((component) => isPathInFolder(component.sourceFile, normalizedFolder))
+            .map((component) => component.id)
+        : [];
 
-    removeRobotFolder(normalizedFolder);
-    relatedComponentIds.forEach((componentId) => removeComponent(componentId));
-    if (isCurrentModel) {
-      clearLoadedModel();
-    }
+      removeRobotFolder(normalizedFolder);
+      relatedComponentIds.forEach((componentId) => removeComponent(componentId));
+      if (isCurrentModel) {
+        clearLoadedModel();
+      }
 
-    showToast(
-      t.removedFolder.replace('{path}', normalizedFolder),
-      'success',
-    );
-  }, [
-    assemblyState,
-    clearLoadedModel,
-    isPathInFolder,
-    removeComponent,
-    removeRobotFolder,
-    selectedFile?.name,
-    showToast,
-    t,
-  ]);
+      showToast(t.removedFolder.replace('{path}', normalizedFolder), 'success');
+    },
+    [
+      assemblyState,
+      clearLoadedModel,
+      isPathInFolder,
+      removeComponent,
+      removeRobotFolder,
+      selectedFile?.name,
+      showToast,
+      t,
+    ],
+  );
 
-  const handleRenameLibraryFolder = useCallback((folderPath: string, nextName: string) => {
-    const result = renameRobotFolder(folderPath, nextName);
-    if (!result.ok) {
-      if (result.reason === 'conflict') {
-        const normalizedFolder = folderPath.replace(/\/+$/, '');
-        const sanitizedName = nextName.trim().replace(/[\\/]+/g, '');
-        const parentPath = normalizedFolder.includes('/')
-          ? normalizedFolder.split('/').slice(0, -1).join('/')
-          : '';
-        const targetPath = sanitizedName
-          ? (parentPath ? `${parentPath}/${sanitizedName}` : sanitizedName)
-          : normalizedFolder;
-        showToast(
-          t.assetLibraryRenameConflict.replace('{path}', targetPath),
-          'info',
-        );
+  const handleRenameLibraryFolder = useCallback(
+    (folderPath: string, nextName: string) => {
+      const result = renameRobotFolder(folderPath, nextName);
+      if (result.ok === false) {
+        if (result.reason === 'conflict') {
+          const normalizedFolder = folderPath.replace(/\/+$/, '');
+          const sanitizedName = nextName.trim().replace(/[\\/]+/g, '');
+          const parentPath = normalizedFolder.includes('/')
+            ? normalizedFolder.split('/').slice(0, -1).join('/')
+            : '';
+          const targetPath = sanitizedName
+            ? parentPath
+              ? `${parentPath}/${sanitizedName}`
+              : sanitizedName
+            : normalizedFolder;
+          showToast(t.assetLibraryRenameConflict.replace('{path}', targetPath), 'info');
+          return result;
+        }
+
+        showToast(t.assetLibraryRenameInvalid, 'info');
         return result;
       }
 
-      showToast(t.assetLibraryRenameInvalid, 'info');
+      const normalizedFolder = folderPath.replace(/\/+$/, '');
+      if (normalizedFolder !== result.nextPath) {
+        renameComponentSourceFolder(normalizedFolder, result.nextPath, { skipHistory: true });
+        showToast(
+          t.renamedFolder.replace('{from}', normalizedFolder).replace('{to}', result.nextPath),
+          'success',
+        );
+      }
+
       return result;
-    }
-
-    const normalizedFolder = folderPath.replace(/\/+$/, '');
-    if (normalizedFolder !== result.nextPath) {
-      renameComponentSourceFolder(normalizedFolder, result.nextPath, { skipHistory: true });
-      showToast(
-        t.renamedFolder
-          .replace('{from}', normalizedFolder)
-          .replace('{to}', result.nextPath),
-        'success',
-      );
-    }
-
-    return result;
-  }, [
-    renameComponentSourceFolder,
-    renameRobotFolder,
-    showToast,
-    t,
-  ]);
+    },
+    [renameComponentSourceFolder, renameRobotFolder, showToast, t],
+  );
 
   const handleDeleteAllLibraryFiles = useCallback(() => {
     if (availableFiles.length === 0) return;
@@ -202,14 +205,17 @@ export function useLibraryFileActions({
     t,
   ]);
 
-  const handleExportLibraryFile = useCallback((file: RobotFile) => {
-    if (file.format !== 'urdf' && file.format !== 'mjcf' && file.format !== 'xacro' && file.format !== 'sdf') {
-      showToast(t.onlyUrdfMjcfExport, 'info');
-      return;
-    }
+  const handleExportLibraryFile = useCallback(
+    (file: RobotFile) => {
+      if (!isLibraryRobotExportableFormat(file.format)) {
+        showToast(t.onlyUrdfMjcfExport, 'info');
+        return;
+      }
 
-    openLibraryExportDialog(file);
-  }, [openLibraryExportDialog, showToast, t]);
+      openLibraryExportDialog(file);
+    },
+    [openLibraryExportDialog, showToast, t],
+  );
 
   return {
     handleUploadAsset,

@@ -3,15 +3,10 @@ import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
 import type { JointPatchCandidate } from './robotLoaderDiff';
 import { applyOriginToJoint } from './robotLoaderPatchUtils';
 
-export function patchJointInPlace(
-  robotModel: THREE.Object3D,
+function applyJointPatch(
+  joint: RuntimeURDFJoint,
   patch: JointPatchCandidate,
-  invalidate: () => void,
-): boolean {
-  const joints = (robotModel as any).joints as Record<string, RuntimeURDFJoint> | undefined;
-  const joint = joints?.[patch.jointName];
-  if (!joint) return false;
-
+): void {
   const currentValues = Array.isArray(joint.jointValue) ? [...joint.jointValue] : [];
 
   joint.jointType = patch.jointData.type as RuntimeURDFJoint['jointType'];
@@ -78,8 +73,40 @@ export function patchJointInPlace(
     default:
       break;
   }
+}
+
+export function patchJointsInPlace(
+  robotModel: THREE.Object3D,
+  patches: JointPatchCandidate[],
+  invalidate: () => void,
+): boolean {
+  if (patches.length === 0) {
+    return false;
+  }
+
+  const joints = (robotModel as any).joints as Record<string, RuntimeURDFJoint> | undefined;
+  if (!joints) {
+    return false;
+  }
+
+  const runtimeJoints = patches.map((patch) => joints[patch.jointName]);
+  if (runtimeJoints.some((joint) => !joint)) {
+    return false;
+  }
+
+  patches.forEach((patch, index) => {
+    applyJointPatch(runtimeJoints[index]!, patch);
+  });
 
   robotModel.updateMatrixWorld(true);
   invalidate();
   return true;
+}
+
+export function patchJointInPlace(
+  robotModel: THREE.Object3D,
+  patch: JointPatchCandidate,
+  invalidate: () => void,
+): boolean {
+  return patchJointsInPlace(robotModel, [patch], invalidate);
 }

@@ -2,7 +2,9 @@ import { Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { InspectionReport, MotorSpec, RobotState } from '@/types'
 import type { Language, TranslationKeys } from '@/shared/i18n'
+import { buildInspectionEvidenceSummary } from '@/shared/utils/inspectionEvidenceSummary'
 import { generateRobotFromPrompt } from '../services/aiService'
+import { buildInspectionRobotContext } from '../utils/buildInspectionRobotContext'
 
 interface ReportChatOverlayProps {
   isOpen: boolean
@@ -49,10 +51,17 @@ export function ReportChatOverlay({
     setIsChatGenerating(true)
 
     try {
+      const inspectionRobotContext = buildInspectionRobotContext(robot)
+      const evidenceSummary = buildInspectionEvidenceSummary(robot.inspectionContext, lang)
+      const evidenceText = evidenceSummary
+        ? evidenceSummary.metrics.map(metric => `- ${metric.label}: ${metric.value}`).join('\n')
+        : lang === 'zh'
+          ? '- 无额外源格式证据'
+          : '- No additional source-format evidence'
       const contextPrompt =
         lang === 'zh'
-          ? `当前机器人结构：\n${JSON.stringify(robot, null, 2)}\n\n检测报告摘要：\n${inspectionReport.summary}\n\n检测报告中的问题列表：\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\n用户问题：${userMessage}`
-          : `Current robot structure:\n${JSON.stringify(robot, null, 2)}\n\nInspection report summary:\n${inspectionReport.summary}\n\nIssues:\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\nUser question: ${userMessage}`
+          ? `当前检查上下文：\n${JSON.stringify(inspectionRobotContext, null, 2)}\n\n源格式证据：\n${evidenceText}\n\n检测报告摘要：\n${inspectionReport.summary}\n\n检测报告中的问题列表：\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\n用户问题：${userMessage}`
+          : `Current inspection context:\n${JSON.stringify(inspectionRobotContext, null, 2)}\n\nSource-format evidence:\n${evidenceText}\n\nInspection report summary:\n${inspectionReport.summary}\n\nIssues:\n${inspectionReport.issues.map(i => `- ${i.title} (${i.type}): ${i.description}`).join('\n')}\n\nUser question: ${userMessage}`
 
       const response = await generateRobotFromPrompt(contextPrompt, robot, motorLibrary, lang)
       const assistantMessage = response?.explanation || t.reportChatNoReply

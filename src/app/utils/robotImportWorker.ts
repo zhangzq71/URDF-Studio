@@ -4,7 +4,7 @@ import type {
 } from '@/core/parsers/importRobotFile';
 import type { RobotFile } from '@/types';
 import type { ParseEditableRobotSourceOptions } from './parseEditableRobotSource';
-import type { RobotState } from '@/types';
+import type { AssemblyTransform, RenderableBounds, RobotData, RobotState } from '@/types';
 
 export interface RobotImportWorkerContextSnapshot {
   availableFiles?: RobotFile[];
@@ -33,6 +33,36 @@ export interface ParseEditableRobotSourceWorkerRequest {
   contextId?: string;
 }
 
+export interface AssemblyPlacementWorkerComponent {
+  renderableBounds?: RenderableBounds | null;
+  transform?: AssemblyTransform | null;
+  robotData?: RobotData | null;
+}
+
+export interface PrepareAssemblyComponentWorkerOptions extends ResolveRobotFileDataOptions {
+  existingPlacementComponents?: AssemblyPlacementWorkerComponent[];
+}
+
+export interface PrepareAssemblyComponentWorkerRequest {
+  type: 'prepare-assembly-component';
+  requestId: number;
+  file: RobotFile;
+  options: PrepareAssemblyComponentWorkerOptions;
+  componentId: string;
+  rootName: string;
+  contextId?: string;
+}
+
+export interface PreparedAssemblyComponentResult {
+  componentId: string;
+  displayName: string;
+  robotData: RobotData;
+  renderableBounds?: RenderableBounds | null;
+  suggestedTransform?: AssemblyTransform;
+  resolvedUrdfContent: string | null;
+  resolvedUrdfSourceFilePath: string | null;
+}
+
 export interface ResolveRobotImportWorkerResponse {
   type: 'resolve-robot-file-result' | 'resolve-robot-file-error';
   requestId: number;
@@ -47,11 +77,20 @@ export interface ParseEditableRobotSourceWorkerResponse {
   error?: string;
 }
 
+export interface PrepareAssemblyComponentWorkerResponse {
+  type: 'prepare-assembly-component-result' | 'prepare-assembly-component-error';
+  requestId: number;
+  result?: PreparedAssemblyComponentResult;
+  error?: string;
+}
+
 export type RobotImportWorkerRequest =
   | SyncRobotImportWorkerContextRequest
   | ResolveRobotImportWorkerRequest
-  | ParseEditableRobotSourceWorkerRequest;
+  | ParseEditableRobotSourceWorkerRequest
+  | PrepareAssemblyComponentWorkerRequest;
 
 export type RobotImportWorkerResponse =
   | ResolveRobotImportWorkerResponse
-  | ParseEditableRobotSourceWorkerResponse;
+  | ParseEditableRobotSourceWorkerResponse
+  | PrepareAssemblyComponentWorkerResponse;

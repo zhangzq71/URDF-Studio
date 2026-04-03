@@ -93,6 +93,10 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(urdfContent, 'text/xml');
+    const parserError = doc.querySelector('parsererror');
+    if (parserError) {
+      throw new Error(parserError.textContent?.trim() || 'Invalid URDF XML (parsererror)');
+    }
 
     // First pass: collect global materials (defined at robot level)
     const robotMaterials = doc.querySelectorAll('robot > material');
@@ -150,7 +154,15 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
     });
 
   } catch (error) {
-    // Silently handle parse errors
+    const context = {
+      contentLength: urdfContent.length,
+      hasRobotTag: urdfContent.includes('<robot'),
+    };
+    console.error('[URDFMaterials] Failed to parse URDF material definitions.', context, error);
+    throw new Error(
+      `[URDFMaterials] Failed to parse URDF material definitions (length=${context.contentLength}, hasRobotTag=${context.hasRobotTag}).`,
+      { cause: error },
+    );
   }
 
   return namedMaterials;

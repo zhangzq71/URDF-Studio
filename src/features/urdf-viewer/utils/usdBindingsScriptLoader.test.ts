@@ -67,3 +67,79 @@ test('deduplicates concurrent USD bindings script loads for the same document an
   injectedScript.dispatchEvent(new dom.window.Event('load'));
   await Promise.all([firstPromise, secondPromise]);
 });
+
+test('loads USD bindings in a worker-like environment without document access', async () => {
+  resetClassicScriptLoaderForTests();
+
+  const previousDocument = globalThis.document;
+  const previousFetch = globalThis.fetch;
+  const previousLocation = globalThis.location;
+
+  delete (globalThis as { document?: Document }).document;
+  Object.defineProperty(globalThis, 'location', {
+    value: new URL('http://localhost:3000/viewer/'),
+    configurable: true,
+    writable: true,
+  });
+
+  let fetchCount = 0;
+  (globalThis as typeof globalThis & {
+    __usdWorkerBindingsLoadedCount?: number;
+  }).__usdWorkerBindingsLoadedCount = 0;
+
+  Object.defineProperty(globalThis, 'fetch', {
+    value: async () => {
+      fetchCount += 1;
+      return {
+        ok: true,
+        text: async () => [
+          'globalThis.__usdWorkerBindingsLoadedCount = (globalThis.__usdWorkerBindingsLoadedCount || 0) + 1;',
+          'globalThis.USD_WASM_MODULE = () => Promise.resolve({});',
+        ].join('\n'),
+      } satisfies Pick<Response, 'ok' | 'text'>;
+    },
+    configurable: true,
+    writable: true,
+  });
+
+  try {
+    const firstPromise = ensureClassicScriptLoaded('/usd/bindings/emHdBindings.js?v=20260318a');
+    const secondPromise = ensureClassicScriptLoaded('/usd/bindings/emHdBindings.js?v=20260318a');
+
+    assert.strictEqual(firstPromise, secondPromise);
+    await Promise.all([firstPromise, secondPromise]);
+
+    assert.equal(fetchCount, 1);
+    assert.equal(globalThis.__usdWorkerBindingsLoadedCount, 1);
+    assert.equal(typeof (globalThis as { USD_WASM_MODULE?: unknown }).USD_WASM_MODULE, 'function');
+  } finally {
+    delete (globalThis as { __usdWorkerBindingsLoadedCount?: number }).__usdWorkerBindingsLoadedCount;
+    delete (globalThis as { USD_WASM_MODULE?: unknown }).USD_WASM_MODULE;
+
+    if (previousDocument === undefined) {
+      delete (globalThis as { document?: Document }).document;
+    } else {
+      Object.defineProperty(globalThis, 'document', {
+        value: previousDocument,
+        configurable: true,
+        writable: true,
+      });
+    }
+
+    if (previousFetch === undefined) {
+      delete (globalThis as { fetch?: typeof fetch }).fetch;
+    } else {
+      Object.defineProperty(globalThis, 'fetch', {
+        value: previousFetch,
+        configurable: true,
+        writable: true,
+      });
+    }
+
+    Object.defineProperty(globalThis, 'location', {
+      value: previousLocation,
+      configurable: true,
+      writable: true,
+    });
+  }
+});

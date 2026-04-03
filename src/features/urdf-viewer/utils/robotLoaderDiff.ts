@@ -223,6 +223,14 @@ export function detectSingleJointPatch(
   prevJoints: Record<string, UrdfJoint> | null,
   nextJoints: Record<string, UrdfJoint> | undefined,
 ): JointPatchCandidate | null {
+  const patches = detectJointPatches(prevJoints, nextJoints);
+  return patches?.length === 1 ? patches[0] : null;
+}
+
+export function detectJointPatches(
+  prevJoints: Record<string, UrdfJoint> | null,
+  nextJoints: Record<string, UrdfJoint> | undefined,
+): JointPatchCandidate[] | null {
   if (!prevJoints || !nextJoints) return null;
 
   const prevIds = Object.keys(prevJoints);
@@ -243,8 +251,7 @@ export function detectSingleJointPatch(
     }
 
     candidates.push(patch);
-    if (candidates.length > 1) return null;
   }
 
-  return candidates.length === 1 ? candidates[0] : null;
+  return candidates;
 }

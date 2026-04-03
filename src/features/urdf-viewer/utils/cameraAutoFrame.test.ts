@@ -10,7 +10,7 @@ test('auto-frames when the current model scope has not been framed yet', () => {
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: null,
       focusTarget: null,
-      mode: 'detail',
+      mode: 'editor',
     }),
     true,
   );
@@ -23,7 +23,7 @@ test('does not auto-frame again after the same model scope was already framed on
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: 'robots/example.urdf',
       focusTarget: null,
-      mode: 'detail',
+      mode: 'editor',
     }),
     false,
   );
@@ -36,22 +36,22 @@ test('skips auto-frame when a specific focus target is active', () => {
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: null,
       focusTarget: 'arm_link',
-      mode: 'detail',
+      mode: 'editor',
     }),
     false,
   );
 });
 
-test('skips auto-frame in hardware mode', () => {
+test('keeps auto-frame enabled in editor mode when no focus target is active', () => {
   assert.equal(
     shouldAutoFrameRobotChange({
       autoFrameOnRobotChange: true,
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: null,
       focusTarget: null,
-      mode: 'hardware',
+      mode: 'editor',
     }),
-    false,
+    true,
   );
 });
 
@@ -62,7 +62,7 @@ test('skips auto-frame when the viewer layer is inactive', () => {
       currentScopeKey: 'robots/example.urdf',
       lastAutoFramedScopeKey: null,
       focusTarget: null,
-      mode: 'detail',
+      mode: 'editor',
       active: false,
     }),
     false,

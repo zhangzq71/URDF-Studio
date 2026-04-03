@@ -8,6 +8,7 @@ import {
   ScanSearch,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
+import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
 
 interface ToolboxMenuProps {
   t: TranslationKeys;
@@ -96,6 +97,10 @@ export function ToolboxMenu({
   onOpenCollisionOptimizer,
 }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
+  const effectiveTheme = useEffectiveTheme();
+  const motrixLogoSrc = effectiveTheme === 'dark'
+    ? '/logos/motrix-logo-white.svg'
+    : '/logos/motrix-logo.svg';
 
   const openExternal = React.useCallback((url: string) => {
     onClose();
@@ -152,6 +157,15 @@ export function ToolboxMenu({
       tone: 'neutral',
     },
     {
+      key: 'motrix',
+      title: t.motrix,
+      description: t.motrixDesc,
+      icon: <img src={motrixLogoSrc} alt="" className="h-5 w-5 object-contain" />,
+      onClick: () => openExternal('https://motrix.motphys.com/'),
+      external: true,
+      tone: 'logo',
+    },
+    {
       key: 'trajectory-editing',
       title: t.trajectoryEditing,
       description: t.trajectoryEditingDesc,
@@ -192,7 +206,7 @@ export function ToolboxMenu({
           ))}
         </div>
         <div className="mt-1.5 min-h-8 border-t border-border-black/70 px-1 pt-1.5">
-          <div className="text-[10px] leading-4 text-text-tertiary transition-all duration-75">
+          <div className="ui-static-copy-guard text-[10px] leading-4 text-text-tertiary transition-all duration-75">
             {hoveredItem ? hoveredItem.description : t.toolboxHoverHint}
           </div>
         </div>

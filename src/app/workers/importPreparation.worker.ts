@@ -5,7 +5,6 @@ import {
   type PrepareImportWorkerRequest,
   type PrepareImportWorkerResponse,
 } from '@/app/utils/importPreparation';
-import { serializePreparedImportPayloadForWorker } from '@/app/utils/importPreparationTransfer';
 import { ensureWorkerXmlDomApis } from './ensureWorkerXmlDomApis';
 
 const workerScope = globalThis as unknown as DedicatedWorkerGlobalScope;
@@ -21,14 +20,14 @@ workerScope.addEventListener('message', async (event: MessageEvent<PrepareImport
     const payload = await prepareImportPayload({
       files: message.files,
       existingPaths: message.existingPaths,
+      preResolvePreferredImport: message.preResolvePreferredImport,
     });
-    const serialized = await serializePreparedImportPayloadForWorker(payload);
     const response: PrepareImportWorkerResponse = {
       type: 'prepare-import-result',
       requestId: message.requestId,
-      payload: serialized.payload,
+      payload,
     };
-    workerScope.postMessage(response, serialized.transferables);
+    workerScope.postMessage(response);
   } catch (error) {
     const response: PrepareImportWorkerResponse = {
       type: 'prepare-import-error',

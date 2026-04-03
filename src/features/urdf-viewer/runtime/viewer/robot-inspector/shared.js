@@ -1,3 +1,5 @@
+import { disposeUsdStageHandle } from "../usd-stage-handle.js";
+
 export const robotMetadataCacheByStagePath = new Map();
 export const maxRobotMetadataCacheEntries = 8;
 export function toFiniteNumber(value) {
@@ -415,12 +417,17 @@ async function collectLayerTextsForRobotMetadata(rootStage, rootStagePath) {
             const openedStage = await safeOpenUsdStage(usdModule, resolvedPath);
             if (!openedStage)
                 continue;
-            const layerText = safeExportRootLayerText(openedStage);
-            if (!layerText)
-                continue;
-            output.push({ stagePath: resolvedPath, layerText });
-            if (current.depth + 1 < 2 && visited.size < maxOpenedStages) {
-                queue.push({ stagePath: resolvedPath, layerText, depth: current.depth + 1 });
+            try {
+                const layerText = safeExportRootLayerText(openedStage);
+                if (!layerText)
+                    continue;
+                output.push({ stagePath: resolvedPath, layerText });
+                if (current.depth + 1 < 2 && visited.size < maxOpenedStages) {
+                    queue.push({ stagePath: resolvedPath, layerText, depth: current.depth + 1 });
+                }
+            }
+            finally {
+                disposeUsdStageHandle(usdModule, openedStage);
             }
         }
     }

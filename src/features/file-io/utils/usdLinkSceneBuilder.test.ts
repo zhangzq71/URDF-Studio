@@ -13,7 +13,10 @@ if (typeof globalThis.ProgressEvent === 'undefined') {
     total: number;
     lengthComputable: boolean;
 
-    constructor(type: string, init: { loaded?: number; total?: number; lengthComputable?: boolean } = {}) {
+    constructor(
+      type: string,
+      init: { loaded?: number; total?: number; lengthComputable?: boolean } = {},
+    ) {
       super(type);
       this.loaded = init.loaded ?? 0;
       this.total = init.total ?? 0;
@@ -40,6 +43,7 @@ const createTwoLinkRobot = (): RobotState => {
         axis: { x: 0, y: 0, z: 1 },
         angle: 0,
         limit: { lower: -Math.PI / 2, upper: Math.PI / 3, effort: 12, velocity: 4 },
+        dynamics: { damping: 0, friction: 0 },
         hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
       },
     },
@@ -54,12 +58,14 @@ const createTwoLinkRobot = (): RobotState => {
           color: '#4f46e5',
           origin: { xyz: { x: 0.25, y: 0.5, z: 0.75 }, rpy: { r: 0, p: 0, y: 0 } },
         },
-        visualBodies: [{
-          type: GeometryType.SPHERE,
-          dimensions: { x: 0.15, y: 0, z: 0 },
-          color: '#f97316',
-          origin: { xyz: { x: -0.25, y: 0, z: 0.1 }, rpy: { r: 0, p: 0, y: 0 } },
-        }],
+        visualBodies: [
+          {
+            type: GeometryType.SPHERE,
+            dimensions: { x: 0.15, y: 0, z: 0 },
+            color: '#f97316',
+            origin: { xyz: { x: -0.25, y: 0, z: 0.1 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ],
         collision: {
           type: GeometryType.BOX,
           dimensions: { x: 0.5, y: 0.3, z: 0.2 },
@@ -100,7 +106,8 @@ test('buildUsdLinkSceneRoot builds visual and collision scopes with joint-author
   const robot = createTwoLinkRobot();
   const visitedLinks: string[] = [];
   const { registry } = createUsdAssetRegistry({
-    'textures/base_color.png': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==',
+    'textures/base_color.png':
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==',
   });
 
   const root = await buildUsdLinkSceneRoot({
@@ -131,7 +138,11 @@ test('buildUsdLinkSceneRoot builds visual and collision scopes with joint-author
   const childLink = root.getObjectByName('link1');
   assert.ok(childLink instanceof THREE.Group);
   assert.deepEqual(childLink.position.toArray(), [1, 2, 3]);
-  assert.ok(childLink.quaternion.angleTo(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'ZYX'))) < 1e-6);
+  assert.ok(
+    childLink.quaternion.angleTo(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2, 'ZYX')),
+    ) < 1e-6,
+  );
 
   const childCollisionMesh = childLink.getObjectByName('collision_0');
   assert.ok(childCollisionMesh instanceof THREE.Object3D);

@@ -7,6 +7,7 @@ import { isMJCF } from '@/core/parsers/mjcf';
 import { isSDF } from '@/core/parsers/sdf/sdfParser';
 import { isUSDA } from '@/core/parsers/usd';
 import { isXacro } from '@/core/parsers/xacro';
+import { isMotorLibraryDataFilePath } from '@/shared/data/motorLibrary';
 import type { FileFormat } from '../types';
 
 /**
@@ -89,8 +90,7 @@ export function isAssetFile(filename: string): boolean {
  * Check if path is a motor library file
  */
 export function isMotorLibraryFile(path: string): boolean {
-  const lowerPath = path.toLowerCase();
-  return lowerPath.includes('motor library') && lowerPath.endsWith('.txt');
+  return isMotorLibraryDataFilePath(path);
 }
 
 /**

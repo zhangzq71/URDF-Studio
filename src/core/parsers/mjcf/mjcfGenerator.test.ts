@@ -259,6 +259,7 @@ test('generated MJCF carries USD snapshot material PBR fields into material asse
     });
 
     assert.match(generated, /<material name="base_link_mat"[^>]*texture="base_link_tex"/);
+    assert.match(generated, /specular="0"/);
     assert.match(generated, /shininess="0\.75"/);
     assert.match(generated, /reflectance="0\.6"/);
     assert.match(generated, /emission="0\.2"/);
@@ -316,6 +317,7 @@ test('generated MJCF skips emission when USD snapshot material disables emissive
     });
 
     assert.match(generated, /<material name="base_link_mat"/);
+    assert.match(generated, /specular="0"/);
     assert.match(generated, /shininess="0\.6"/);
     assert.doesNotMatch(generated, /emission="/);
 });
@@ -367,6 +369,143 @@ test('generated MJCF keeps the root body at the world origin', () => {
     assert.deepEqual(baseLinkBody.pos, [0, 0, 0]);
     assert.doesNotMatch(generated, /<light /);
     assert.doesNotMatch(generated, /type="plane"/);
+});
+
+test('generated MJCF exports plane geoms as first-class plane types', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'plane-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.PLANE,
+                    dimensions: { x: 6, y: 4, z: 0 },
+                    color: '#808080',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {},
+    };
+
+    const generated = generateMujocoXML(robot, { includeSceneHelpers: false });
+    assert.match(generated, /type="plane" size="3 2 0\.1"/);
+});
+
+test('generated MJCF exports signed distance field geoms without collapsing them into mesh types', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'sdf-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.SDF,
+                    dimensions: { x: 1, y: 1, z: 1 },
+                    color: '#808080',
+                    meshPath: 'assets/distance_field.obj',
+                    assetRef: 'distance_field_source',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {},
+    };
+
+    const generated = generateMujocoXML(robot, { includeSceneHelpers: false, meshdir: 'meshes/' });
+    assert.match(generated, /<mesh name="assets_distance_field" file="assets\/distance_field\.obj"\s*\/>/);
+    assert.match(generated, /type="sdf" mesh="assets_distance_field"/);
+    assert.doesNotMatch(generated, /type="mesh" mesh="assets_distance_field"/);
+});
+
+test('generated MJCF exports hfield geoms with dedicated asset definitions', () => {
+    installDomParser();
+
+    const robot: RobotState = {
+        name: 'hfield-export',
+        rootLinkId: 'base_link',
+        selection: { type: null, id: null },
+        links: {
+            base_link: {
+                id: 'base_link',
+                name: 'base_link',
+                visible: true,
+                visual: {
+                    type: GeometryType.HFIELD,
+                    dimensions: { x: 4, y: 6, z: 0.5 },
+                    color: '#808080',
+                    assetRef: 'terrain_patch',
+                    mjcfHfield: {
+                        name: 'terrain_patch',
+                        file: 'terrain.png',
+                        contentType: 'image/png',
+                        size: {
+                            radiusX: 2,
+                            radiusY: 3,
+                            elevationZ: 0.4,
+                            baseZ: 0.1,
+                        },
+                    },
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collision: {
+                    type: GeometryType.NONE,
+                    dimensions: { x: 0, y: 0, z: 0 },
+                    color: '#ff0000',
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                },
+                collisionBodies: [],
+                inertial: {
+                    mass: 1,
+                    origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+                    inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+                },
+            },
+        },
+        joints: {},
+        materials: {},
+    };
+
+    const generated = generateMujocoXML(robot, { includeSceneHelpers: false, meshdir: 'meshes/' });
+    assert.match(generated, /<hfield name="terrain_patch" file="terrain\.png" content_type="image\/png" size="2 3 0\.4 0\.1" \/>/);
+    assert.match(generated, /type="hfield" hfield="terrain_patch"/);
 });
 
 test('generated MJCF exports floating root joints as freejoints while preserving root pose', () => {
@@ -825,11 +964,11 @@ test('generated MJCF uses a neutral white rgba for texture-only materials', () =
 
     assert.match(
         generated,
-        /<material name="base_link_mat" rgba="1 1 1 1" texture="base_link_tex" \/>/,
+        /<material name="base_link_mat" rgba="1 1 1 1" texture="base_link_tex" specular="0" \/>/,
     );
     assert.doesNotMatch(
         generated,
-        /<material name="base_link_mat" rgba="0\.2314 0\.5098 0\.9647 1" texture="base_link_tex" \/>/,
+        /<material name="base_link_mat" rgba="0\.2314 0\.5098 0\.9647 1" texture="base_link_tex" specular="0" \/>/,
     );
 });
 
@@ -947,10 +1086,12 @@ test('generated MJCF emits separate visual geoms for extracted mesh material var
         parsed.materialMap.get('base_link_mat_1')?.rgba?.map((value) => Number(value.toFixed(4))),
         [0, 0, 0, 1],
     );
+    assert.equal(parsed.materialMap.get('base_link_mat_1')?.specular, 0);
     assert.deepEqual(
         parsed.materialMap.get('base_link_mat_2')?.rgba?.map((value) => Number(value.toFixed(4))),
         [1, 1, 1, 1],
     );
+    assert.equal(parsed.materialMap.get('base_link_mat_2')?.specular, 0);
     assert.match(generated, /<mesh name="dae_base_dae_black" file="dae\/base\.dae\.black\.obj" \/>/);
     assert.match(generated, /<mesh name="dae_base_dae_white" file="dae\/base\.dae\.white\.obj" \/>/);
     assert.match(generated, /<mesh name="dae_base_dae_gray" file="dae\/base\.dae\.gray\.obj" \/>/);

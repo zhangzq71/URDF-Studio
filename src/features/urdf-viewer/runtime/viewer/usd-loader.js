@@ -1,6 +1,7 @@
 // @ts-ignore runtime cache-busting query suffix is resolved by browser ESM loader.
 import { ThreeRenderDelegateInterface } from "../hydra/ThreeJsRenderDelegate.js";
 import { collectCameraFitSelection, fitCameraToSelection, scheduleCameraRefit } from "./camera.js";
+import { getUsdConfigurationMirrorPlan, getUsdDependencyExtension, getUsdDependencySuffixesForStage, inferDependencyStemForUsdPath } from "./usd-dependency-preload.js";
 import { getDirectoryFromVirtualPath, isLikelyNonRenderableUsdConfig, normalizeUsdPath, parseBooleanFlag } from "./path-utils.js";
 import { applyStageAxisAlignmentToRoot } from "./stage-up-axis.js";
 const COLLISION_SEGMENT_PATTERN = /(?:^|\/)collisions?(?:$|[/.])/i;
@@ -61,16 +62,6 @@ function getMeshLoadStats(renderInterface) {
         visuals,
     };
 }
-function inferDependencyStemForUsdPath(stagePath, fileName) {
-    const normalizedPath = String(stagePath || "").toLowerCase();
-    const normalizedFileName = String(fileName || "").trim();
-    const inferredStem = normalizedFileName.replace(/\.usd[a-z]?$/i, "");
-    if (!inferredStem)
-        return "";
-    if (!normalizedPath.includes("/configuration/"))
-        return inferredStem;
-    return inferredStem.replace(/_(base|physics|robot|sensor)$/i, "");
-}
 async function ensureRootPathIsLoadable(pathToLoad, usdFsHelper) {
     if (!pathToLoad)
         return false;
@@ -98,7 +89,9 @@ export async function loadUsdStage(args) {
     const fastLoad = parseBooleanFlag(params.get("fastLoad"), true);
     const forceDependencyPreload = parseBooleanFlag(params.get("forceDependencyPreload"), false);
     const autoLoadDependencies = parseBooleanFlag(params.get("autoLoadDependencies"), true);
+    const dependenciesPreloadedToVirtualFs = parseBooleanFlag(params.get("dependenciesPreloadedToVirtualFs"), false);
     const strictOneShot = parseBooleanFlag(params.get("strictOneShot"), !nonBlockingLoad);
+    const yieldDuringLoad = parseBooleanFlag(params.get("yieldDuringLoad"), true);
     const normalizedPathForDependencyDefaults = String(pathToLoad || "").toLowerCase();
     const isConfigurationUsdPath = normalizedPathForDependencyDefaults.includes("/configuration/");
     const inferredSkipSensorPayloadsOnOpen = (!isConfigurationUsdPath
@@ -119,6 +112,7 @@ export async function loadUsdStage(args) {
     const warmupRobotMetadata = true;
     const resolveRobotMetadataBeforeReady = parseBooleanFlag(params.get("resolveRobotMetadataBeforeReady"), !nonBlockingLoad);
     const requireCompleteRobotMetadata = parseBooleanFlag(params.get("requireCompleteRobotMetadata"), !nonBlockingLoad);
+    const disableCameraAutoFit = parseBooleanFlag(params.get("disableCameraAutoFit"), false);
     const maxCpuDraw = parseBooleanFlag(params.get("maxCpuDraw"), false);
     // Favor full-scene readiness during the loading phase to avoid long tail mesh hydration.
     const aggressiveInitialDraw = parseBooleanFlag(params.get("aggressiveInitialDraw"), !nonBlockingLoad);
@@ -348,6 +342,7 @@ export async function loadUsdStage(args) {
         driver: null,
         ready: false,
         drawFailed: false,
+        drawFailureReason: null,
         timeout: 40,
         endTimeCode: 0,
         normalizedPath,
@@ -500,30 +495,51 @@ export async function loadUsdStage(args) {
     const autoLoadSublayers = async (dependencyStem) => {
         if (!canWriteVirtualFs)
             return;
+        const dependencyExtension = getUsdDependencyExtension(normalizedPath);
         const tryEnsureDependencyFile = async (fileName) => {
             if (!fileName)
                 return;
-            const rootDirectory = getDirectoryFromVirtualPath(normalizedPath);
-            const configurationDirectory = rootDirectory.toLowerCase().endsWith("/configuration/")
-                ? rootDirectory
-                : normalizeUsdPath(`${rootDirectory}configuration/`);
-            const localConfigurationPath = normalizeUsdPath(`${configurationDirectory}${fileName}`);
-            const sharedConfigurationPath = normalizeUsdPath(`/configuration/${fileName}`);
+            const existingLocalPath = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile: false,
+                hasSharedVirtualFile: false,
+            }).localConfigurationPath;
+            const existingSharedPath = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile: false,
+                hasSharedVirtualFile: false,
+            }).sharedConfigurationPath;
+            const hasLocalVirtualFile = !!existingLocalPath && usdFsHelper.hasVirtualFilePath(existingLocalPath);
+            const hasSharedVirtualFile = !!existingSharedPath && usdFsHelper.hasVirtualFilePath(existingSharedPath);
+            const { localConfigurationPath, sharedConfigurationPath, shouldWriteLocalAlias, shouldWriteSharedAlias } = getUsdConfigurationMirrorPlan(normalizedPath, fileName, {
+                hasLocalVirtualFile,
+                hasSharedVirtualFile,
+            });
             const candidateFetchPaths = Array.from(new Set([
                 localConfigurationPath,
                 sharedConfigurationPath,
             ]));
-            if (usdFsHelper.hasVirtualFilePath(localConfigurationPath))
+            if (!shouldWriteLocalAlias && !shouldWriteSharedAlias)
                 return;
-            if (usdFsHelper.hasVirtualFilePath(sharedConfigurationPath)) {
+            if (shouldWriteLocalAlias && hasSharedVirtualFile) {
                 try {
                     const existing = usdModule.FS_readFile?.(sharedConfigurationPath);
                     if (existing && existing.length > 0) {
                         writeBinaryToVirtualPath(localConfigurationPath, existing);
-                        return;
                     }
                 }
                 catch { }
+            }
+            if (shouldWriteSharedAlias && hasLocalVirtualFile) {
+                try {
+                    const existing = usdModule.FS_readFile?.(localConfigurationPath);
+                    if (existing && existing.length > 0) {
+                        writeBinaryToVirtualPath(sharedConfigurationPath, existing);
+                    }
+                }
+                catch { }
+            }
+            if (usdFsHelper.hasVirtualFilePath(localConfigurationPath)
+                && (sharedConfigurationPath === localConfigurationPath || usdFsHelper.hasVirtualFilePath(sharedConfigurationPath))) {
+                return;
             }
             let loadedBinary = null;
             for (const candidatePath of candidateFetchPaths) {
@@ -533,25 +549,23 @@ export async function loadUsdStage(args) {
             }
             if (!loadedBinary) {
                 const shouldSeedPlaceholder = shouldSeedMissingOptionalConfigurationPlaceholders
-                    && /_(base|physics|robot)\.usd$/i.test(fileName);
+                    && /_(base|physics|robot)\.usd[a-z]?$/i.test(fileName);
                 if (shouldSeedPlaceholder) {
                     seedMissingOptionalConfigurationPlaceholder(fileName);
                 }
                 return;
             }
-            writeBinaryToVirtualPath(localConfigurationPath, loadedBinary);
-            if (sharedConfigurationPath !== localConfigurationPath) {
+            if (shouldWriteLocalAlias) {
+                writeBinaryToVirtualPath(localConfigurationPath, loadedBinary);
+            }
+            if (shouldWriteSharedAlias) {
                 writeBinaryToVirtualPath(sharedConfigurationPath, loadedBinary);
             }
         };
-        const dependencySuffixesByStem = {
-            h1_2_handless: ["base", "physics", "robot"],
-        };
-        const dependencySuffixes = dependencySuffixesByStem[dependencyStem] || ["base", "physics"];
-        if (includeSensorDependency) {
-            dependencySuffixes.push("sensor");
-        }
-        const dependencyFileNames = dependencySuffixes.map((suffix) => `${dependencyStem}_${suffix}.usd`);
+        const dependencySuffixes = getUsdDependencySuffixesForStage(normalizedPath, dependencyStem, {
+            includeSensorDependency,
+        });
+        const dependencyFileNames = dependencySuffixes.map((suffix) => `${dependencyStem}_${suffix}${dependencyExtension}`);
         await Promise.all(dependencyFileNames.map((dependencyFileName) => tryEnsureDependencyFile(dependencyFileName)));
     };
     const seedOptionalSensorPlaceholder = (dependencyStem) => {
@@ -563,10 +577,14 @@ export async function loadUsdStage(args) {
             return;
         if (!skipSensorPayloadsOnOpen)
             return;
-        seedMissingOptionalConfigurationPlaceholder(`${dependencyStem}_sensor.usd`, "Sensors");
+        seedMissingOptionalConfigurationPlaceholder(
+            `${dependencyStem}_sensor${getUsdDependencyExtension(normalizedPath)}`,
+            "Sensors",
+        );
     };
     const shouldPreloadRootLayerToVirtualFs = normalizedPath.startsWith("/");
-    if (shouldPreloadRootLayerToVirtualFs) {
+    const skipInternalDependencyPreload = dependenciesPreloadedToVirtualFs && usdFsHelper.hasVirtualFilePath(normalizedPath);
+    if (!skipInternalDependencyPreload && shouldPreloadRootLayerToVirtualFs) {
         const rootLayerLoaded = await ensureVirtualFileFromCandidates(normalizedPath, [normalizedPath]);
         if (rootLayerLoaded) {
             // Root layer is available in WASM FS.
@@ -580,7 +598,8 @@ export async function loadUsdStage(args) {
     const shouldAutoLoadDependenciesFromUnitreePath = normalizedPathLower.startsWith("/unitree_model/");
     const isPiperSceneUsdPath = normalizedPathLower.startsWith("/piper_isaac_sim/usd/");
     const shouldAutoLoadInferredRootDependencies = shouldAutoLoadDependenciesFromVirtualFs && !isPiperSceneUsdPath;
-    if (autoLoadDependencies
+    if (!skipInternalDependencyPreload
+        && autoLoadDependencies
         && dependencyStem
         && (shouldAutoLoadInferredRootDependencies || shouldAutoLoadDependenciesFromUnitreePath || forceDependencyPreload)) {
         await autoLoadSublayers(dependencyStem);
@@ -606,7 +625,7 @@ export async function loadUsdStage(args) {
         stageSourcePath: normalizedPath,
         suppressMaterialBindingApiWarnings: true,
         // Parsing fallback xform ops from raw USDA layer text is extremely expensive
-        // on large Unitree assets; keep it opt-in via URL when needed for diagnostics.
+        // on large Unitree assets; keep this diagnostic fallback disabled by default.
         enableXformOpFallbackFromLayerText: parseBooleanFlag(params.get("enableXformOpFallbackFromLayerText"), false),
         // Proto stage sync is force-enabled to avoid slow per-mesh bridge calls.
         enableProtoBlobFastPath,
@@ -694,7 +713,9 @@ export async function loadUsdStage(args) {
     }
     setProgress(30);
     markLoadPhase("render-interface-ready");
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     try {
         driver = new USD.HdWebSyncDriver(renderInterface, normalizedPath);
         if (driver instanceof Promise) {
@@ -704,8 +725,10 @@ export async function loadUsdStage(args) {
     catch (error) {
         console.error("Failed to create USD driver", error);
         setMessage("Failed to initialize USD renderer for this file.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "driver-init-failed";
         hideProgress();
-        state.ready = true;
         flushLoadProfile("error");
         return state;
     }
@@ -716,8 +739,10 @@ export async function loadUsdStage(args) {
     }
     if (!driver) {
         setMessage("Failed to initialize USD renderer for this file.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "driver-init-missing";
         hideProgress();
-        state.ready = true;
         flushLoadProfile("error");
         return state;
     }
@@ -728,7 +753,9 @@ export async function loadUsdStage(args) {
     }
     catch { }
     state.driver = window.driver = driver;
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     const runRuntimeBridgeWarmup = (phaseLabel, options = {}) => {
         if (!warmupRuntimeBridge)
             return null;
@@ -748,6 +775,7 @@ export async function loadUsdStage(args) {
                 emitRobotMetadataEvent: false,
             });
             if (summary && typeof summary === "object") {
+                lastRuntimeBridgeWarmupSummary = summary;
                 markLoadPhase(`runtime-bridge-warmup-${phaseLabel}`);
             }
             return summary && typeof summary === "object" ? summary : null;
@@ -755,6 +783,28 @@ export async function loadUsdStage(args) {
         catch {
             return null;
         }
+    };
+    let lastRuntimeBridgeWarmupSummary = null;
+    const getRuntimeBridgeWarmupWarningMessage = (summary) => {
+        if (!summary || typeof summary !== "object") {
+            return null;
+        }
+        const driverStageResolveStatus = String(summary.driverStageResolveStatus || "").trim();
+        const driverStageResolveError = String(summary.driverStageResolveError || "").trim();
+        const subsetFailureCount = Math.max(0, Number(summary.snapshotMaterialSubsetFailureCount || 0));
+        const inheritFailureCount = Math.max(0, Number(summary.snapshotMaterialInheritFailureCount || 0));
+        const textureFailureCount = Math.max(0, Number(summary.snapshotTextureFailureCount || 0));
+        const materialFailureCount = subsetFailureCount + inheritFailureCount + textureFailureCount;
+        if (driverStageResolveStatus === "rejected") {
+            return driverStageResolveError
+                ? `Resolving robot metadata... stage lookup failed (${driverStageResolveError}).`
+                : "Resolving robot metadata... stage lookup failed.";
+        }
+        if (materialFailureCount > 0) {
+            const issueLabel = materialFailureCount === 1 ? "issue" : "issues";
+            return `Resolving robot metadata... material fallbacks incomplete (${materialFailureCount} ${issueLabel}).`;
+        }
+        return null;
     };
     const getPendingProtoHydrationCount = (summary) => {
         if (!summary || typeof summary !== "object")
@@ -867,6 +917,9 @@ export async function loadUsdStage(args) {
                 jointCount: 0,
                 dynamicsCount: 0,
                 linkParentCount: 0,
+                stale: false,
+                errorFlags: [],
+                truthLoadError: null,
             };
         }
         try {
@@ -878,6 +931,9 @@ export async function loadUsdStage(args) {
                     jointCount: 0,
                     dynamicsCount: 0,
                     linkParentCount: 0,
+                    stale: false,
+                    errorFlags: [],
+                    truthLoadError: null,
                 };
             }
             const jointCount = Array.isArray(snapshot.jointCatalogEntries)
@@ -889,11 +945,20 @@ export async function loadUsdStage(args) {
             const linkParentCount = Array.isArray(snapshot.linkParentPairs)
                 ? snapshot.linkParentPairs.length
                 : 0;
+            const errorFlags = Array.isArray(snapshot.errorFlags)
+                ? snapshot.errorFlags
+                    .map((entry) => String(entry || "").trim())
+                    .filter((entry) => entry.length > 0)
+                : [];
+            const truthLoadError = String(snapshot.truthLoadError || "").trim() || null;
             return {
                 hasSnapshot: true,
                 jointCount,
                 dynamicsCount,
                 linkParentCount,
+                stale: snapshot.stale === true,
+                errorFlags,
+                truthLoadError,
             };
         }
         catch {
@@ -902,13 +967,36 @@ export async function loadUsdStage(args) {
                 jointCount: 0,
                 dynamicsCount: 0,
                 linkParentCount: 0,
+                stale: false,
+                errorFlags: [],
+                truthLoadError: null,
             };
         }
+    };
+    const buildRobotMetadataReadinessError = () => {
+        const stats = getRobotMetadataSnapshotStats();
+        if (!stats.hasSnapshot) {
+            return new Error(`Robot metadata did not resolve for "${normalizedPath}" before interactive readiness.`);
+        }
+        const details = [];
+        if (stats.stale === true) {
+            details.push("stale");
+        }
+        if (Array.isArray(stats.errorFlags) && stats.errorFlags.length > 0) {
+            details.push(`errorFlags=${stats.errorFlags.join(",")}`);
+        }
+        if (stats.truthLoadError) {
+            details.push(`truthLoadError=${stats.truthLoadError}`);
+        }
+        return new Error(`Robot metadata for "${normalizedPath}" is not ready for interactive use${details.length > 0 ? ` (${details.join("; ")})` : ""}.`);
     };
     const hasResolvedRobotMetadataSnapshot = (options = {}) => {
         const stats = getRobotMetadataSnapshotStats();
         if (!stats.hasSnapshot)
             return false;
+        if (stats.stale === true || stats.errorFlags.length > 0 || !!stats.truthLoadError) {
+            return false;
+        }
         const hasAnyMetadata = stats.jointCount > 0 || stats.dynamicsCount > 0 || stats.linkParentCount > 0;
         if (!hasAnyMetadata) {
             return isLikelyNonRenderableUsdConfig(normalizedPath);
@@ -932,16 +1020,31 @@ export async function loadUsdStage(args) {
             skipIdleWait: !nonBlockingLoad,
         };
     };
-    const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
+    let primedRobotMetadataWarmupPromise = null;
+    const startRobotMetadataWarmup = (activeRenderInterface, options = {}) => {
+        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
+            return null;
         try {
-            const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force));
-            if (maybePromise && typeof maybePromise.then === "function") {
-                await maybePromise;
-            }
+            const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force === true));
+            const normalizedPromise = (maybePromise && typeof maybePromise.then === "function")
+                ? maybePromise
+                : Promise.resolve(maybePromise ?? null);
+            primedRobotMetadataWarmupPromise = normalizedPromise;
+            primedRobotMetadataWarmupPromise.catch(() => { });
+            return normalizedPromise;
         }
-        catch {
-            // Keep load resilient; fallback UI refresh path remains active.
+        catch (error) {
+            const rejectedPromise = Promise.reject(error);
+            rejectedPromise.catch(() => { });
+            primedRobotMetadataWarmupPromise = rejectedPromise;
+            return rejectedPromise;
         }
+    };
+    const awaitRobotMetadataWarmup = async (activeRenderInterface, options) => {
+        const pendingWarmup = startRobotMetadataWarmup(activeRenderInterface, options);
+        if (!pendingWarmup)
+            return;
+        await pendingWarmup;
     };
     const ensureRobotMetadataReadyBeforeInteractive = async () => {
         if (!warmupRobotMetadata)
@@ -955,21 +1058,41 @@ export async function loadUsdStage(args) {
         if (isRobotMetadataReady())
             return;
         const activeRenderInterface = window.renderInterface;
-        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
+        if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function") {
+            throw new Error(`Robot metadata warmup API is unavailable for "${normalizedPath}".`);
+        }
+        if (primedRobotMetadataWarmupPromise) {
+            await primedRobotMetadataWarmupPromise;
+        }
+        if (isRobotMetadataReady()) {
+            markLoadPhase("robot-metadata-ready-before-interactive");
             return;
+        }
         await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
         if (!isRobotMetadataReady()) {
             await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
         }
-        if (isRobotMetadataReady()) {
-            markLoadPhase("robot-metadata-ready-before-interactive");
+        if (!isRobotMetadataReady()) {
+            throw buildRobotMetadataReadinessError();
         }
+        markLoadPhase("robot-metadata-ready-before-interactive");
     };
     if (isLikelyNonRenderableUsdConfig(normalizedPath)) {
         runRuntimeBridgeWarmup("driver-init", { force: true });
-        const activeRenderInterface = window.renderInterface;
-        if (activeRenderInterface && typeof activeRenderInterface.startRobotMetadataWarmupForStage === "function") {
-            await awaitRobotMetadataWarmup(activeRenderInterface, { force: true });
+        try {
+            await ensureRobotMetadataReadyBeforeInteractive();
+        }
+        catch (error) {
+            console.error("[usd-loader] Failed to resolve robot metadata before interactive readiness.", error);
+            setMessage(error instanceof Error && error.message
+                ? error.message
+                : "Failed to resolve robot metadata before interactive readiness.");
+            state.ready = false;
+            state.drawFailed = true;
+            state.drawFailureReason = "robot-metadata-failed";
+            hideProgress();
+            flushLoadProfile("error");
+            return state;
         }
         if (!isLoadStillActive())
             return state;
@@ -1020,7 +1143,10 @@ export async function loadUsdStage(args) {
         }
         catch (drawError) {
             state.drawFailed = true;
-            void drawError;
+            state.drawFailureReason = drawError instanceof Error
+                ? drawError.message
+                : String(drawError || 'unknown-draw-error');
+            console.error('[usd-loader] Initial Draw failed.', drawError);
             return false;
         }
         finally {
@@ -1044,6 +1170,12 @@ export async function loadUsdStage(args) {
     if (!isLoadStillActive())
         return state;
     const initialDrawStartMs = profileNow();
+    const shouldSliceInteractiveLoadWork = nonBlockingLoad && !strictOneShot;
+    const yieldBetweenInteractiveLoadSteps = async () => {
+        if (!shouldSliceInteractiveLoadWork)
+            return;
+        await yieldToMainThread(initialDrawYieldMs);
+    };
     const updateStreamingStatus = () => {
         const stats = getMeshLoadStats(window.renderInterface);
         const meshReadyPercent = Math.min(100, Math.round((stats.ready / Math.max(stats.total, 1)) * 100));
@@ -1060,12 +1192,22 @@ export async function loadUsdStage(args) {
     if (runInstrumentedDriverDraw("load-fast", { forceRender: drawBurstRenderEveryDraw })) {
         stats = updateStreamingStatus();
     }
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     runResolvedPrimHydrationPass({ force: true });
     updateStreamingStatus();
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     markLoadPhase("initial-draw-done");
     const postInitialDrawWarmupSummary = runRuntimeBridgeWarmup("post-initial-draw", { force: true });
     let needsFinalProtoHydrationPass = !hasRuntimeBridgeCompletedProtoHydration(postInitialDrawWarmupSummary);
     let needsFinalResolvedPrimHydrationPass = false;
+    // Start robot-metadata synthesis as soon as the first runtime snapshot exists
+    // so strict one-shot loads can overlap metadata work with mesh drain/finalize
+    // instead of blocking a second long CPU phase right before ready.
+    startRobotMetadataWarmup(window.renderInterface, { force: false });
     if (needsFinalProtoHydrationPass) {
         const postInitialDrawHydrationSummary = runProtoHydrationPass();
         const pendingProtoHydrationCount = getPendingProtoHydrationCount(postInitialDrawHydrationSummary);
@@ -1075,6 +1217,9 @@ export async function loadUsdStage(args) {
     const pendingResolvedPrimHydrationCount = getPendingResolvedPrimHydrationCount(postInitialDrawResolvedPrimHydrationSummary);
     needsFinalResolvedPrimHydrationPass = (pendingResolvedPrimHydrationCount !== null
         && pendingResolvedPrimHydrationCount > 0);
+    await yieldBetweenInteractiveLoadSteps();
+    if (!isLoadStillActive())
+        return state;
     if (profileTextureLoads) {
         const textureSnapshot = window.renderInterface?.registry?.getTextureLoadSnapshot?.();
         if (textureSnapshot) {
@@ -1090,7 +1235,9 @@ export async function loadUsdStage(args) {
     });
     setMessage("Finishing load...");
     setProgress(92);
-    await yieldToMainThread();
+    if (yieldDuringLoad) {
+        await yieldToMainThread();
+    }
     window.usdStage = null;
     if (!isLoadStillActive())
         return state;
@@ -1192,6 +1339,9 @@ export async function loadUsdStage(args) {
     }
     const getCameraFitSelection = () => collectCameraFitSelection(window.usdRoot);
     const refitCameraToUsdRoot = () => {
+        if (disableCameraAutoFit) {
+            return;
+        }
         const fitted = fitCameraToSelection(window.camera, window._controls, getCameraFitSelection(), 1.5, params);
         if (!fitted) {
             scheduleCameraRefit(window.camera, window._controls, getCameraFitSelection, params);
@@ -1221,9 +1371,27 @@ export async function loadUsdStage(args) {
         totalCount: null,
     });
     setMessage("Resolving robot metadata...");
-    await ensureRobotMetadataReadyBeforeInteractive();
+    try {
+        await ensureRobotMetadataReadyBeforeInteractive();
+    }
+    catch (error) {
+        console.error("[usd-loader] Failed to resolve robot metadata before interactive readiness.", error);
+        setMessage(error instanceof Error && error.message
+            ? error.message
+            : "Failed to resolve robot metadata before interactive readiness.");
+        state.ready = false;
+        state.drawFailed = true;
+        state.drawFailureReason = "robot-metadata-failed";
+        hideProgress();
+        flushLoadProfile("error");
+        return state;
+    }
     if (!isLoadStillActive())
         return state;
+    const runtimeBridgeWarmupWarningMessage = getRuntimeBridgeWarmupWarningMessage(lastRuntimeBridgeWarmupSummary);
+    if (runtimeBridgeWarmupWarningMessage) {
+        setMessage(runtimeBridgeWarmupWarningMessage);
+    }
     retryStageAxisAlignmentUntilStageMetadata();
     state.ready = true;
     rebuildLinkAxes();

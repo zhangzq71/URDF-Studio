@@ -1,10 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
+interface PanelPosition {
+  x: number;
+  y: number;
+}
+
 export interface DraggablePanelState {
   containerRef: React.RefObject<HTMLDivElement>;
   optionsPanelRef: React.RefObject<HTMLDivElement>;
-  optionsPanelPos: { x: number; y: number } | null;
-  setOptionsPanelPos: (pos: { x: number; y: number } | null) => void;
+  optionsPanelPos: PanelPosition | null;
+  setOptionsPanelPos: (pos: PanelPosition | null) => void;
   dragging: boolean;
   isOptionsCollapsed: boolean;
   toggleOptionsCollapsed: () => void;
@@ -18,9 +23,11 @@ export interface DraggablePanelState {
  * Handles panel positioning, dragging state, and collapse state
  */
 export function useDraggablePanel(): DraggablePanelState {
+  const PANEL_EDGE_PADDING = 2;
   const containerRef = useRef<HTMLDivElement>(null);
   const optionsPanelRef = useRef<HTMLDivElement>(null);
-  const [optionsPanelPos, setOptionsPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const [optionsPanelPosState, setOptionsPanelPosState] = useState<PanelPosition | null>(null);
+  const optionsPanelPosRef = useRef<PanelPosition | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef<{
     mouseX: number;
@@ -28,6 +35,9 @@ export function useDraggablePanel(): DraggablePanelState {
     panelX: number;
     panelY: number;
   } | null>(null);
+  const liveDragPositionRef = useRef<PanelPosition | null>(null);
+  const documentListenersAttachedRef = useRef(false);
+  const detachDocumentListenersRef = useRef<() => void>(() => {});
   const bodyUserSelectRef = useRef('');
   const bodyCursorRef = useRef('');
 
@@ -47,6 +57,123 @@ export function useDraggablePanel(): DraggablePanelState {
     });
   }, []);
 
+  const setOptionsPanelPos = useCallback((pos: PanelPosition | null) => {
+    optionsPanelPosRef.current = pos;
+    setOptionsPanelPosState(pos);
+  }, []);
+
+  const applyPanelPosition = useCallback((position: PanelPosition) => {
+    if (!optionsPanelRef.current) return;
+
+    optionsPanelRef.current.style.left = `${position.x}px`;
+    optionsPanelRef.current.style.top = `${position.y}px`;
+    optionsPanelRef.current.style.right = 'auto';
+    optionsPanelRef.current.style.bottom = 'auto';
+    optionsPanelRef.current.style.transform = 'none';
+  }, []);
+
+  const clampPosition = useCallback((position: PanelPosition) => {
+    if (!containerRef.current || !optionsPanelRef.current) {
+      return position;
+    }
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const panelRect = optionsPanelRef.current.getBoundingClientRect();
+    const maxX = Math.max(PANEL_EDGE_PADDING, containerRect.width - panelRect.width - PANEL_EDGE_PADDING);
+    const maxY = Math.max(PANEL_EDGE_PADDING, containerRect.height - panelRect.height - PANEL_EDGE_PADDING);
+
+    return {
+      x: Math.max(PANEL_EDGE_PADDING, Math.min(position.x, maxX)),
+      y: Math.max(PANEL_EDGE_PADDING, Math.min(position.y, maxY)),
+    };
+  }, []);
+
+  const updatePositionFromPointer = useCallback((clientX: number, clientY: number) => {
+    if (!dragStartRef.current || !containerRef.current || !optionsPanelRef.current) {
+      return;
+    }
+
+    const nextPosition = clampPosition({
+      x: dragStartRef.current.panelX + (clientX - dragStartRef.current.mouseX),
+      y: dragStartRef.current.panelY + (clientY - dragStartRef.current.mouseY),
+    });
+
+    liveDragPositionRef.current = nextPosition;
+    applyPanelPosition(nextPosition);
+  }, [applyPanelPosition, clampPosition]);
+
+  const finalizeDrag = useCallback(() => {
+    if (liveDragPositionRef.current) {
+      setOptionsPanelPos(liveDragPositionRef.current);
+    }
+
+    document.body.style.userSelect = bodyUserSelectRef.current;
+    document.body.style.cursor = bodyCursorRef.current;
+    liveDragPositionRef.current = null;
+    dragStartRef.current = null;
+    setDragging(false);
+    detachDocumentListenersRef.current();
+  }, [setOptionsPanelPos]);
+
+  const handleDocumentMouseMoveRef = useRef<(event: MouseEvent) => void>(() => {});
+  const handleDocumentMouseUpRef = useRef<() => void>(() => {});
+
+  handleDocumentMouseMoveRef.current = (event: MouseEvent) => {
+    updatePositionFromPointer(event.clientX, event.clientY);
+  };
+  handleDocumentMouseUpRef.current = () => {
+    finalizeDrag();
+  };
+
+  const attachDocumentListeners = useCallback(() => {
+    if (documentListenersAttachedRef.current) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      handleDocumentMouseMoveRef.current(event);
+    };
+    const handleMouseUp = () => {
+      handleDocumentMouseUpRef.current();
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
+
+    documentListenersAttachedRef.current = true;
+
+    (attachDocumentListeners as typeof attachDocumentListeners & {
+      mouseMove?: (event: MouseEvent) => void;
+      mouseUp?: () => void;
+    }).mouseMove = handleMouseMove;
+    (attachDocumentListeners as typeof attachDocumentListeners & {
+      mouseMove?: (event: MouseEvent) => void;
+      mouseUp?: () => void;
+    }).mouseUp = handleMouseUp;
+  }, []);
+
+  const detachDocumentListeners = useCallback(() => {
+    if (!documentListenersAttachedRef.current) return;
+
+    const mouseMove = (attachDocumentListeners as typeof attachDocumentListeners & {
+      mouseMove?: (event: MouseEvent) => void;
+    }).mouseMove;
+    const mouseUp = (attachDocumentListeners as typeof attachDocumentListeners & {
+      mouseUp?: () => void;
+    }).mouseUp;
+
+    if (mouseMove) {
+      document.removeEventListener('mousemove', mouseMove);
+    }
+    if (mouseUp) {
+      document.removeEventListener('mouseup', mouseUp);
+      window.removeEventListener('blur', mouseUp);
+    }
+
+    documentListenersAttachedRef.current = false;
+  }, [attachDocumentListeners]);
+
+  detachDocumentListenersRef.current = detachDocumentListeners;
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -59,88 +186,56 @@ export function useDraggablePanel(): DraggablePanelState {
     dragStartRef.current = {
       mouseX: e.clientX,
       mouseY: e.clientY,
-      panelX: rect.left - containerRect.left,
-      panelY: rect.top - containerRect.top,
+      panelX: optionsPanelPosRef.current ? optionsPanelPosRef.current.x : rect.left - containerRect.left,
+      panelY: optionsPanelPosRef.current ? optionsPanelPosRef.current.y : rect.top - containerRect.top,
+    };
+    liveDragPositionRef.current = optionsPanelPosRef.current ?? {
+      x: rect.left - containerRect.left,
+      y: rect.top - containerRect.top,
     };
     bodyUserSelectRef.current = document.body.style.userSelect;
     bodyCursorRef.current = document.body.style.cursor;
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'move';
+    document.body.style.cursor = 'grabbing';
     setDragging(true);
-  }, []);
+    attachDocumentListeners();
+  }, [attachDocumentListeners]);
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!dragging || !dragStartRef.current || !containerRef.current || !optionsPanelRef.current)
-        return;
-
-      const deltaX = e.clientX - dragStartRef.current.mouseX;
-      const deltaY = e.clientY - dragStartRef.current.mouseY;
-
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const panelRect = optionsPanelRef.current.getBoundingClientRect();
-
-      // Calculate new position
-      let newX = dragStartRef.current.panelX + deltaX;
-      let newY = dragStartRef.current.panelY + deltaY;
-
-      // Boundary constraints: ensure panel doesn't exceed container bounds
-      const padding = 2;
-      const maxX = containerRect.width - panelRect.width - padding;
-      const maxY = containerRect.height - panelRect.height - padding;
-
-      // Ensure newX and newY are within [padding, max] range
-      newX = Math.max(padding, Math.min(newX, Math.max(padding, maxX)));
-      newY = Math.max(padding, Math.min(newY, Math.max(padding, maxY)));
-
-      setOptionsPanelPos({ x: newX, y: newY });
-    },
-    [dragging]
-  );
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    updatePositionFromPointer(e.clientX, e.clientY);
+  }, [updatePositionFromPointer]);
 
   const handleMouseUp = useCallback(() => {
-    document.body.style.userSelect = bodyUserSelectRef.current;
-    document.body.style.cursor = bodyCursorRef.current;
-    setDragging(false);
-    dragStartRef.current = null;
-  }, []);
+    finalizeDrag();
+  }, [finalizeDrag]);
 
   // Add ResizeObserver to clamp position when container resizes
   useEffect(() => {
     if (!containerRef.current) return;
 
     const observer = new ResizeObserver(() => {
-      setOptionsPanelPos((prev) => {
-        if (!prev || !optionsPanelRef.current || !containerRef.current) return prev;
-        
-        const containerRect = containerRef.current.getBoundingClientRect();
-        const panelRect = optionsPanelRef.current.getBoundingClientRect();
-        const padding = 2;
-        const maxX = Math.max(padding, containerRect.width - panelRect.width - padding);
-        const maxY = Math.max(padding, containerRect.height - panelRect.height - padding);
+      const currentPosition = optionsPanelPosRef.current;
+      if (!currentPosition) return;
 
-        if (prev.x > maxX || prev.y > maxY) {
-          return {
-            x: Math.min(prev.x, maxX),
-            y: Math.min(prev.y, maxY),
-          };
-        }
-        return prev;
-      });
+      const nextPosition = clampPosition(currentPosition);
+      if (nextPosition.x !== currentPosition.x || nextPosition.y !== currentPosition.y) {
+        setOptionsPanelPos(nextPosition);
+      }
     });
 
     observer.observe(containerRef.current);
     return () => {
       document.body.style.userSelect = bodyUserSelectRef.current;
       document.body.style.cursor = bodyCursorRef.current;
+      detachDocumentListeners();
       observer.disconnect();
     };
-  }, []);
+  }, [clampPosition, detachDocumentListeners, setOptionsPanelPos]);
 
   return {
     containerRef,
     optionsPanelRef,
-    optionsPanelPos,
+    optionsPanelPos: optionsPanelPosState,
     setOptionsPanelPos,
     dragging,
     isOptionsCollapsed,

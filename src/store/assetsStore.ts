@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import type { MotorSpec, RobotFile, UsdPreparedExportCache, UsdSceneSnapshot } from '@/types';
-import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
+import { DEFAULT_MOTOR_LIBRARY, normalizeMotorLibrary } from '@/shared/data/motorLibrary';
 
 export type DocumentLoadStatus = 'idle' | 'loading' | 'hydrating' | 'ready' | 'error';
 
@@ -612,8 +612,9 @@ export const useAssetsStore = create<AssetsState>()((set, get) => ({
     })),
 
   // Motor library
-  motorLibrary: DEFAULT_MOTOR_LIBRARY,
-  setMotorLibrary: (library) => set({ motorLibrary: library }),
+  motorLibrary: normalizeMotorLibrary(DEFAULT_MOTOR_LIBRARY, 'assetsStore.init'),
+  setMotorLibrary: (library) =>
+    set({ motorLibrary: normalizeMotorLibrary(library, 'assetsStore.setMotorLibrary') }),
   addMotorSpec: (brand, spec) =>
     set((state) => {
       const existing = state.motorLibrary[brand] || [];

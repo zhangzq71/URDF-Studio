@@ -1,0 +1,49 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  DEFAULT_SELECT_CLICK_DRAG_THRESHOLD_PX,
+  isPointerInteractionWithinClickThreshold,
+  shouldDeferSelectionUntilPointerUp,
+} from './clickSelectionPolicy.ts';
+
+test('select mode defers selection until pointer up', () => {
+  assert.equal(shouldDeferSelectionUntilPointerUp('select'), true);
+  assert.equal(shouldDeferSelectionUntilPointerUp('select', true), false);
+  assert.equal(shouldDeferSelectionUntilPointerUp('translate'), false);
+  assert.equal(shouldDeferSelectionUntilPointerUp('rotate'), false);
+  assert.equal(shouldDeferSelectionUntilPointerUp('universal'), false);
+  assert.equal(shouldDeferSelectionUntilPointerUp('measure'), false);
+});
+
+test('pointer motion inside threshold is treated as a click', () => {
+  assert.equal(isPointerInteractionWithinClickThreshold({
+    startX: 10,
+    startY: 20,
+    endX: 10 + DEFAULT_SELECT_CLICK_DRAG_THRESHOLD_PX,
+    endY: 20,
+  }), true);
+
+  assert.equal(isPointerInteractionWithinClickThreshold({
+    startX: 10,
+    startY: 20,
+    endX: 14,
+    endY: 23,
+  }), true);
+});
+
+test('pointer motion beyond threshold is treated as a drag', () => {
+  assert.equal(isPointerInteractionWithinClickThreshold({
+    startX: 10,
+    startY: 20,
+    endX: 10 + DEFAULT_SELECT_CLICK_DRAG_THRESHOLD_PX + 1,
+    endY: 20,
+  }), false);
+
+  assert.equal(isPointerInteractionWithinClickThreshold({
+    startX: 10,
+    startY: 20,
+    endX: 20,
+    endY: 30,
+  }), false);
+});

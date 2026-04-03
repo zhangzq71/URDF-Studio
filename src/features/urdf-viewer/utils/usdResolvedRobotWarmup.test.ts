@@ -103,3 +103,30 @@ test('scheduleUsdResolvedRobotRepublishAfterWarmup tolerates rejected warmups', 
 
   assert.equal(publishCount, 1);
 });
+
+test('scheduleUsdResolvedRobotRepublishAfterWarmup does not synchronously publish when warmup setup throws', async () => {
+  const scheduledFrames: Array<() => void> = [];
+  let publishCount = 0;
+
+  scheduleUsdResolvedRobotRepublishAfterWarmup({
+    isActive: () => true,
+    requestAnimationFrame: (callback) => {
+      scheduledFrames.push(callback);
+      return 1;
+    },
+    startWarmups: () => {
+      throw new Error('setup failed');
+    },
+    onSettled: () => {
+      publishCount += 1;
+    },
+  });
+
+  scheduledFrames[0]();
+  assert.equal(publishCount, 0);
+
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(publishCount, 1);
+});

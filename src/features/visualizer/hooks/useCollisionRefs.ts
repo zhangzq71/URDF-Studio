@@ -11,7 +11,7 @@ const getCollisionRefKey = (linkId: string, objectIndex = 0) => `${linkId}:${obj
 
 /**
  * Custom hook to manage collision geometry references
- * Used for TransformControls to manipulate collision geometry in Detail mode
+ * Used for TransformControls to manipulate collision geometry in editor mode
  */
 export function useCollisionRefs(
   selectionType?: 'link' | 'joint',

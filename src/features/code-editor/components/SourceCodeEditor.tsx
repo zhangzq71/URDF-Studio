@@ -2,7 +2,15 @@
  * SourceCodeEditor - Unified Monaco source window for editable and read-only code.
  * Supports URDF, Xacro, MJCF, USD text, and equivalent MJCF previews in one reusable shell.
  */
-import React, { Suspense, useState, useEffect, useRef, useCallback, useMemo, startTransition } from 'react';
+import React, {
+  Suspense,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  startTransition,
+} from 'react';
 import {
   AlertCircle,
   Check,
@@ -19,29 +27,38 @@ import {
   X,
 } from 'lucide-react';
 import type { Theme } from '@/types';
-import type { Language } from '@/store';
+import { useUIStore, type CodeEditorFontFamily, type Language } from '@/store';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import type { SourceCodeDocumentFlavor } from '../types';
 import type { MonacoInstance } from '../utils/monacoLoader';
 import {
   getDocumentLanguageId,
-  getXmlCompletionEntries,
   isXmlLikeDocumentFlavor,
+  resolveXmlCompletionEntryForContext,
   supportsDocumentValidation,
 } from '../utils/xmlLanguageSupport';
 import { getUrdfValidationDebounceMs } from '../utils/editorPerformance.ts';
-import { validateUrdfDocument, type ValidationError } from '../utils/urdfValidation';
+import { ensureSourceCodeEditorLanguages } from '../utils/monacoLoader';
+import { downloadSourceCodeDocument } from '../utils/sourceCodeDownload';
+import type { ValidationError } from '../utils/urdfValidation.ts';
+import {
+  requestXmlCompletionsWithWorker,
+  requestXmlValidationWithWorker,
+} from '../utils/xmlEditorWorkerBridge.ts';
+import { useSourceCodeEditorAutoApply } from '../hooks/useSourceCodeEditorAutoApply';
 
 export interface SourceCodeEditorProps {
   code: string;
-  onCodeChange: (newCode: string) => void;
+  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
   onClose: () => void;
   theme: Theme;
   fileName?: string;
   lang?: Language;
   documentFlavor?: SourceCodeDocumentFlavor;
   readOnly?: boolean;
+  autoApplyEnabled?: boolean;
+  onDownload?: () => void;
 }
 
 interface DocumentMeta {
@@ -89,6 +106,20 @@ const editorTexts = {
     jointMissingType: 'Joint "{0}" missing type attribute',
     jointMissingParent: 'Joint "{0}" missing <parent> element',
     jointMissingChild: 'Joint "{0}" missing <child> element',
+    missingSdfRoot: 'Missing <sdf> root element',
+    sdfMissingVersion: '<sdf> element missing version attribute',
+    sdfMissingModelOrWorld: '<sdf> must contain at least one <model> or <world>',
+    sdfModelMissingName: 'SDF model #{0} missing name attribute',
+    sdfLinkMissingName: 'SDF link #{0} missing name attribute',
+    sdfJointMissingName: 'SDF joint #{0} missing name attribute',
+    sdfJointMissingType: 'SDF joint "{0}" missing type attribute',
+    sdfJointMissingParent: 'SDF joint "{0}" missing <parent> element',
+    sdfJointMissingChild: 'SDF joint "{0}" missing <child> element',
+    invalidSdfJointType: 'SDF joint "{0}" has invalid type "{1}"',
+    missingMjcfRoot: 'Missing <mujoco> root element',
+    missingMjcfWorldbody: '<mujoco> is missing required <worldbody> element',
+    invalidMjcfJointType: 'MJCF <joint> has invalid type "{0}"',
+    invalidMjcfGeomType: 'MJCF <geom> has invalid type "{0}"',
     unknownElement: 'Unknown <{0}> element under <{1}>',
     unknownAttribute: '<{0}> has unknown "{1}" attribute',
     missingRequiredAttribute: '<{0}> missing required "{1}" attribute',
@@ -132,6 +163,20 @@ const editorTexts = {
     jointMissingType: '关节 "{0}" 缺少 type 属性',
     jointMissingParent: '关节 "{0}" 缺少 <parent> 元素',
     jointMissingChild: '关节 "{0}" 缺少 <child> 元素',
+    missingSdfRoot: '缺少 <sdf> 根元素',
+    sdfMissingVersion: '<sdf> 元素缺少 version 属性',
+    sdfMissingModelOrWorld: '<sdf> 中至少需要一个 <model> 或 <world>',
+    sdfModelMissingName: '第 {0} 个 SDF <model> 缺少 name 属性',
+    sdfLinkMissingName: '第 {0} 个 SDF <link> 缺少 name 属性',
+    sdfJointMissingName: '第 {0} 个 SDF <joint> 缺少 name 属性',
+    sdfJointMissingType: 'SDF 关节 "{0}" 缺少 type 属性',
+    sdfJointMissingParent: 'SDF 关节 "{0}" 缺少 <parent> 元素',
+    sdfJointMissingChild: 'SDF 关节 "{0}" 缺少 <child> 元素',
+    invalidSdfJointType: 'SDF 关节 "{0}" 的 type 值 "{1}" 非法',
+    missingMjcfRoot: '缺少 <mujoco> 根元素',
+    missingMjcfWorldbody: '<mujoco> 缺少必需的 <worldbody> 元素',
+    invalidMjcfJointType: 'MJCF <joint> 的 type 值 "{0}" 非法',
+    invalidMjcfGeomType: 'MJCF <geom> 的 type 值 "{0}" 非法',
     unknownElement: '<{1}> 下存在未知元素 <{0}>',
     unknownAttribute: '<{0}> 存在未知属性 "{1}"',
     missingRequiredAttribute: '<{0}> 缺少必需属性 "{1}"',
@@ -148,7 +193,9 @@ const HEADER_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover';
 const HEADER_PRIMARY_ACTION_CLASS =
   'inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors';
-const MonacoEditor = React.lazy(() => import('@monaco-editor/react').then((module) => ({ default: module.default })));
+const MonacoEditor = React.lazy(() =>
+  import('@monaco-editor/react').then((module) => ({ default: module.default })),
+);
 
 const formatContentSize = (content: string): string => {
   const bytes = new Blob([content]).size;
@@ -158,16 +205,16 @@ const formatContentSize = (content: string): string => {
   return `${(bytes / 1024).toFixed(1)} KB`;
 };
 
-const getDownloadFileName = (
-  fileName: string,
-  documentFlavor: SourceCodeDocumentFlavor,
-): string => {
-  if (documentFlavor !== 'equivalent-mjcf') {
-    return fileName;
+const resolveCodeEditorFontFamily = (fontFamily: CodeEditorFontFamily): string => {
+  switch (fontFamily) {
+    case 'fira-code':
+      return "'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace";
+    case 'system-mono':
+      return "ui-monospace, 'SFMono-Regular', 'Consolas', 'Monaco', 'Liberation Mono', 'Courier New', monospace";
+    case 'jetbrains-mono':
+    default:
+      return "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace";
   }
-
-  const strippedName = fileName.replace(/\.(usd|usda|usdc|usdz)$/i, '');
-  return `${strippedName}.equivalent.mjcf`;
 };
 
 const getDocumentMeta = (
@@ -250,17 +297,16 @@ const attachFindWidgetTooltipSuppression = (
   };
 };
 
-const getDocumentValidationErrors = (
-  code: string,
-  documentFlavor: SourceCodeDocumentFlavor,
+const toWorkerValidationError = (
+  error: unknown,
   t: (typeof editorTexts)['en'],
-): ValidationError[] => {
-  if (documentFlavor !== 'urdf') {
-    return [];
-  }
-
-  return validateUrdfDocument(code, t);
-};
+): ValidationError[] => [
+  {
+    line: 1,
+    column: 1,
+    message: `${t.cannotParseXml}: ${error instanceof Error ? error.message : String(error)}`,
+  },
+];
 
 export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   code,
@@ -271,22 +317,27 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   lang = 'en',
   documentFlavor = 'urdf',
   readOnly = false,
+  autoApplyEnabled = true,
+  onDownload,
 }) => {
+  const codeEditorFontFamily = useUIStore((state) => state.codeEditorFontFamily);
+  const codeEditorFontSize = useUIStore((state) => state.codeEditorFontSize);
   const t = editorTexts[lang];
   const isEquivalentMjcfPreview = documentFlavor === 'equivalent-mjcf';
   const isReadOnly = readOnly || documentFlavor === 'equivalent-mjcf';
-  const documentMeta = useMemo(
-    () => getDocumentMeta(documentFlavor, t),
-    [documentFlavor, t],
-  );
+  const documentMeta = useMemo(() => getDocumentMeta(documentFlavor, t), [documentFlavor, t]);
   const [isDirty, setIsDirty] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<ValidationError[]>(
-    () => getDocumentValidationErrors(code, documentFlavor, t),
-  );
+  const [isValidationPending, setIsValidationPending] = useState(documentMeta.supportsValidation);
+  const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
+  const [isApplying, setIsApplying] = useState(false);
+  const [autoApplyBlockedCode, setAutoApplyBlockedCode] = useState<string | null>(null);
   const [currentCode, setCurrentCode] = useState(code);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAppliedCodeRef = useRef<string | null>(null);
+  const pendingAppliedBaseCodeRef = useRef<string | null>(null);
+  const validationRequestSequenceRef = useRef(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const editorRef = useRef<any>(null);
   const editorMountVersionRef = useRef(0);
@@ -313,6 +364,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   useEffect(() => {
     return () => {
       editorMountVersionRef.current += 1;
+      validationRequestSequenceRef.current += 1;
       if (copyTimerRef.current) {
         clearTimeout(copyTimerRef.current);
       }
@@ -320,32 +372,83 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, []);
 
   useEffect(() => {
+    const awaitingParentApplySync =
+      pendingAppliedCodeRef.current !== null &&
+      pendingAppliedCodeRef.current === currentCode &&
+      code === pendingAppliedBaseCodeRef.current;
+
+    if (awaitingParentApplySync) {
+      return;
+    }
+
+    if (pendingAppliedCodeRef.current !== null && code !== pendingAppliedBaseCodeRef.current) {
+      pendingAppliedCodeRef.current = null;
+      pendingAppliedBaseCodeRef.current = null;
+    }
+
     if (editorRef.current && code !== currentCode && !isDirty) {
       editorRef.current.setValue(code);
       setCurrentCode(code);
+      setAutoApplyBlockedCode(null);
+      return;
     }
-  }, [code, currentCode, documentFlavor, isDirty, t]);
+
+    if (code === currentCode && pendingAppliedCodeRef.current === code) {
+      pendingAppliedCodeRef.current = null;
+      pendingAppliedBaseCodeRef.current = null;
+    }
+  }, [code, currentCode, isDirty]);
 
   useEffect(() => {
     if (!documentMeta.supportsValidation) {
       setValidationErrors([]);
+      setIsValidationPending(false);
+      validationRequestSequenceRef.current += 1;
       return undefined;
     }
 
+    const requestSequence = validationRequestSequenceRef.current + 1;
+    validationRequestSequenceRef.current = requestSequence;
+    setIsValidationPending(true);
+
     const timeout = window.setTimeout(() => {
-      const nextErrors = getDocumentValidationErrors(currentCode, documentFlavor, t);
-      startTransition(() => {
-        setValidationErrors(nextErrors);
-      });
+      void requestXmlValidationWithWorker(currentCode, documentFlavor, t)
+        .then((nextErrors) => {
+          if (validationRequestSequenceRef.current !== requestSequence) {
+            return;
+          }
+          startTransition(() => {
+            setValidationErrors(nextErrors);
+            setIsValidationPending(false);
+          });
+        })
+        .catch((error) => {
+          if (validationRequestSequenceRef.current !== requestSequence) {
+            return;
+          }
+          console.error('XML validation worker request failed:', error);
+          startTransition(() => {
+            setValidationErrors(toWorkerValidationError(error, t));
+            setIsValidationPending(false);
+          });
+        });
     }, getUrdfValidationDebounceMs(currentCode.length));
 
-    return () => window.clearTimeout(timeout);
+    return () => {
+      window.clearTimeout(timeout);
+      if (validationRequestSequenceRef.current === requestSequence) {
+        validationRequestSequenceRef.current += 1;
+      }
+    };
   }, [currentCode, documentFlavor, documentMeta.supportsValidation, t]);
 
   useEffect(() => {
     if (
-      !monacoInstance
-      || (documentMeta.language !== 'urdf' && documentMeta.language !== 'xacro')
+      !monacoInstance ||
+      (documentFlavor !== 'urdf' &&
+        documentFlavor !== 'xacro' &&
+        documentFlavor !== 'sdf' &&
+        documentFlavor !== 'mjcf')
     ) {
       return undefined;
     }
@@ -358,17 +461,24 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       snippet: completionItemKind.Snippet,
     } as const;
 
-    const disposable = monacoInstance.languages.registerCompletionItemProvider(documentMeta.language, {
+    const disposable = monacoInstance.languages.registerCompletionItemProvider('xml', {
       triggerCharacters: ['<', ' ', ':', '"'],
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      provideCompletionItems: (model: any, position: any) => {
+      provideCompletionItems: async (model: any, position: any) => {
         const textBeforeCursor = model.getValueInRange({
           startLineNumber: 1,
           startColumn: 1,
           endLineNumber: position.lineNumber,
           endColumn: position.column,
         });
-        const entries = getXmlCompletionEntries(documentFlavor, textBeforeCursor);
+        let entries: Awaited<ReturnType<typeof requestXmlCompletionsWithWorker>>;
+
+        try {
+          entries = await requestXmlCompletionsWithWorker(documentFlavor, textBeforeCursor);
+        } catch (error) {
+          console.error('XML completion worker request failed:', error);
+          return { suggestions: [] };
+        }
 
         if (entries.length === 0) {
           return { suggestions: [] };
@@ -383,22 +493,25 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         };
 
         return {
-          suggestions: entries.map((entry) => ({
-            label: entry.label,
-            kind: completionKindMap[entry.kind],
-            insertText: entry.insertText,
-            insertTextRules: entry.insertAsSnippet
-              ? monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet
-              : undefined,
-            documentation: entry.documentation,
-            range,
-          })),
+          suggestions: entries.map((entry) => {
+            const resolvedEntry = resolveXmlCompletionEntryForContext(entry, textBeforeCursor);
+            return {
+              label: resolvedEntry.label,
+              kind: completionKindMap[resolvedEntry.kind],
+              insertText: resolvedEntry.insertText,
+              insertTextRules: resolvedEntry.insertAsSnippet
+                ? monacoInstance.languages.CompletionItemInsertTextRule.InsertAsSnippet
+                : undefined,
+              documentation: resolvedEntry.documentation,
+              range,
+            };
+          }),
         };
       },
     });
 
     return () => disposable.dispose();
-  }, [documentFlavor, documentMeta.language, monacoInstance]);
+  }, [documentFlavor, monacoInstance]);
 
   useEffect(() => {
     if (!monacoInstance || !editorRef.current) {
@@ -431,27 +544,71 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           endLineNumber: error.endLine || error.line,
           endColumn: error.endColumn || error.column || 1,
           message: error.message,
-          source: 'URDF Validator',
+          source: 'XML Validator',
         }))
       : [];
 
     monacoInstance.editor.setModelMarkers(model, 'urdf-validator', markers);
   }, [documentMeta.supportsValidation, monacoInstance, validationErrors]);
 
-  const handleApply = useCallback(() => {
-    if (isReadOnly || !editorRef.current) {
-      return;
-    }
+  const handleApply = useCallback(
+    async (trigger: 'manual' | 'auto' = 'manual') => {
+      if (isReadOnly || !editorRef.current || isApplying) {
+        return false;
+      }
 
-    const value = editorRef.current.getValue();
-    const nextValidationErrors = getDocumentValidationErrors(value, documentFlavor, t);
-    if (nextValidationErrors.length > 0) {
-      setValidationErrors(nextValidationErrors);
-    }
+      const value = editorRef.current.getValue();
+      if (documentMeta.supportsValidation) {
+        void requestXmlValidationWithWorker(value, documentFlavor, t)
+          .then((nextErrors) => {
+            startTransition(() => {
+              setValidationErrors(nextErrors);
+            });
+          })
+          .catch((error) => {
+            console.error('XML validation worker request failed during apply:', error);
+            startTransition(() => {
+              setValidationErrors(toWorkerValidationError(error, t));
+            });
+          });
+      }
 
-    onCodeChange(value);
-    setIsDirty(false);
-  }, [documentFlavor, isReadOnly, onCodeChange, t]);
+      setIsApplying(true);
+
+      try {
+        const didApply = await Promise.resolve(onCodeChange(value));
+        if (didApply) {
+          pendingAppliedCodeRef.current = value;
+          pendingAppliedBaseCodeRef.current = code;
+          setIsDirty(false);
+          setAutoApplyBlockedCode(null);
+          return true;
+        }
+
+        if (trigger === 'auto') {
+          setAutoApplyBlockedCode(value);
+        }
+        return false;
+      } catch (error) {
+        if (trigger === 'auto') {
+          setAutoApplyBlockedCode(value);
+        }
+        console.error('Failed to apply source code changes:', error);
+        return false;
+      } finally {
+        setIsApplying(false);
+      }
+    },
+    [
+      code,
+      documentFlavor,
+      documentMeta.supportsValidation,
+      isApplying,
+      isReadOnly,
+      onCodeChange,
+      t,
+    ],
+  );
 
   const handleEditorChange = useCallback(
     (value: string | undefined) => {
@@ -461,8 +618,11 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
       setCurrentCode(value);
       setIsDirty(isReadOnly ? false : value !== code);
+      if (autoApplyBlockedCode && autoApplyBlockedCode !== value) {
+        setAutoApplyBlockedCode(null);
+      }
     },
-    [code, isReadOnly],
+    [autoApplyBlockedCode, code, isReadOnly],
   );
 
   const handleCopy = useCallback(() => {
@@ -475,19 +635,13 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, [currentCode]);
 
   const handleDownload = useCallback(() => {
-    if (isEquivalentMjcfPreview) {
-      return;
-    }
-    const blob = new Blob([currentCode], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = getDownloadFileName(fileName, documentFlavor);
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-  }, [currentCode, documentFlavor, fileName, isEquivalentMjcfPreview]);
+    downloadSourceCodeDocument({
+      content: currentCode,
+      fileName,
+      documentFlavor,
+      onDownload,
+    });
+  }, [currentCode, documentFlavor, fileName, onDownload]);
 
   useEffect(() => {
     if (isReadOnly) {
@@ -498,7 +652,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault();
         if (isDirty) {
-          handleApply();
+          void handleApply('manual');
         }
       }
     };
@@ -506,6 +660,23 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleApply, isDirty, isReadOnly]);
+
+  const handleAutoApply = useCallback(() => {
+    void handleApply('auto');
+  }, [handleApply]);
+
+  useSourceCodeEditorAutoApply({
+    enabled: autoApplyEnabled,
+    currentCode,
+    isDirty,
+    isReadOnly,
+    supportsValidation: documentMeta.supportsValidation,
+    validationErrorCount: validationErrors.length,
+    isValidationPending,
+    isApplying,
+    autoApplyBlockedCode,
+    onAutoApply: handleAutoApply,
+  });
 
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -527,35 +698,23 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     editorMountVersionRef.current = mountVersion;
     editorRef.current = editor;
 
-    void import('../utils/monacoLoader')
-      .then(({ ensureSourceCodeEditorLanguages }) => {
-        if (editorMountVersionRef.current !== mountVersion || editorRef.current !== editor) {
-          return;
-        }
+    if (editorMountVersionRef.current !== mountVersion || editorRef.current !== editor) {
+      return;
+    }
 
-        setMonacoInstance(ensureSourceCodeEditorLanguages(monaco));
-        setIsEditorReady(true);
-        requestAnimationFrame(() => {
-          if (editorMountVersionRef.current === mountVersion && editorRef.current) {
-            editorRef.current.layout();
-          }
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to initialize Monaco editor languages:', error);
+    try {
+      setMonacoInstance(ensureSourceCodeEditorLanguages(monaco));
+    } catch (error) {
+      console.error('Failed to initialize Monaco editor languages:', error);
+      setMonacoInstance(monaco);
+    }
 
-        if (editorMountVersionRef.current !== mountVersion || editorRef.current !== editor) {
-          return;
-        }
-
-        setMonacoInstance(monaco);
-        setIsEditorReady(true);
-        requestAnimationFrame(() => {
-          if (editorMountVersionRef.current === mountVersion && editorRef.current) {
-            editorRef.current.layout();
-          }
-        });
-      });
+    setIsEditorReady(true);
+    requestAnimationFrame(() => {
+      if (editorMountVersionRef.current === mountVersion && editorRef.current) {
+        editorRef.current.layout();
+      }
+    });
   }, []);
 
   return (
@@ -592,17 +751,23 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         <div className="flex items-center gap-1">
           {!isReadOnly ? (
             <button
-              onClick={handleApply}
-              disabled={!isDirty}
+              onClick={() => {
+                void handleApply('manual');
+              }}
+              disabled={!isDirty || isApplying}
               className={`${HEADER_PRIMARY_ACTION_CLASS} ${
-                isDirty
+                isDirty || isApplying
                   ? 'bg-system-blue-solid text-white hover:bg-system-blue-hover'
                   : 'cursor-not-allowed bg-transparent text-text-tertiary'
               }`}
               title={t.saveTooltip}
               type="button"
             >
-              <Save className="h-3 w-3" />
+              {isApplying ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Save className="h-3 w-3" />
+              )}
               <span>{t.save}</span>
             </button>
           ) : null}
@@ -631,7 +796,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           </button>
         </div>
       }
-      className={`fixed z-50 flex flex-col overflow-hidden rounded-lg border border-border-black bg-panel-bg text-text-primary shadow-2xl ${
+      className={`fixed z-[220] flex flex-col overflow-hidden rounded-lg border border-border-black bg-panel-bg text-text-primary shadow-2xl ${
         isMaximized ? 'inset-0 !h-full !w-full !transform-none rounded-none' : ''
       }`}
       headerClassName="flex h-10 items-center justify-between gap-3 border-b border-border-black bg-element-bg px-3 select-none"
@@ -678,9 +843,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
             onChange={handleEditorChange}
             options={{
               minimap: { enabled: false },
-              fontSize: 13,
-              fontFamily:
-                "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace",
+              fontSize: codeEditorFontSize,
+              fontFamily: resolveCodeEditorFontFamily(codeEditorFontFamily),
               fontLigatures: true,
               scrollBeyondLastLine: false,
               wordWrap: 'on',
@@ -759,7 +923,9 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
           ) : null}
           <span>{documentMeta.label}</span>
           <span aria-hidden="true">•</span>
-          <span>{isMaximized ? t.maximized : `${Math.round(size.width)} × ${Math.round(size.height)}`}</span>
+          <span>
+            {isMaximized ? t.maximized : `${Math.round(size.width)} × ${Math.round(size.height)}`}
+          </span>
         </div>
       </div>
     </DraggableWindow>

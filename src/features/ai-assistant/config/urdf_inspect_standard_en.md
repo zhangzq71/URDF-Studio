@@ -10,9 +10,79 @@ Theoretical Maximum Score: $Score_{max} = n \times 10$ (where n is the number of
 
 Final Achievement Rate: $Rate = (Score_{total} / Score_{max}) \times 100\%$
 
+0. URDF Spec Compliance
+
+Category ID: spec
+Category Weight: 0.20
+
+0.1 Robot Root Contract
+
+Item ID: robot_root_contract
+
+Criteria:
+
+The document must have a single `<robot>` root with a stable `name`.
+
+Top-level children should be compatible with the intended consumer: core URDF (`link`, `joint`, `material`) plus clearly documented extensions (`transmission`, `gazebo`, `sensor`, custom tags).
+
+Scoring Reference: Missing/invalid root scores 0 points; undocumented extension mixing scores 4-6 points.
+
+0.2 Link / Joint Required Fields
+
+Item ID: link_joint_required_fields
+
+Criteria:
+
+Every `link` must have a unique `name`.
+
+Every `joint` must have `name`, `type`, `<parent link="...">`, and `<child link="...">`.
+
+Parent/child references must point to existing links.
+
+Scoring Reference: Missing required fields or broken references score 0-3 points.
+
+0.3 Tree Topology Constraint
+
+Item ID: topology_tree_constraint
+
+Criteria:
+
+Core URDF models are trees, not general graphs.
+
+There should be exactly one logical root, no orphan links, and no closed loops unless a downstream tool adds extra constraints outside core URDF semantics.
+
+Scoring Reference: Multiple roots, disconnected subgraphs, or closed-loop encoding in plain URDF score 0-2 points.
+
+0.4 Joint Semantic Rules
+
+Item ID: joint_semantics
+
+Criteria:
+
+Axis, limits, mimic, calibration, and safety-related tags must match the joint type semantics.
+
+`continuous` joints should not rely on position bounds.
+
+`mimic` targets must exist and the relationship should be intentional/documented.
+
+Scoring Reference: Type-incompatible tags or contradictory joint semantics score 2-5 points.
+
+0.5 Extension Compatibility
+
+Item ID: extension_compatibility
+
+Criteria:
+
+`transmission`, `gazebo`, `sensor`, and custom tags are extension surfaces, not universally supported core URDF.
+
+Review whether the file documents its intended consumers and whether unsupported extensions are safely ignorable or required for correctness.
+
+Scoring Reference: Hidden consumer-specific dependencies or undocumented required extensions score 3-6 points.
+
 1. Physical Plausibility
 
 Category ID: physical
+Category Weight: 0.20
 
 1.1 Mass & Inertia Validity
 
@@ -55,6 +125,7 @@ Scoring Reference: Obvious deviation in parameters between both sides scores 6 p
 2. Link Frames (Coordinate System Position & Orientation)
 
 Category ID: frames
+Category Weight: 0.15
 
 2.1 Joint Collinearity
 
@@ -97,6 +168,7 @@ Scoring Reference: Offset or asymmetric center scores 5 points.
 3. Assembly Logic
 
 Category ID: assembly
+Category Weight: 0.10
 
 3.1 Actuator Mass Attribution
 
@@ -125,6 +197,7 @@ Scoring Reference: Confused mass allocation of transmission components scores 6 
 4. Kinematics & Simulation Properties
 
 Category ID: simulation
+Category Weight: 0.15
 
 4.1 Topology Validation
 
@@ -153,6 +226,7 @@ Scoring Reference: Not simplified scores 5 points.
 5. Hardware Parameter Configuration
 
 Category ID: hardware
+Category Weight: 0.10
 
 5.1 Motor Torque & Velocity Limits
 
@@ -173,6 +247,7 @@ Scoring Reference: Missing configuration scores 7 points.
 6. Naming Conventions
 
 Category ID: naming
+Category Weight: 0.10
 
 6.1 Uniqueness & Descriptiveness
 
@@ -185,4 +260,3 @@ Names must be globally unique and semantic (e.g., L_hip_pitch_link).
 Follow snake_case style.
 
 Scoring Reference: Duplicate names score 0 points; inconsistent style scores 8 points.
-

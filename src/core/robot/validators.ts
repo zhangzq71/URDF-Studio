@@ -43,6 +43,10 @@ export const validateLink = (link: UrdfLink): ValidationResult => {
             if (dims.x <= 0 || dims.y <= 0 || dims.z <= 0) {
                 errors.push({ type: 'error', message: 'Box dimensions must be positive', path });
             }
+        } else if (geometry.type === GeometryType.PLANE) {
+            if (dims.x <= 0 || dims.y <= 0) {
+                errors.push({ type: 'error', message: 'Plane width and depth must be positive', path });
+            }
         } else if (geometry.type === GeometryType.CYLINDER) {
             if (dims.x <= 0 || dims.y <= 0) {
                 errors.push({ type: 'error', message: 'Cylinder radius and length must be positive', path });
@@ -54,6 +58,17 @@ export const validateLink = (link: UrdfLink): ValidationResult => {
         } else if (geometry.type === GeometryType.SPHERE) {
             if (dims.x <= 0) {
                 errors.push({ type: 'error', message: 'Sphere radius must be positive', path });
+            }
+        } else if (geometry.type === GeometryType.ELLIPSOID) {
+            if (dims.x <= 0 || dims.y <= 0 || dims.z <= 0) {
+                errors.push({ type: 'error', message: 'Ellipsoid radii must be positive', path });
+            }
+        } else if (geometry.type === GeometryType.HFIELD) {
+            const hfieldSize = geometry.mjcfHfield?.size;
+            if (!hfieldSize) {
+                errors.push({ type: 'warning', message: 'Height field geometry is missing MJCF asset metadata', path });
+            } else if (hfieldSize.radiusX <= 0 || hfieldSize.radiusY <= 0 || hfieldSize.elevationZ < 0 || hfieldSize.baseZ < 0) {
+                errors.push({ type: 'error', message: 'Height field asset dimensions must be non-negative, with positive width/depth', path });
             }
         }
     };

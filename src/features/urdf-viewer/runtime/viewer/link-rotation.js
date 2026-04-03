@@ -1,9 +1,9 @@
 import { MathUtils, Matrix4, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { getRenderRobotMetadataSnapshot, warmupRenderRobotMetadataSnapshot, } from "./robot-metadata.js";
+import { disposeUsdStageHandle } from "./usd-stage-handle.js";
 import { axisTokenFromAxisVector, buildRuntimeLinkPathIndex, clampJointAnglePreservingNeutralZero, cloneJointCatalogEntry, extractPhysicsPayloadAssetPathsFromLayerText, getInteractiveJointLimits, getJointPathCandidatesForLinkPath, getLinkPathFromMeshId, getRootPathFromLinkPath, getRootPathsFromRenderInterface, isControllableRevoluteJointTypeName, isPhysicsJointTypeName, jointCatalogCacheByStagePath, maxJointCatalogCacheEntries, normalizeAxisToken, normalizeAxisVector, normalizeLimits, pickRuntimeParentLinkPath, resolveRuntimeLinkPathsFromSourcePath, resolveUsdAssetPath, rotateAxisByQuaternion, roundAngleDegrees, safeGetPrimAtPath, safeGetPrimAttribute, safeGetPrimTypeName, toFiniteNumber, toQuaternionFromValue, toUsdPathListFromValue, toVector3FromValue, } from "./link-rotation/shared.js";
 import { ingestJointCatalogFromStage, } from "./link-rotation/catalog-ingestion.js";
 import { resolveRevoluteDragDelta } from "./link-rotation/drag-delta.js";
-import { parseBooleanFlag } from "./path-utils.js";
 import { resolveLinkRotationCursor } from "./link-rotation-cursor.js";
 export class LinkRotationController {
     constructor() {
@@ -31,6 +31,8 @@ export class LinkRotationController {
         this.posedLinkFrameMatrixByLinkPath = new Map();
         this.subtreeIndexDirty = true;
         this.jointCatalogBuildPromise = null;
+        this.jointCatalogStatus = "idle";
+        this.jointCatalogError = null;
         this.lastJointCatalogBuildAttemptAtMs = 0;
         this.hasAppliedJointPose = false;
         this.jointPoseDirty = false;
@@ -175,6 +177,7 @@ export class LinkRotationController {
         this.lastKnownMeshCount = -1;
         this.lastIdleBasePoseRefreshAtMs = 0;
         this.lastJointCatalogBuildAttemptAtMs = 0;
+        this.setJointCatalogStatus("idle");
     }
     setStageSourcePath(path) {
         const normalized = String(path || "").trim();
@@ -210,15 +213,17 @@ export class LinkRotationController {
                 suppressIdleRefresh: true,
             });
         }
-        catch { }
+        catch (error) {
+            console.error("[link-rotation] Failed to prewarm joint pose pipeline.", error);
+        }
     }
     async prewarmJointCatalog() {
         this.ensureJointCatalogBuildScheduled();
         try {
             await this.ensureJointCatalogReady();
         }
-        catch {
-            // Keep preload best-effort.
+        catch (error) {
+            console.error("[link-rotation] Failed to prewarm joint catalog.", error);
         }
     }
     prewarmInteractivePoseCaches() {
@@ -271,10 +276,6 @@ export class LinkRotationController {
         return this.getCurrentLinkFrameMatrixForLinkPath(linkPath);
     }
     async getAllJointInfos() {
-        const profileJointCatalog = /(?:\?|&)profileJointCatalog=(?:1|true|yes|on)(?:&|$)/i.test(String(window.location?.search || ""));
-        const profileStartMs = (typeof performance !== "undefined" && typeof performance.now === "function")
-            ? performance.now()
-            : Date.now();
         this.ensureJointCatalogBuildScheduled();
         await this.ensureJointCatalogReady({ maxWaitMs: this.jointCatalogUiWaitBudgetMs });
         const linkPaths = new Set();
@@ -284,8 +285,7 @@ export class LinkRotationController {
         for (const linkPath of this.linkJointStateByLinkPath.keys()) {
             linkPaths.add(linkPath);
         }
-        const query = new URLSearchParams(String(window?.location?.search || ""));
-        const scanMeshLinksForJoints = parseBooleanFlag(query.get("scanMeshLinksForJoints"), false);
+        const scanMeshLinksForJoints = false;
         if (scanMeshLinksForJoints && this.renderInterface?.meshes) {
             for (const meshId of Object.keys(this.renderInterface.meshes)) {
                 const linkPath = getLinkPathFromMeshId(meshId);
@@ -338,6 +338,7 @@ export class LinkRotationController {
         this.subtreeIndexDirty = true;
         this.jointCatalogBuildPromise = null;
         this.lastJointCatalogBuildAttemptAtMs = 0;
+        this.setJointCatalogStatus("idle");
         this.hasAppliedJointPose = false;
         this.jointPoseDirty = false;
         this.basePoseDirty = true;
@@ -349,6 +350,10 @@ export class LinkRotationController {
         if (this.controls)
             this.controls.enabled = true;
         this.updateCursor();
+    }
+    setJointCatalogStatus(status, error = null) {
+        this.jointCatalogStatus = status;
+        this.jointCatalogError = error ?? null;
     }
     apply(renderInterface, options = {}) {
         const force = options.force === true;
@@ -1230,36 +1235,37 @@ export class LinkRotationController {
             return;
         const maxWaitMs = Number(options.maxWaitMs);
         if (!Number.isFinite(maxWaitMs) || maxWaitMs < 0) {
-            try {
-                await buildPromise;
-            }
-            catch { }
+            await buildPromise;
             return;
         }
         if (maxWaitMs <= 0)
             return;
         let timeoutHandle = null;
+        const timeoutToken = Symbol("joint-catalog-timeout");
         try {
             await Promise.race([
-                buildPromise,
+                buildPromise.then(() => null),
                 new Promise((resolve) => {
-                    timeoutHandle = window.setTimeout(resolve, maxWaitMs);
+                    timeoutHandle = window.setTimeout(() => resolve(timeoutToken), maxWaitMs);
                 }),
             ]);
         }
-        catch { }
-        if (timeoutHandle !== null) {
-            window.clearTimeout(timeoutHandle);
+        finally {
+            if (timeoutHandle !== null) {
+                window.clearTimeout(timeoutHandle);
+            }
         }
     }
     startJointCatalogBuildIfNeeded() {
         if (this.jointCatalogBuildPromise)
             return this.jointCatalogBuildPromise;
         if (this.jointCatalogByLinkPath.size > 0 || this.linkParentPathByLinkPath.size > 0) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
         const cacheKey = this.getJointCatalogCacheKey();
         if (cacheKey && this.restoreJointCatalogFromCache(cacheKey)) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
         const runtimeLinkPathIndex = buildRuntimeLinkPathIndex(this.renderInterface);
@@ -1273,23 +1279,54 @@ export class LinkRotationController {
             && (nowMs - this.lastJointCatalogBuildAttemptAtMs) < this.jointCatalogRebuildCooldownMs) {
             return null;
         }
-        const cachedRenderSnapshot = getRenderRobotMetadataSnapshot(this.renderInterface, this.stageSourcePath);
+        let cachedRenderSnapshot = null;
+        try {
+            cachedRenderSnapshot = getRenderRobotMetadataSnapshot(this.renderInterface, this.stageSourcePath, {
+                strictErrors: true,
+            });
+        }
+        catch (error) {
+            const errorText = String(error?.message || error || "").trim() || "joint-catalog-build-failed";
+            this.setJointCatalogStatus("error", errorText);
+            const buildPromise = Promise.reject(error).finally(() => {
+                this.jointCatalogBuildPromise = null;
+            });
+            void buildPromise.catch(() => { });
+            this.jointCatalogBuildPromise = buildPromise;
+            return buildPromise;
+        }
         const importedFromCachedSnapshot = this.ingestJointCatalogFromRenderSnapshot(cachedRenderSnapshot, runtimeLinkPathIndex);
         if (importedFromCachedSnapshot > 0) {
+            this.setJointCatalogStatus("ready");
             return Promise.resolve();
         }
-        return null;
+        this.lastJointCatalogBuildAttemptAtMs = nowMs;
+        this.setJointCatalogStatus("loading");
+        const initialStage = this.renderInterface?.getStage?.() || null;
+        const buildPromise = Promise.resolve()
+            .then(async () => {
+            await this.buildJointCatalog(initialStage);
+            if (cacheKey && (this.jointCatalogByLinkPath.size > 0 || this.linkParentPathByLinkPath.size > 0)) {
+                this.saveJointCatalogToCache(cacheKey);
+            }
+            this.setJointCatalogStatus("ready");
+        })
+            .catch((error) => {
+            const errorText = String(error?.message || error || "").trim() || "joint-catalog-build-failed";
+            this.setJointCatalogStatus("error", errorText);
+            throw error;
+        })
+            .finally(() => {
+            this.jointCatalogBuildPromise = null;
+        });
+        this.jointCatalogBuildPromise = buildPromise;
+        return buildPromise;
     }
     getDurationParamMsFromQuery(paramName, fallbackMs, minMs, maxMs) {
-        const search = String(window?.location?.search || "");
-        const params = new URLSearchParams(search);
-        const requestedRaw = params.get(paramName);
-        if (requestedRaw === null || requestedRaw === "")
-            return fallbackMs;
-        const requested = Number(requestedRaw);
-        if (!Number.isFinite(requested))
-            return fallbackMs;
-        return Math.max(minMs, Math.min(maxMs, Math.floor(requested)));
+        void paramName;
+        void minMs;
+        void maxMs;
+        return fallbackMs;
     }
     async waitForBrowserIdleSlice(timeoutMs) {
         const normalizedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
@@ -1373,7 +1410,6 @@ export class LinkRotationController {
         }
     }
     async buildJointCatalog(initialStage) {
-        const profileJointCatalog = /(?:\?|&)profileJointCatalog=(?:1|true|yes|on)(?:&|$)/i.test(String(window.location?.search || ""));
         const runtimeLinkPathIndex = buildRuntimeLinkPathIndex(this.renderInterface);
         const importedFromRenderSnapshot = this.ingestJointCatalogFromRenderSnapshot(await warmupRenderRobotMetadataSnapshot(this.renderInterface, {
             stageSourcePath: this.stageSourcePath,
@@ -1390,30 +1426,44 @@ export class LinkRotationController {
         const rootPaths = Array.from(rootPathSet);
         let stage = initialStage;
         const usdModule = window.USD;
+        let ownedRootStage = null;
         if (!stage && this.stageSourcePath && usdModule?.UsdStage?.Open) {
-            stage = await this.safeOpenUsdStage(usdModule, this.stageSourcePath);
+            ownedRootStage = await this.safeOpenUsdStage(usdModule, this.stageSourcePath);
+            stage = ownedRootStage;
         }
-        if (!stage)
-            return;
-        const fallbackDelayMs = Math.max(0, Math.floor(this.jointCatalogStageFallbackDelayMs));
-        if (fallbackDelayMs > 0) {
-            await new Promise((resolve) => window.setTimeout(resolve, fallbackDelayMs));
+        if (!stage) {
+            const stageSuffix = this.stageSourcePath ? ` for ${this.stageSourcePath}` : "";
+            throw new Error(`[link-rotation] Failed to resolve USD stage for joint catalog build${stageSuffix}.`);
         }
-        await this.waitForBrowserIdleSlice(this.jointCatalogStageFallbackIdleTimeoutMs);
-        const rootLayerText = this.safeExportRootLayerText(stage);
-        this.ingestJointCatalogFromStage(stage, rootLayerText, rootPaths, runtimeLinkPathIndex);
-        const physicsPayloadAssets = extractPhysicsPayloadAssetPathsFromLayerText(rootLayerText);
-        if (physicsPayloadAssets.length > 0 && usdModule?.UsdStage?.Open) {
-            for (const payloadAssetPath of physicsPayloadAssets) {
-                const resolvedPath = resolveUsdAssetPath(this.stageSourcePath, payloadAssetPath);
-                if (!resolvedPath)
-                    continue;
-                const payloadStage = await this.safeOpenUsdStage(usdModule, resolvedPath);
-                if (!payloadStage)
-                    continue;
-                const payloadText = this.safeExportRootLayerText(payloadStage);
-                this.ingestJointCatalogFromStage(payloadStage, payloadText, rootPaths, runtimeLinkPathIndex);
+        try {
+            const fallbackDelayMs = Math.max(0, Math.floor(this.jointCatalogStageFallbackDelayMs));
+            if (fallbackDelayMs > 0) {
+                await new Promise((resolve) => window.setTimeout(resolve, fallbackDelayMs));
             }
+            await this.waitForBrowserIdleSlice(this.jointCatalogStageFallbackIdleTimeoutMs);
+            const rootLayerText = this.safeExportRootLayerText(stage);
+            this.ingestJointCatalogFromStage(stage, rootLayerText, rootPaths, runtimeLinkPathIndex);
+            const physicsPayloadAssets = extractPhysicsPayloadAssetPathsFromLayerText(rootLayerText);
+            if (physicsPayloadAssets.length > 0 && usdModule?.UsdStage?.Open) {
+                for (const payloadAssetPath of physicsPayloadAssets) {
+                    const resolvedPath = resolveUsdAssetPath(this.stageSourcePath, payloadAssetPath);
+                    if (!resolvedPath)
+                        continue;
+                    const payloadStage = await this.safeOpenUsdStage(usdModule, resolvedPath);
+                    if (!payloadStage)
+                        continue;
+                    try {
+                        const payloadText = this.safeExportRootLayerText(payloadStage);
+                        this.ingestJointCatalogFromStage(payloadStage, payloadText, rootPaths, runtimeLinkPathIndex);
+                    }
+                    finally {
+                        disposeUsdStageHandle(usdModule, payloadStage);
+                    }
+                }
+            }
+        }
+        finally {
+            disposeUsdStageHandle(usdModule, ownedRootStage);
         }
     }
     safeExportRootLayerText(stage) {
@@ -1426,8 +1476,12 @@ export class LinkRotationController {
             const exported = rootLayer.ExportToString();
             return typeof exported === "string" ? exported : String(exported || "");
         }
-        catch {
-            return "";
+        catch (error) {
+            const stageSuffix = this.stageSourcePath ? ` for ${this.stageSourcePath}` : "";
+            console.error(`[link-rotation] Failed to export USD root layer text${stageSuffix}.`, error);
+            throw new Error(`[link-rotation] Failed to export USD root layer text${stageSuffix}.`, {
+                cause: error,
+            });
         }
     }
     async safeOpenUsdStage(usdModule, stagePath) {
@@ -1441,8 +1495,11 @@ export class LinkRotationController {
             }
             return openedStage || null;
         }
-        catch {
-            return null;
+        catch (error) {
+            console.error(`[link-rotation] Failed to open USD stage: ${stagePath}`, error);
+            throw new Error(`[link-rotation] Failed to open USD stage: ${stagePath}`, {
+                cause: error,
+            });
         }
     }
     ingestJointCatalogFromStage(stage, layerText, fallbackRootPaths, runtimeLinkPathIndex) {

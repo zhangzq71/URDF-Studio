@@ -21,16 +21,21 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
   (globalThis as { FocusEvent?: typeof FocusEvent }).FocusEvent = dom.window.FocusEvent;
   (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
@@ -65,7 +70,11 @@ async function destroyComponentRoot(dom: JSDOM, root: Root) {
   dom.window.close();
 }
 
-async function renderExportDialog(root: Root, onExport: (config: ExportDialogConfig) => void) {
+async function renderExportDialog(
+  root: Root,
+  onExport: (config: ExportDialogConfig) => void,
+  props: Partial<React.ComponentProps<typeof ExportDialog>> = {},
+) {
   await act(async () => {
     root.render(
       React.createElement(ExportDialog, {
@@ -73,6 +82,7 @@ async function renderExportDialog(root: Root, onExport: (config: ExportDialogCon
         onExport,
         lang: 'zh',
         canExportUsd: true,
+        ...props,
       }),
     );
   });
@@ -84,6 +94,16 @@ function getButtonByText(container: Element, text: string): HTMLButtonElement {
   );
   assert.ok(button, `button "${text}" should exist`);
   return button as HTMLButtonElement;
+}
+
+function getRequiredElement<T extends Element>(
+  container: ParentNode,
+  selector: string,
+  label: string,
+): T {
+  const element = container.querySelector(selector);
+  assert.ok(element, `${label} should exist`);
+  return element as T;
 }
 
 async function click(element: Element) {
@@ -139,6 +159,68 @@ test('MJCF, URDF, SDF, and USD exports expose a custom compression mode with a s
   }
 });
 
+test('workspace export dialog keeps project export separate from the format picker', async () => {
+  const { dom, container, root } = createComponentRoot();
+  let exportedConfig: ExportDialogConfig | null = null;
+
+  try {
+    await renderExportDialog(
+      root,
+      (config) => {
+        exportedConfig = config;
+      },
+      {
+        allowProjectExport: true,
+        defaultFormat: 'project',
+      },
+    );
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.doesNotMatch(formatPicker.textContent ?? '', /工程 \(\.usp\)/);
+
+    const projectCard = getRequiredElement<HTMLElement>(
+      container,
+      '[data-project-export-card]',
+      'project export card',
+    );
+    assert.match(projectCard.textContent ?? '', /导出当前工作区工程/);
+
+    const projectExportButton = getRequiredElement<HTMLButtonElement>(
+      container,
+      '[data-project-export-button]',
+      'project export button',
+    );
+    await click(projectExportButton);
+
+    assert.ok(exportedConfig, 'project export should submit a config');
+    assert.equal(exportedConfig.format, 'project');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('project export format stays hidden when project export is not enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.doesNotMatch(formatPicker.textContent ?? '', /工程 \(\.usp\)/);
+    assert.equal(container.querySelector('[data-project-export-card]'), null);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('USD export shows compression presets immediately without an extra toggle', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -151,6 +233,77 @@ test('USD export shows compression presets immediately without an extra toggle',
     assert.ok(getButtonByText(container, '低压缩'));
     assert.ok(getButtonByText(container, '中等'));
     assert.ok(getButtonByText(container, '自定义'));
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD export lets the user switch authored layer format to USDA', async () => {
+  const { dom, container, root } = createComponentRoot();
+  let exportedConfig: ExportDialogConfig | null = null;
+
+  try {
+    await renderExportDialog(root, (config) => {
+      exportedConfig = config;
+    });
+
+    await click(getButtonByText(container, 'USD'));
+
+    const fileFormatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-usd-file-format-picker]',
+      'USD file format picker',
+    );
+    assert.match(fileFormatPicker.textContent ?? '', /USDUSDA/);
+
+    await click(getButtonByText(container, 'USDA'));
+    await click(getButtonByText(container, '导出 ZIP'));
+
+    assert.ok(exportedConfig, 'USD export should submit a config');
+    assert.equal(exportedConfig.usd.fileFormat, 'usda');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD export keeps the layer format and compression controls visually concise', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'USD'));
+
+    const textContent = container.textContent ?? '';
+    assert.doesNotMatch(textContent, /导出为 Isaac Sim 风格的分层包/);
+    assert.doesNotMatch(textContent, /导出前简化 Mesh 三角面/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('USD layer format row keeps label and segmented buttons vertically centered', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'USD'));
+
+    const fileFormatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-usd-file-format-picker]',
+      'USD file format picker',
+    );
+    const row = fileFormatPicker.parentElement?.parentElement;
+    assert.ok(row, 'USD file format row should exist');
+    assert.match(row.className, /items-center/);
+
+    const layerButtons = Array.from(fileFormatPicker.querySelectorAll('button'));
+    assert.ok(layerButtons.length >= 2, 'USD layer format buttons should render');
+    assert.match(layerButtons[0].className, /inline-flex/);
+    assert.match(layerButtons[0].className, /items-center/);
+    assert.match(layerButtons[0].className, /justify-center/);
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -171,7 +324,10 @@ test('custom compression keeps the slider visible and exports the selected MJCF 
     assert.ok(slider, 'custom compression slider should render');
 
     await changeRangeValue(slider, 42);
-    assert.ok(getQualitySlider(container), 'slider should remain visible after custom quality changes');
+    assert.ok(
+      getQualitySlider(container),
+      'slider should remain visible after custom quality changes',
+    );
 
     await click(getButtonByText(container, '导出 ZIP'));
 
@@ -198,6 +354,101 @@ test('custom compression uses semantic space-vs-fidelity guidance instead of per
     assert.doesNotMatch(container.textContent ?? '', /更小体积/);
     assert.doesNotMatch(container.textContent ?? '', /更多细节/);
     assert.doesNotMatch(container.textContent ?? '', /\b50%\b/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('MJCF export label omits the XML suffix in the format picker', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    assert.match(container.textContent ?? '', /导出格式MJCFURDFXacroSDFUSD/);
+    assert.doesNotMatch(container.textContent ?? '', /MJCF \/ XML/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('export format picker stays as a single compact row at the default dialog width', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    const formatPicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-export-format-picker]',
+      'format picker',
+    );
+    assert.match(formatPicker.className, /grid-cols-5/);
+
+    const mjcfButton = getButtonByText(container, 'MJCF');
+    assert.doesNotMatch(mjcfButton.className, /flex-col/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('Xacro export moves ROS profile guidance into hover titles instead of inline copy', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {});
+
+    await click(getButtonByText(container, 'Xacro'));
+
+    const xacroProfilePicker = getRequiredElement<HTMLElement>(
+      container,
+      '[data-xacro-profile-picker]',
+      'xacro profile picker',
+    );
+    assert.match(xacroProfilePicker.className, /grid-cols-1/);
+
+    const ros2Button = getButtonByText(container, 'ROS2 + gazebo_ros2_control');
+    assert.equal(
+      ros2Button.getAttribute('title'),
+      '导出 ros2_control 与 gazebo_ros2_control 约定。',
+    );
+    assert.equal(ros2Button.getAttribute('aria-pressed'), 'true');
+    assert.match(ros2Button.className, /min-h-\[2\.5rem\]/);
+    assert.doesNotMatch(ros2Button.className, /min-h-\[3\.15rem\]/);
+
+    const xacroHintButton = Array.from(container.querySelectorAll('button[title]')).find(
+      (candidate) => candidate.getAttribute('title')?.includes('导出为真正的 xacro'),
+    );
+    assert.ok(xacroHintButton, 'xacro static hint should still be available via hover');
+
+    const hardwareSelect = container.querySelector('select');
+    assert.ok(hardwareSelect, 'xacro hardware interface select should render');
+    assert.equal(
+      hardwareSelect?.getAttribute('title'),
+      '写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称。',
+    );
+
+    const textContent = container.textContent ?? '';
+    assert.doesNotMatch(textContent, /导出为真正的 xacro/);
+    assert.doesNotMatch(textContent, /导出 ros2_control 与 gazebo_ros2_control 约定/);
+    assert.doesNotMatch(
+      textContent,
+      /写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称/,
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('exporting state renders progress UI without crashing', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    await renderExportDialog(root, () => {}, { isExporting: true });
+
+    const exportingButton = getButtonByText(container, '导出中...');
+    assert.equal(exportingButton.disabled, true);
+    assert.match(container.textContent ?? '', /准备导出/);
   } finally {
     await destroyComponentRoot(dom, root);
   }

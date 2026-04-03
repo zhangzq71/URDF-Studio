@@ -39,7 +39,6 @@ interface JointPanelItemBindingProps {
     handleJointAngleChange: (name: string, angle: number) => void;
     handleJointChangeCommit: (name: string, angle: number) => void;
     onSelect?: (type: 'link' | 'joint', id: string) => void;
-    onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision') => void;
     isAdvanced?: boolean;
     onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }
@@ -104,7 +103,6 @@ const JointPanelItemBinding = React.memo(function JointPanelItemBinding({
     handleJointAngleChange,
     handleJointChangeCommit,
     onSelect,
-    onHover,
     isAdvanced = false,
     onUpdate,
 }: JointPanelItemBindingProps) {
@@ -121,7 +119,6 @@ const JointPanelItemBinding = React.memo(function JointPanelItemBinding({
             handleJointAngleChange={handleJointAngleChange}
             handleJointChangeCommit={handleJointChangeCommit}
             onSelect={onSelect}
-            onHover={onHover}
             isAdvanced={isAdvanced}
             onUpdate={onUpdate}
         />
@@ -168,6 +165,10 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
         return () => {
             onHoverRef.current?.(null, null);
         };
+    }, []);
+
+    const clearGlobalHover = useCallback(() => {
+        onHoverRef.current?.(null, null);
     }, []);
 
     const additionalControls = (
@@ -219,8 +220,10 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
             zIndex={40}
             resizeTitle={t.resize}
             panelClassName="urdf-joint-panel"
+            onMouseEnter={clearGlobalHover}
+            onMouseLeave={clearGlobalHover}
         >
-            <div className="px-1 py-1.5 space-y-1" onMouseLeave={() => onHover?.(null, null)}>
+            <div className="px-1 py-1.5 space-y-1">
                 {jointEntries.map(([name, joint]: [string, any]) => (
                     <JointPanelItemBinding
                         key={name}
@@ -232,7 +235,6 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
                         handleJointAngleChange={handleJointAngleChange}
                         handleJointChangeCommit={handleJointChangeCommit}
                         onSelect={onSelect}
-                        onHover={onHover}
                         isAdvanced={isAdvanced}
                         onUpdate={onUpdate}
                     />

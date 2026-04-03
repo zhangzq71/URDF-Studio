@@ -37,10 +37,11 @@ function createRobotFile(name: string, format: RobotFile['format'], content = ''
 function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[] {
   const rootDir = path.join(process.cwd(), relativeDir);
 
-  const walk = (currentDir: string): string[] => fs.readdirSync(currentDir, { withFileTypes: true }).flatMap((entry) => {
-    const fullPath = path.join(currentDir, entry.name);
-    return entry.isDirectory() ? walk(fullPath) : [fullPath];
-  });
+  const walk = (currentDir: string): string[] =>
+    fs.readdirSync(currentDir, { withFileTypes: true }).flatMap((entry) => {
+      const fullPath = path.join(currentDir, entry.name);
+      return entry.isDirectory() ? walk(fullPath) : [fullPath];
+    });
 
   return walk(rootDir)
     .sort()
@@ -48,10 +49,10 @@ function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[]
       const relativePath = path.relative(process.cwd(), fullPath).replace(/\\/g, '/');
       const lowerPath = relativePath.toLowerCase();
       if (
-        lowerPath.endsWith('.urdf')
-        || lowerPath.endsWith('.xml')
-        || lowerPath.endsWith('.xacro')
-        || lowerPath.endsWith('.urdf.xacro')
+        lowerPath.endsWith('.urdf') ||
+        lowerPath.endsWith('.xml') ||
+        lowerPath.endsWith('.xacro') ||
+        lowerPath.endsWith('.urdf.xacro')
       ) {
         const content = fs.readFileSync(fullPath, 'utf8');
         const format = detectImportFormat(content, relativePath);
@@ -185,7 +186,10 @@ test('pickPreferredMjcfImportFile prefers direct robot definitions over wrapper 
 </mujoco>`,
   );
 
-  const preferredFile = pickPreferredMjcfImportFile([wrapperFile, robotFile], [wrapperFile, robotFile]);
+  const preferredFile = pickPreferredMjcfImportFile(
+    [wrapperFile, robotFile],
+    [wrapperFile, robotFile],
+  );
 
   assert.equal(preferredFile?.name, 'demo_bundle/robot_model.xml');
 });
@@ -226,7 +230,9 @@ test('pickPreferredImportFile does not prefer MJCF solely because the bundle pat
 });
 
 test('pickPreferredImportFile prefers the richer MJCF source-of-truth over a self-contained convenience URDF', () => {
-  const files = loadImportableRobotFilesFromDirectory('test/mujoco_menagerie-main/google_barkour_vb');
+  const files = loadImportableRobotFilesFromDirectory(
+    'test/mujoco_menagerie-main/google_barkour_vb',
+  );
 
   const preferredFile = pickPreferredImportFile(files, files);
 
@@ -234,12 +240,109 @@ test('pickPreferredImportFile prefers the richer MJCF source-of-truth over a sel
 });
 
 test('pickPreferredImportFile prefers the richest self-contained URDF over helper subassemblies in talos-data', () => {
-  const files = loadImportableRobotFilesFromDirectory('test/awesome_robot_descriptions_repos/talos-data');
+  const files = loadImportableRobotFilesFromDirectory(
+    'test/awesome_robot_descriptions_repos/talos-data',
+  );
 
   const preferredFile = pickPreferredImportFile(files, files);
 
   assert.equal(
     preferredFile?.name,
     'test/awesome_robot_descriptions_repos/talos-data/urdf/talos_full.urdf',
+  );
+});
+
+test('pickPreferredImportFile keeps g1 folder imports on the canonical base humanoid instead of heavier hand variants', () => {
+  const files = loadImportableRobotFilesFromDirectory('test/unitree_ros/robots/g1_description');
+
+  const preferredFile = pickPreferredImportFile(files, files);
+
+  assert.match(
+    preferredFile?.name ?? '',
+    /test\/unitree_ros\/robots\/g1_description\/g1_29dof(?:_rev_1_0)?\.urdf$/,
+  );
+});
+
+test('pickPreferredImportFile throws when a highest-priority URDF candidate fails during readiness evaluation', () => {
+  const canonicalUrdf = createRobotFile(
+    'demo_description/urdf/demo.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="demo_description">
+  <link name="base_link" />
+</robot>`,
+  );
+  const fallbackUrdf = createRobotFile(
+    'demo_description/urdf/demo_variant.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="demo_description">
+  <link name="base_link" />
+</robot>`,
+  );
+
+  assert.throws(
+    () =>
+      pickPreferredImportFile(
+        [canonicalUrdf, fallbackUrdf],
+        [canonicalUrdf, fallbackUrdf],
+        (file) => {
+          if (file === canonicalUrdf) {
+            throw new Error('resolver-crashed');
+          }
+          return {
+            status: 'ready',
+            robotData: {
+              name: 'demo',
+              rootLinkId: 'base_link',
+              links: {},
+              joints: {},
+            },
+          } as any;
+        },
+      ),
+    /Failed to evaluate URDF import candidate "demo_description\/urdf\/demo\.urdf"/,
+  );
+});
+
+test('pickPreferredMjcfImportFile throws when a ranked MJCF candidate fails during readiness evaluation', () => {
+  const robotFile = createRobotFile(
+    'demo_bundle/robot_model.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="robot">
+  <worldbody>
+    <body name="base_link" />
+  </worldbody>
+</mujoco>`,
+  );
+  const fallbackFile = createRobotFile(
+    'demo_bundle/fallback.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="fallback">
+  <worldbody>
+    <light name="key" pos="0 0 1" />
+  </worldbody>
+</mujoco>`,
+  );
+
+  assert.throws(
+    () =>
+      pickPreferredMjcfImportFile([robotFile, fallbackFile], [robotFile, fallbackFile], (file) => {
+        if (file === robotFile) {
+          throw new Error('resolver-crashed');
+        }
+        return {
+          status: 'ready',
+          robotData: {
+            name: 'demo',
+            rootLinkId: 'base_link',
+            links: {},
+            joints: {},
+          },
+        } as any;
+      }),
+    /Failed to evaluate MJCF import candidate "demo_bundle\/robot_model\.xml"/,
   );
 });

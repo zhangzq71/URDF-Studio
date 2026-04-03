@@ -6,6 +6,7 @@ import type {
 export interface PreparedUsdPreloadTransferFile {
   path: string;
   mimeType: string;
+  blob: Blob | null;
   bytes: ArrayBuffer | null;
   error?: string | null;
 }
@@ -48,10 +49,12 @@ async function serializePreparedUsdPreloadFile(
 ): Promise<PreparedUsdPreloadTransferFile> {
   const existingBytes = normalizePreparedUsdPreloadBytes(preloadFile.bytes);
   if (existingBytes) {
+    const transferableBytes = existingBytes.slice(0);
     return {
       path: preloadFile.path,
       mimeType: preloadFile.mimeType ?? preloadFile.blob?.type ?? '',
-      bytes: existingBytes,
+      blob: null,
+      bytes: transferableBytes,
       error: preloadFile.error ?? null,
     };
   }
@@ -60,6 +63,7 @@ async function serializePreparedUsdPreloadFile(
     return {
       path: preloadFile.path,
       mimeType: '',
+      blob: null,
       bytes: null,
       error: preloadFile.error ?? null,
     };
@@ -68,7 +72,8 @@ async function serializePreparedUsdPreloadFile(
   return {
     path: preloadFile.path,
     mimeType: preloadFile.blob.type,
-    bytes: await preloadFile.blob.arrayBuffer(),
+    blob: preloadFile.blob,
+    bytes: null,
     error: preloadFile.error ?? null,
   };
 }
@@ -78,7 +83,7 @@ function hydratePreparedUsdPreloadFile(
 ): PreparedUsdPreloadFile {
   return {
     path: preloadFile.path,
-    blob: null,
+    blob: preloadFile.blob,
     bytes: preloadFile.bytes,
     mimeType: preloadFile.mimeType || null,
     error: preloadFile.error ?? null,
@@ -98,7 +103,9 @@ export async function serializePreparedUsdStageOpenDataForWorker(
       criticalDependencyPaths: payload.criticalDependencyPaths,
       preloadFiles,
     },
-    transferables: preloadFiles.flatMap((preloadFile) => (preloadFile.bytes ? [preloadFile.bytes] : [])),
+    transferables: preloadFiles.flatMap((preloadFile) =>
+      preloadFile.bytes ? [preloadFile.bytes] : [],
+    ),
   };
 }
 
@@ -108,6 +115,8 @@ export function hydratePreparedUsdStageOpenDataFromWorker(
   return {
     stageSourcePath: payload.stageSourcePath,
     criticalDependencyPaths: payload.criticalDependencyPaths,
-    preloadFiles: payload.preloadFiles.map((preloadFile) => hydratePreparedUsdPreloadFile(preloadFile)),
+    preloadFiles: payload.preloadFiles.map((preloadFile) =>
+      hydratePreparedUsdPreloadFile(preloadFile),
+    ),
   };
 }

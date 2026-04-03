@@ -1075,6 +1075,9 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
             if (this._snapshotFallbackMaterialCache instanceof Map) {
                 this._snapshotFallbackMaterialCache.clear();
             }
+            if (this._snapshotTextureApplyFailures instanceof Map) {
+                this._snapshotTextureApplyFailures.clear();
+            }
         }
         if (!preserveResolvedPrimCaches) {
             this._resolvedProtoPrimPathCache.clear();
@@ -1086,7 +1089,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         this._guideCollisionPrimPathCache.clear();
         this._guideCollisionRefMapByStageSource.clear();
         this._visualSemanticChildMapByStageSource.clear();
-        this._openedGuideStages.clear();
+        this.disposeOpenedGuideStages();
         if (!preserveDriverCaches) {
             this._protoDataBlobBatchCache.clear();
             this._protoDataBlobBatchPrimed = false;
@@ -1512,6 +1515,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 const staged = this.config.stage();
                 if (staged) {
                     this._resolvedDriverStage = staged;
+                    this.setDriverStageResolveState('resolved', { source: 'config-stage' });
                     return staged;
                 }
             }
@@ -1532,6 +1536,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         const isAsyncStage = !!stage && typeof stage.then === 'function';
         if (isAsyncStage) {
             if (!this._pendingDriverStagePromise) {
+                this.setDriverStageResolveState('pending', { source: 'driver-async' });
                 this._pendingDriverStagePromise = Promise.resolve(stage)
                     .then((resolvedStage) => {
                     const maybeSyncStage = driver.GetStage?.();
@@ -1542,6 +1547,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                         return null;
                     }
                     this._resolvedDriverStage = candidateStage;
+                    this.setDriverStageResolveState('resolved', { source: 'driver-async' });
                     if (typeof this.config?.setStage === 'function') {
                         try {
                             this.config.setStage(candidateStage);
@@ -1550,9 +1556,19 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                     }
                     return candidateStage;
                 })
-                    .catch(() => null)
+                    .catch((error) => {
+                    this.setDriverStageResolveState('rejected', {
+                        source: 'driver-async',
+                        error,
+                    });
+                    rawConsoleWarn?.('[HydraDelegate] Failed to resolve async driver stage; falling back to deferred stage lookup.', error);
+                    return null;
+                })
                     .finally(() => {
                     this._pendingDriverStagePromise = null;
+                    if (this._driverStageResolveState === 'pending') {
+                        this.setDriverStageResolveState('idle', { source: 'driver-async' });
+                    }
                 });
             }
             return null;
@@ -1560,6 +1576,7 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
         if (!stage)
             return null;
         this._resolvedDriverStage = stage;
+        this.setDriverStageResolveState('resolved', { source: 'driver-sync' });
         if (typeof this.config?.setStage === 'function') {
             try {
                 this.config.setStage(stage);
@@ -1809,6 +1826,9 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
             const nextTexture = texture?.clone ? texture.clone() : texture;
             if (!nextTexture)
                 return;
+            if (typeof this.clearSnapshotTextureApplyFailure === 'function') {
+                this.clearSnapshotTextureApplyFailure(material, normalizedTexturePath, materialProperty);
+            }
             nextTexture.colorSpace = options.colorSpace || LinearSRGBColorSpace;
             nextTexture.needsUpdate = true;
             material[materialProperty] = nextTexture;
@@ -1816,8 +1836,135 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 options.onAssigned(nextTexture);
             }
             material.needsUpdate = true;
-        }).catch(() => { });
+        }).catch((error) => {
+            const warn = getRawConsoleMethod('warn');
+            warn('[HydraDelegate] Failed to apply snapshot texture input.', {
+                texturePath: normalizedTexturePath,
+                materialProperty,
+                materialName: String(material?.name || ''),
+                error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+            });
+            if (typeof this.recordSnapshotTextureApplyFailure === 'function') {
+                this.recordSnapshotTextureApplyFailure(material, normalizedTexturePath, materialProperty, error);
+            }
+        });
         return true;
+    }
+    recordSnapshotTextureApplyFailure(material, texturePath, materialProperty, error) {
+        const normalizedTexturePath = this.normalizeMaterialTexturePath(texturePath);
+        if (!material || !normalizedTexturePath || !materialProperty)
+            return null;
+        if (!(this._snapshotTextureApplyFailures instanceof Map)) {
+            this._snapshotTextureApplyFailures = new Map();
+        }
+        const errorText = String(error instanceof Error ? error.message : error || '').trim() || 'unknown-error';
+        const materialName = String(material?.name || '').trim();
+        const failureKey = `${materialName}|${materialProperty}|${normalizedTexturePath}`;
+        const failure = {
+            materialName,
+            materialProperty,
+            texturePath: normalizedTexturePath,
+            error: errorText,
+        };
+        this._snapshotTextureApplyFailures.set(failureKey, failure);
+        const userData = (material.userData && typeof material.userData === 'object')
+            ? material.userData
+            : (material.userData = {});
+        const nextFailures = (userData.snapshotTextureApplyFailures && typeof userData.snapshotTextureApplyFailures === 'object')
+            ? { ...userData.snapshotTextureApplyFailures }
+            : {};
+        nextFailures[materialProperty] = {
+            texturePath: normalizedTexturePath,
+            error: errorText,
+        };
+        userData.snapshotTextureApplyFailures = nextFailures;
+        userData.snapshotTextureApplyFailed = true;
+        return failure;
+    }
+    clearSnapshotTextureApplyFailure(material, texturePath, materialProperty) {
+        const normalizedTexturePath = this.normalizeMaterialTexturePath(texturePath);
+        if (!material || !normalizedTexturePath || !materialProperty)
+            return;
+        const materialName = String(material?.name || '').trim();
+        if (this._snapshotTextureApplyFailures instanceof Map) {
+            const failureKey = `${materialName}|${materialProperty}|${normalizedTexturePath}`;
+            this._snapshotTextureApplyFailures.delete(failureKey);
+        }
+        const userData = material.userData;
+        if (!userData || typeof userData !== 'object')
+            return;
+        const existingFailures = userData.snapshotTextureApplyFailures;
+        if (!existingFailures || typeof existingFailures !== 'object')
+            return;
+        const nextFailures = { ...existingFailures };
+        delete nextFailures[materialProperty];
+        if (Object.keys(nextFailures).length > 0) {
+            userData.snapshotTextureApplyFailures = nextFailures;
+            userData.snapshotTextureApplyFailed = true;
+            return;
+        }
+        delete userData.snapshotTextureApplyFailures;
+        delete userData.snapshotTextureApplyFailed;
+    }
+    getSnapshotTextureApplyFailureSummary() {
+        const failures = this._snapshotTextureApplyFailures instanceof Map
+            ? Array.from(this._snapshotTextureApplyFailures.values())
+            : [];
+        failures.sort((left, right) => {
+            const materialCompare = String(left?.materialName || '').localeCompare(String(right?.materialName || ''));
+            if (materialCompare !== 0)
+                return materialCompare;
+            const propertyCompare = String(left?.materialProperty || '').localeCompare(String(right?.materialProperty || ''));
+            if (propertyCompare !== 0)
+                return propertyCompare;
+            return String(left?.texturePath || '').localeCompare(String(right?.texturePath || ''));
+        });
+        return {
+            count: failures.length,
+            failures,
+        };
+    }
+    setDriverStageResolveState(status, options = {}) {
+        const normalizedStatus = status === 'pending' || status === 'resolved' || status === 'rejected'
+            ? status
+            : 'idle';
+        const normalizedSource = String(options?.source || '').trim()
+            || (normalizedStatus === 'idle' ? 'none' : 'unknown');
+        const normalizedError = (() => {
+            const rawError = options?.error;
+            if (rawError instanceof Error) {
+                const nextError = String(rawError.message || rawError).trim();
+                return nextError || null;
+            }
+            const nextError = String(rawError || '').trim();
+            return nextError || null;
+        })();
+        this._driverStageResolveState = normalizedStatus;
+        this._driverStageResolveSource = normalizedSource;
+        this._driverStageResolveError = normalizedError;
+        this._driverStageResolveUpdatedAtMs = Date.now();
+    }
+    getDriverStageResolveSummary() {
+        const hasResolvedStage = !!this._resolvedDriverStage;
+        const rawStatus = String(this._driverStageResolveState || 'idle');
+        const status = hasResolvedStage && rawStatus !== 'resolved'
+            ? 'resolved'
+            : rawStatus;
+        const rawSource = String(this._driverStageResolveSource || '').trim();
+        const source = hasResolvedStage && rawStatus !== 'resolved'
+            ? 'driver-cache'
+            : (rawSource || (status === 'idle' ? 'none' : 'unknown'));
+        const rawError = String(this._driverStageResolveError || '').trim();
+        return {
+            status,
+            source,
+            error: rawError || null,
+            hasResolvedStage,
+            pending: !!this._pendingDriverStagePromise,
+            updatedAtMs: Number.isFinite(this._driverStageResolveUpdatedAtMs)
+                ? Number(this._driverStageResolveUpdatedAtMs)
+                : null,
+        };
     }
     applySnapshotMaterialRecord(material, record) {
         if (!material || !record || typeof record !== 'object')
@@ -2056,6 +2203,11 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
             boundCount: 0,
             subsetReboundCount: 0,
             inheritedCount: 0,
+            subsetFailureCount: 0,
+            inheritFailureCount: 0,
+            subsetFailureMeshIds: [],
+            inheritFailureMeshIds: [],
+            textureFailureCount: Number(this.getSnapshotTextureApplyFailureSummary?.().count || 0),
         };
         const snapshotDescriptorIndex = this.buildSnapshotMeshDescriptorIndex?.() || new Map();
         for (const hydraMesh of Object.values(this.meshes || {})) {
@@ -2097,7 +2249,10 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 }
             }
             catch {
-                // Keep one-shot material apply resilient.
+                summary.subsetFailureCount += 1;
+                if (hydraMesh?._id) {
+                    summary.subsetFailureMeshIds.push(String(hydraMesh._id));
+                }
             }
         }
         this._preferredVisualMaterialByLinkCache?.clear?.();
@@ -2110,7 +2265,10 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                 }
             }
             catch {
-                // Keep one-shot material apply resilient.
+                summary.inheritFailureCount += 1;
+                if (hydraMesh?._id) {
+                    summary.inheritFailureMeshIds.push(String(hydraMesh._id));
+                }
             }
         }
         return summary;

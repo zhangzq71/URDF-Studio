@@ -3,15 +3,17 @@ import type { LucideIcon } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
 
-export type HeaderTranslations = typeof translations['en'];
+export type HeaderTranslations = (typeof translations)['en'];
 export type HeaderMenuKey = 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
 
 export interface HeaderViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean;
-  showSkeletonOptionsPanel: boolean;
+  showVisualizerOptionsPanel: boolean;
   showJointPanel: boolean;
 }
+
+export type HeaderOptionsPanelKey = 'showOptionsPanel' | 'showVisualizerOptionsPanel';
 
 export type HeaderSetViewConfig = Dispatch<SetStateAction<HeaderViewConfig>>;
 
@@ -27,15 +29,14 @@ export interface HeaderResponsiveLayout {
   showSourceInline: boolean;
   showSourceText: boolean;
   showUndoRedoInline: boolean;
-  showFullModeSwitcher: boolean;
   showQuickActionInline: boolean;
   showQuickActionLabel: boolean;
   showSnapshotInline: boolean;
   showSettingsInline: boolean;
   showLanguageInline: boolean;
   showThemeInline: boolean;
-  showAboutInline: boolean;
   showSecondaryActionInline: boolean;
+  showSecondaryActionLabel: boolean;
   showDesktopOverflow: boolean;
 }
 
@@ -43,12 +44,10 @@ export interface HeaderOverflowMenuProps {
   className?: string;
   lang: 'en' | 'zh';
   theme: Theme;
-  appMode: AppMode;
   canUndo: boolean;
   canRedo: boolean;
   activeMenu: HeaderMenuKey;
   setActiveMenu: (menu: HeaderMenuKey) => void;
-  setAppMode: (mode: AppMode) => void;
   setLang: (lang: 'en' | 'zh') => void;
   setTheme: (theme: Theme) => void;
   undo: () => void;
@@ -59,16 +58,13 @@ export interface HeaderOverflowMenuProps {
   onPrefetchCodeViewer: () => void;
   onSnapshot: () => void;
   onOpenSettings: () => void;
-  onOpenAbout: () => void;
   t: HeaderTranslations;
   showQuickAction: boolean;
-  showModeSwitcher: boolean;
   showSourceCode: boolean;
   showUndoRedo: boolean;
   showSnapshot: boolean;
   showSettings: boolean;
   showLanguage: boolean;
   showTheme: boolean;
-  showAbout: boolean;
   showSecondaryAction?: boolean;
 }

@@ -30,7 +30,7 @@ export interface ExportLibraryRobotFileResult {
   success: boolean;
   zipFileName?: string;
   missingMeshPaths: string[];
-  reason?: 'unsupported-file-format' | 'parse-failed';
+  reason?: 'unsupported-file-format' | 'parse-failed' | 'missing-mesh-assets';
 }
 
 function toRobotState(file: RobotFile): RobotState | null {
@@ -145,28 +145,31 @@ export async function exportLibraryRobotFile(
   const baseName = getFileBaseName(file.name);
   const zip = new JSZip();
   const archiveRoot = createArchiveRoot(zip, baseName);
-  const mjcfMeshExport = targetFormat === 'mjcf' && file.format !== 'mjcf'
-    ? await prepareMjcfMeshExportAssets({
-      robot: robotState,
-      assets,
-    })
-    : null;
+  const mjcfMeshExport =
+    targetFormat === 'mjcf' && file.format !== 'mjcf'
+      ? await prepareMjcfMeshExportAssets({
+          robot: robotState,
+          assets,
+        })
+      : null;
 
   if (targetFormat === 'urdf') {
-    const urdfContent = file.format === 'urdf'
-      ? rewriteUrdfAssetPathsForExport(file.content, {
-          exportRobotName: baseName,
-        })
-      : generateURDF(robotState, false);
+    const urdfContent =
+      file.format === 'urdf'
+        ? rewriteUrdfAssetPathsForExport(file.content, {
+            exportRobotName: baseName,
+          })
+        : generateURDF(robotState, false);
     archiveRoot.file(`${baseName}.urdf`, urdfContent);
   } else if (targetFormat === 'mjcf') {
-    const mjcfContent = file.format === 'mjcf'
-      ? file.content
-      : generateMujocoXML(robotState, {
-        meshdir: 'meshes/',
-        meshPathOverrides: mjcfMeshExport?.meshPathOverrides,
-        visualMeshVariants: mjcfMeshExport?.visualMeshVariants,
-      });
+    const mjcfContent =
+      file.format === 'mjcf'
+        ? file.content
+        : generateMujocoXML(robotState, {
+            meshdir: 'meshes/',
+            meshPathOverrides: mjcfMeshExport?.meshPathOverrides,
+            visualMeshVariants: mjcfMeshExport?.visualMeshVariants,
+          });
     archiveRoot.file(`${baseName}.xml`, mjcfContent);
   } else {
     archiveRoot.file('model.sdf', generateSDF(robotState, { packageName: baseName }));
@@ -185,6 +188,15 @@ export async function exportLibraryRobotFile(
       meshFolder?.file(relativePath, blob);
     });
   }
+
+  if (missingMeshPaths.length > 0) {
+    return {
+      success: false,
+      missingMeshPaths,
+      reason: 'missing-mesh-assets',
+    };
+  }
+
   const blob = await zip.generateAsync({ type: 'blob' });
   const zipFileName = `${baseName}_${targetFormat}.zip`;
   downloadBlob(blob, zipFileName);

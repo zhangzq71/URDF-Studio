@@ -1,12 +1,5 @@
 import type { CSSProperties } from 'react';
-import {
-  ArrowRightLeft,
-  Lock,
-  Move3D,
-  Plane,
-  RefreshCw,
-  RotateCw,
-} from 'lucide-react';
+import { ArrowRightLeft, Lock, Move3D, Plane, RefreshCw, RotateCw } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
 import { JointType } from '@/types';
 
@@ -59,10 +52,14 @@ export function scrollElementIntoView(element: HTMLElement | null) {
   });
 }
 
-const treeRowHoverClass = 'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
-const treeRowHoveredClass = 'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15 dark:bg-system-blue/18 dark:ring-system-blue/25';
-const treeRowSelectedClass = 'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
-const treeRowAttentionClass = 'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
+const treeRowHoverClass =
+  'hover:bg-system-blue/10 hover:text-text-primary hover:ring-1 hover:ring-inset hover:ring-system-blue/15 dark:hover:bg-system-blue/20 dark:hover:ring-system-blue/25';
+const treeRowHoveredClass =
+  'bg-system-blue/10 text-text-primary ring-1 ring-inset ring-system-blue/15 dark:bg-system-blue/18 dark:ring-system-blue/25';
+const treeRowSelectedClass =
+  'bg-system-blue/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/20 dark:bg-system-blue/20 dark:ring-system-blue/30';
+const treeRowAttentionClass =
+  'bg-system-blue/15 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue/30 dark:bg-system-blue/25 dark:ring-system-blue/40';
 
 export function resolveTreeRowStateClass(
   baseClassName: string,
@@ -105,10 +102,17 @@ export function getTreeConnectorElbowStyle(indentPx: number): CSSProperties {
   };
 }
 
-export function getGeometryVisibilityButtonClass(active: boolean): string {
+export function getGeometryVisibilityButtonClass(
+  active: boolean,
+  options?: { inheritedHidden?: boolean },
+): string {
+  const inheritedHidden = options?.inheritedHidden === true;
+
   return `p-1 rounded transition-colors ${
-    active
-      ? 'text-text-tertiary hover:text-text-primary hover:bg-element-hover'
-      : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
+    inheritedHidden
+      ? 'text-text-tertiary/70 hover:text-text-secondary hover:bg-element-hover ring-1 ring-inset ring-border-black/40'
+      : active
+        ? 'text-text-tertiary hover:text-text-primary hover:bg-element-hover'
+        : 'text-text-secondary hover:text-text-primary hover:bg-element-hover'
   }`;
 }

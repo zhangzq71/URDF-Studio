@@ -1,3 +1,5 @@
+import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
+
 /**
  * Coordinate Axes Component
  * Displays XYZ coordinate axes with adjustable thickness and size
@@ -28,9 +30,7 @@ export const ThickerAxes = ({
   const headSize = Math.max(size * 0.22, thickness * 4.5);
   const headRadius = Math.max(thickness * 2.6, 0.012);
   const transparent = opacity < 1;
-  const ignoreRaycast = (_raycaster: any, _intersects: any[]) => undefined;
 
-  // Create a clickable sphere at the origin for selection
   const handleClick = (e: any) => {
     e.stopPropagation();
     if (onClick) onClick(e);
@@ -38,11 +38,10 @@ export const ThickerAxes = ({
 
   return (
     <group position={position}>
-      {/* Invisible clickable sphere at origin for easier selection */}
       {onClick && (
-        <mesh onClick={handleClick}>
+        <mesh onClick={handleClick} raycast={ignoreRaycast}>
           <sphereGeometry args={[size * 0.3, 16, 16]} />
-          <meshBasicMaterial transparent opacity={0} />
+          <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
         </mesh>
       )}
 

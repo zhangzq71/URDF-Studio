@@ -153,7 +153,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
   Object.values(links).forEach(link => {
     getVisualGeometryEntries(link).forEach((entry) => {
-      if (entry.geometry.type !== GeometryType.MESH) {
+      if (entry.geometry.type !== GeometryType.MESH && entry.geometry.type !== GeometryType.SDF) {
         return;
       }
 
@@ -166,11 +166,11 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         registerMeshAsset(entry.geometry.meshPath, entry.geometry.dimensions);
       }
     });
-    if (link.collision && link.collision.type === GeometryType.MESH) {
+    if (link.collision && (link.collision.type === GeometryType.MESH || link.collision.type === GeometryType.SDF)) {
       registerMeshAsset(link.collision.meshPath, link.collision.dimensions);
     }
     (link.collisionBodies || []).forEach((body) => {
-      if (body.type === GeometryType.MESH) {
+      if (body.type === GeometryType.MESH || body.type === GeometryType.SDF) {
         registerMeshAsset(body.meshPath, body.dimensions);
       }
     });
@@ -210,10 +210,111 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return meshAssetNameMap.get(key) || null;
   };
 
+  type HfieldSizeTuple = [number, number, number, number];
+  interface HfieldAssetEntry {
+    key: string;
+    name: string;
+    file?: string;
+    contentType?: string;
+    nrow?: number;
+    ncol?: number;
+    size: HfieldSizeTuple;
+    elevation?: number[];
+  }
+
+  const normalizeHfieldSize = (geometry: UrdfLink['visual']): HfieldSizeTuple | null => {
+    const size = geometry.mjcfHfield?.size;
+    if (!size) {
+      return null;
+    }
+
+    return [size.radiusX, size.radiusY, size.elevationZ, size.baseZ];
+  };
+
+  const buildHfieldAssetKey = (geometry: UrdfLink['visual']): string | null => {
+    const size = normalizeHfieldSize(geometry);
+    if (!size) {
+      return null;
+    }
+
+    return JSON.stringify({
+      assetRef: geometry.assetRef || geometry.mjcfHfield?.name || '',
+      file: geometry.mjcfHfield?.file || '',
+      contentType: geometry.mjcfHfield?.contentType || '',
+      nrow: geometry.mjcfHfield?.nrow ?? null,
+      ncol: geometry.mjcfHfield?.ncol ?? null,
+      size,
+      elevation: geometry.mjcfHfield?.elevation || [],
+    });
+  };
+
+  const hfieldAssets = new Map<string, HfieldAssetEntry>();
+  const hfieldAssetNameMap = new Map<string, string>();
+  const usedHfieldAssetNames = new Set<string>();
+  const buildHfieldAssetName = (link: UrdfLink, geometry: UrdfLink['visual']): string => {
+    const base = (geometry.assetRef || geometry.mjcfHfield?.name || `${link.name || link.id}_hfield`)
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .replace(/^_+|_+$/g, '') || 'hfield';
+
+    let candidate = base;
+    let suffix = 2;
+    while (usedHfieldAssetNames.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    usedHfieldAssetNames.add(candidate);
+    return candidate;
+  };
+
+  const registerHfieldAsset = (link: UrdfLink, geometry: UrdfLink['visual']) => {
+    if (geometry.type !== GeometryType.HFIELD) {
+      return;
+    }
+
+    const key = buildHfieldAssetKey(geometry);
+    const size = normalizeHfieldSize(geometry);
+    if (!key || !size || hfieldAssets.has(key)) {
+      return;
+    }
+
+    const assetName = buildHfieldAssetName(link, geometry);
+    hfieldAssets.set(key, {
+      key,
+      name: assetName,
+      file: geometry.mjcfHfield?.file,
+      contentType: geometry.mjcfHfield?.contentType,
+      nrow: geometry.mjcfHfield?.nrow,
+      ncol: geometry.mjcfHfield?.ncol,
+      size,
+      elevation: geometry.mjcfHfield?.elevation ? [...geometry.mjcfHfield.elevation] : undefined,
+    });
+    hfieldAssetNameMap.set(key, assetName);
+  };
+
+  Object.values(links).forEach((link) => {
+    getVisualGeometryEntries(link).forEach((entry) => {
+      registerHfieldAsset(link, entry.geometry);
+    });
+    registerHfieldAsset(link, link.collision);
+    (link.collisionBodies || []).forEach((body) => {
+      registerHfieldAsset(link, body);
+    });
+  });
+
+  const resolveHfieldAssetName = (geometry: UrdfLink['visual']): string | null => {
+    const key = buildHfieldAssetKey(geometry);
+    if (!key) {
+      return null;
+    }
+
+    return hfieldAssetNameMap.get(key) || null;
+  };
+
   interface LinkMaterialAssetEntry {
     linkId: string;
     color: string;
     texture?: string;
+    specular?: number;
     shininess?: number;
     reflectance?: number;
     emission?: number;
@@ -222,6 +323,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   interface VisualVariantMaterialAssetEntry {
     key: string;
     color: string;
+    specular?: number;
   }
 
   const resolveLinkMaterialColor = (link: UrdfLink): string => {
@@ -244,11 +346,13 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
   const resolveLinkMaterialPbr = (
     link: UrdfLink,
-  ): Pick<LinkMaterialAssetEntry, 'shininess' | 'reflectance' | 'emission'> => {
+  ): Pick<LinkMaterialAssetEntry, 'specular' | 'shininess' | 'reflectance' | 'emission'> => {
     const material = robot.materials?.[link.id] || robot.materials?.[link.name];
     const usdMaterial = material?.usdMaterial;
     if (!usdMaterial || typeof usdMaterial !== 'object') {
-      return {};
+      return {
+        specular: 0,
+      };
     }
 
     const roughness = clampUnitScalar(usdMaterial.roughness);
@@ -274,6 +378,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       );
 
     return {
+      specular: 0,
       ...(roughness !== undefined ? { shininess: clampUnitScalar(1 - roughness) } : {}),
       ...(reflectance !== undefined ? { reflectance } : {}),
       ...(emission !== undefined ? { emission } : {}),
@@ -330,6 +435,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         visualVariantMaterialAssets.set(key, {
           key,
           color: variant.color || resolveLinkMaterialColor(link),
+          specular: 0,
         });
         visualVariantMaterialNameMap.set(key, materialName);
       });
@@ -435,6 +541,20 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       : ` scale="${meshScaleKey(scale)}"`;
     xml += `    <mesh name="${meshName}" file="${path}"${scaleAttr} />\n`;
   });
+  hfieldAssets.forEach(({ name: hfieldName, file, contentType, nrow, ncol, size, elevation }) => {
+    const attrs = [
+      `name="${hfieldName}"`,
+      file ? `file="${file}"` : '',
+      contentType ? `content_type="${contentType}"` : '',
+      !file && Number.isFinite(nrow) ? `nrow="${nrow}"` : '',
+      !file && Number.isFinite(ncol) ? `ncol="${ncol}"` : '',
+      `size="${formatShape(size[0])} ${formatShape(size[1])} ${formatShape(size[2])} ${formatShape(size[3])}"`,
+      !file && elevation && elevation.length > 0
+        ? `elevation="${elevation.map((value) => formatShape(value)).join(' ')}"`
+        : '',
+    ].filter(Boolean);
+    xml += `    <hfield ${attrs.join(' ')} />\n`;
+  });
   textureAssets.forEach(({ path }) => {
     const textureName = textureAssetNameMap.get(path);
     if (!textureName) {
@@ -442,13 +562,14 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     }
     xml += `    <texture name="${textureName}" type="2d" file="${path}" />\n`;
   });
-  visualMaterialAssets.forEach(({ linkId, color, texture, shininess, reflectance, emission }) => {
+  visualMaterialAssets.forEach(({ linkId, color, texture, specular, shininess, reflectance, emission }) => {
     const materialName = visualMaterialNameMap.get(linkId);
     if (!materialName) {
       return;
     }
     const textureAssetName = resolveTextureAssetName(texture);
     const pbrAttrs = [
+      Number.isFinite(specular) ? ` specular="${formatNumberWithMaxDecimals(specular!, 4)}"` : '',
       Number.isFinite(shininess) ? ` shininess="${formatNumberWithMaxDecimals(shininess!, 4)}"` : '',
       Number.isFinite(reflectance) ? ` reflectance="${formatNumberWithMaxDecimals(reflectance!, 4)}"` : '',
       Number.isFinite(emission) ? ` emission="${formatNumberWithMaxDecimals(emission!, 4)}"` : '',
@@ -457,13 +578,16 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${textureAssetName}"${pbrAttrs} />\n`
       : `    <material name="${materialName}" rgba="${hexToRgba(color)}"${pbrAttrs} />\n`;
   });
-  visualVariantMaterialAssets.forEach(({ key, color }) => {
+  visualVariantMaterialAssets.forEach(({ key, color, specular }) => {
     const materialName = visualVariantMaterialNameMap.get(key);
     if (!materialName) {
       return;
     }
 
-    xml += `    <material name="${materialName}" rgba="${hexToRgba(color)}" />\n`;
+    const specularAttr = Number.isFinite(specular)
+      ? ` specular="${formatNumberWithMaxDecimals(specular!, 4)}"`
+      : '';
+    xml += `    <material name="${materialName}" rgba="${hexToRgba(color)}"${specularAttr} />\n`;
   });
   xml += `  </asset>\n\n`;
 
@@ -574,12 +698,29 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
           if (v.type === GeometryType.BOX) {
             vGeomAttrs += ` type="box" size="${formatScalar(v.dimensions.x / 2)} ${formatScalar(v.dimensions.y / 2)} ${formatScalar(v.dimensions.z / 2)}"`;
+          } else if (v.type === GeometryType.PLANE) {
+            vGeomAttrs += ` type="plane" size="${formatShape(v.dimensions.x / 2)} ${formatShape(v.dimensions.y / 2)} 0.1"`;
           } else if (v.type === GeometryType.CYLINDER) {
             vGeomAttrs += ` type="cylinder" size="${formatShape(v.dimensions.x)} ${formatShape(v.dimensions.y / 2)}"`;
           } else if (v.type === GeometryType.SPHERE) {
             vGeomAttrs += ` type="sphere" size="${formatShape(v.dimensions.x)}"`;
+          } else if (v.type === GeometryType.ELLIPSOID) {
+            vGeomAttrs += ` type="ellipsoid" size="${formatShape(v.dimensions.x)} ${formatShape(v.dimensions.y)} ${formatShape(v.dimensions.z)}"`;
           } else if (v.type === GeometryType.CAPSULE) {
             vGeomAttrs += ` type="capsule" size="${formatShape(v.dimensions.x)} ${formatShape(v.dimensions.y / 2)}"`;
+          } else if (v.type === GeometryType.HFIELD) {
+            const hfieldAssetName = resolveHfieldAssetName(v);
+            if (!hfieldAssetName) {
+              throw new Error(`[MJCF export] Height field geometry on link "${link.name}" is missing MJCF hfield asset metadata.`);
+            }
+            vGeomAttrs += ` type="hfield" hfield="${hfieldAssetName}"`;
+          } else if (v.type === GeometryType.SDF) {
+            const meshAssetName = resolveMeshAssetName(v.meshPath, v.dimensions);
+            const fallbackMeshRef = v.assetRef || resolveExportMeshPath(v.meshPath);
+            if (!meshAssetName && !fallbackMeshRef) {
+              throw new Error(`[MJCF export] Signed distance field geometry on link "${link.name}" is missing a mesh asset reference.`);
+            }
+            vGeomAttrs += ` type="sdf" mesh="${meshAssetName || fallbackMeshRef}"`;
           } else if (v.type === GeometryType.MESH) {
             const meshAssetName = resolveMeshAssetName(meshPathOverride || v.meshPath, v.dimensions);
             if (meshAssetName) {
@@ -594,10 +735,11 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         };
 
         if (meshVariants && meshVariants.length > 0) {
-          meshVariants.forEach((variant) => {
+          meshVariants.forEach((variant, variantIndex) => {
+            const variantMaterialName = visualVariantMaterialNameMap.get(`${linkId}@@${variantIndex}`);
             bodyXml += `${indent}  <geom ${buildVisualGeomAttrs(
               variant.meshPath,
-              undefined,
+              variantMaterialName,
               variant.color ? hexToRgba(variant.color) : undefined,
             )} />\n`;
           });
@@ -626,12 +768,29 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
       if (c.type === GeometryType.BOX) {
         cGeomAttrs += ` type="box" size="${formatScalar(c.dimensions.x / 2)} ${formatScalar(c.dimensions.y / 2)} ${formatScalar(c.dimensions.z / 2)}"`;
+      } else if (c.type === GeometryType.PLANE) {
+        cGeomAttrs += ` type="plane" size="${formatShape(c.dimensions.x / 2)} ${formatShape(c.dimensions.y / 2)} 0.1"`;
       } else if (c.type === GeometryType.CYLINDER) {
         cGeomAttrs += ` type="cylinder" size="${formatShape(c.dimensions.x)} ${formatShape(c.dimensions.y / 2)}"`;
       } else if (c.type === GeometryType.SPHERE) {
         cGeomAttrs += ` type="sphere" size="${formatShape(c.dimensions.x)}"`;
+      } else if (c.type === GeometryType.ELLIPSOID) {
+        cGeomAttrs += ` type="ellipsoid" size="${formatShape(c.dimensions.x)} ${formatShape(c.dimensions.y)} ${formatShape(c.dimensions.z)}"`;
       } else if (c.type === GeometryType.CAPSULE) {
         cGeomAttrs += ` type="capsule" size="${formatShape(c.dimensions.x)} ${formatShape(c.dimensions.y / 2)}"`;
+      } else if (c.type === GeometryType.HFIELD) {
+        const hfieldAssetName = resolveHfieldAssetName(c);
+        if (!hfieldAssetName) {
+          throw new Error(`[MJCF export] Height field collision geometry on link "${link.name}" is missing MJCF hfield asset metadata.`);
+        }
+        cGeomAttrs += ` type="hfield" hfield="${hfieldAssetName}"`;
+      } else if (c.type === GeometryType.SDF) {
+        const meshAssetName = resolveMeshAssetName(c.meshPath, c.dimensions);
+        const fallbackMeshRef = c.assetRef || resolveExportMeshPath(c.meshPath);
+        if (!meshAssetName && !fallbackMeshRef) {
+          throw new Error(`[MJCF export] Signed distance field collision geometry on link "${link.name}" is missing a mesh asset reference.`);
+        }
+        cGeomAttrs += ` type="sdf" mesh="${meshAssetName || fallbackMeshRef}"`;
       } else if (c.type === GeometryType.MESH && c.meshPath) {
         const meshAssetName = resolveMeshAssetName(c.meshPath, c.dimensions);
         if (meshAssetName) {

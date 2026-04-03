@@ -6,8 +6,13 @@ import {
   collisionBaseMaterial,
   configureCollisionOverlayMaterial,
   createCollisionOverlayMaterial,
+  enhanceMaterials,
   enhanceSingleMaterial,
 } from './materials';
+import {
+  cloneMaterialWithCoplanarOffset,
+  isCoplanarOffsetMaterial,
+} from '@/core/loaders/coplanarMaterialOffset';
 
 test('enhanceSingleMaterial preserves OBJ vertex colors for baked export meshes', () => {
   const sourceMaterial = new THREE.MeshPhongMaterial({
@@ -21,6 +26,78 @@ test('enhanceSingleMaterial preserves OBJ vertex colors for baked export meshes'
   assert.equal(enhancedMaterial.vertexColors, true);
   assert.equal(enhancedMaterial.toneMapped, false);
   assert.equal(enhancedMaterial.color.getHexString(), 'ffffff');
+});
+
+test('enhanceSingleMaterial keeps textured materials in exact-color mode', () => {
+  const texture = new THREE.Texture();
+  const sourceMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: texture,
+  });
+
+  const enhancedMaterial = enhanceSingleMaterial(sourceMaterial) as THREE.MeshStandardMaterial;
+
+  assert.equal(enhancedMaterial instanceof THREE.MeshStandardMaterial, true);
+  assert.equal(enhancedMaterial.map, texture);
+  assert.equal(enhancedMaterial.toneMapped, false);
+});
+
+test('enhanceSingleMaterial preserves layered collada depth state for coplanar overlays', () => {
+  const sourceMaterial = cloneMaterialWithCoplanarOffset(
+    new THREE.MeshPhongMaterial({ color: 0x111111 }),
+    2,
+  );
+  sourceMaterial.depthTest = false;
+  sourceMaterial.depthWrite = false;
+  sourceMaterial.alphaTest = 0.25;
+  sourceMaterial.userData.customFlag = 'preserved';
+
+  const enhancedMaterial = enhanceSingleMaterial(sourceMaterial) as THREE.MeshStandardMaterial;
+
+  assert.equal(enhancedMaterial instanceof THREE.MeshStandardMaterial, true);
+  assert.equal(isCoplanarOffsetMaterial(enhancedMaterial), true);
+  assert.equal(enhancedMaterial.userData.customFlag, 'preserved');
+  assert.equal(enhancedMaterial.polygonOffset, true);
+  assert.equal(enhancedMaterial.polygonOffsetFactor, sourceMaterial.polygonOffsetFactor);
+  assert.equal(enhancedMaterial.polygonOffsetUnits, sourceMaterial.polygonOffsetUnits);
+  assert.equal(enhancedMaterial.depthTest, false);
+  assert.equal(enhancedMaterial.depthWrite, false);
+  assert.equal(enhancedMaterial.alphaTest, 0.25);
+});
+
+test('enhanceMaterials keeps G1-class visual meshes in the shared shadow pass', () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute([
+      0, 0, 0,
+      1, 0, 0,
+      0, 1, 0,
+    ], 3),
+  );
+
+  const triangleCount = 51410;
+  const index = new Uint32Array(triangleCount * 3);
+  for (let i = 0; i < index.length; i += 3) {
+    index[i] = 0;
+    index[i + 1] = 1;
+    index[i + 2] = 2;
+  }
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshPhongMaterial({ color: 0xa0a0a0 }),
+  );
+
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+
+  enhanceMaterials(mesh);
+
+  assert.equal(mesh.material instanceof THREE.MeshStandardMaterial, true);
+  assert.equal(mesh.castShadow, true);
+  assert.equal(mesh.receiveShadow, true);
 });
 
 test('configureCollisionOverlayMaterial normalizes overlay depth and polygon settings', () => {

@@ -27,7 +27,10 @@ interface CollisionOptimizationStrategyPanelProps {
   labels: CollisionOptimizationStrategyPanelLabels;
   onSelectTarget?: (target: CollisionTargetRef) => void;
   onHoverTarget?: (target: CollisionTargetRef | null) => void;
-  onSetCandidateOverride: (candidate: CollisionOptimizationCandidate, nextType: GeometryType) => void;
+  onSetCandidateOverride: (
+    candidate: CollisionOptimizationCandidate,
+    nextType: GeometryType,
+  ) => void;
   onToggleCandidate?: (candidateKey: string) => void;
   formatGeometryType: (type: GeometryType | null | undefined) => string;
   strategyField?: {
@@ -38,7 +41,7 @@ interface CollisionOptimizationStrategyPanelProps {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-text-tertiary">
+    <div className="mb-1.5 text-[9px] font-semibold tracking-[0.02em] text-text-tertiary">
       {children}
     </div>
   );
@@ -131,7 +134,9 @@ export function CollisionOptimizationStrategyPanel({
                   </span>
                   <ArrowRight className="h-3 w-3 text-text-tertiary" />
                   <span className="rounded-full border border-system-blue/20 bg-panel-bg px-1.5 py-0.5 text-[9px] font-medium text-system-blue">
-                    {formatGeometryType(activeCandidate.suggestedType ?? activeCandidate.currentType)}
+                    {formatGeometryType(
+                      activeCandidate.suggestedType ?? activeCandidate.currentType,
+                    )}
                   </span>
                 </div>
 
@@ -161,7 +166,11 @@ export function CollisionOptimizationStrategyPanel({
                     : 'cursor-not-allowed border-border-black bg-panel-bg text-text-tertiary opacity-60'
                 }`}
               >
-                {isChecked ? <CheckSquare2 className="h-3.5 w-3.5 text-system-blue" /> : <Square className="h-3.5 w-3.5" />}
+                {isChecked ? (
+                  <CheckSquare2 className="h-3.5 w-3.5 text-system-blue" />
+                ) : (
+                  <Square className="h-3.5 w-3.5" />
+                )}
                 {isChecked ? labels.excludeCandidate : labels.includeCandidate}
               </button>
             </div>
@@ -169,25 +178,34 @@ export function CollisionOptimizationStrategyPanel({
             <div className="mt-2.5 space-y-1.5 rounded-md border border-border-black bg-panel-bg px-2 py-1.5">
               <div className="flex items-start gap-2 text-[10px]">
                 <span className="w-10 shrink-0 text-text-tertiary">{labels.status}</span>
-                <span className="font-medium text-text-primary">{getStatusLabel(activeCandidate)}</span>
+                <span className="font-medium text-text-primary">
+                  {getStatusLabel(activeCandidate)}
+                </span>
               </div>
               <div className="flex items-start gap-2 text-[10px]">
                 <span className="w-10 shrink-0 text-text-tertiary">{labels.reason}</span>
-                <span className="leading-snug text-text-primary">{getReasonLabel(activeCandidate) ?? '-'}</span>
+                <span className="leading-snug text-text-primary">
+                  {getReasonLabel(activeCandidate) ?? '-'}
+                </span>
               </div>
             </div>
           </div>
 
           {strategyField && getCandidateOverrideOptions(activeCandidate).length > 1 ? (
             <div className="mt-2 rounded-lg border border-border-black bg-panel-bg px-2.5 py-2.5">
-              <div className="text-[11px] font-medium leading-tight text-text-primary">{strategyField.label}</div>
+              <div className="text-[11px] font-medium leading-tight text-text-primary">
+                {strategyField.label}
+              </div>
               {strategyField.desc ? (
-                <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">{strategyField.desc}</div>
+                <div className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
+                  {strategyField.desc}
+                </div>
               ) : null}
 
               <div className="mt-2 flex flex-wrap gap-1">
                 {getCandidateOverrideOptions(activeCandidate).map((type) => {
-                  const effectiveType = activeCandidate.suggestedType ?? activeCandidate.currentType;
+                  const effectiveType =
+                    activeCandidate.suggestedType ?? activeCandidate.currentType;
                   return (
                     <StrategyOptionButton
                       key={`${activeCandidateKey}-${type}`}

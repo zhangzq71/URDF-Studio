@@ -2,15 +2,71 @@ import * as THREE from 'three';
 
 const MIN_PICKABLE_OPACITY = 1e-3;
 
+function isRuntimeUrdfNode(object: THREE.Object3D | null): boolean {
+  if (!object) {
+    return false;
+  }
+
+  const candidate = object as THREE.Object3D & {
+    isURDFLink?: boolean;
+    isURDFJoint?: boolean;
+    isURDFVisual?: boolean;
+    isURDFCollider?: boolean;
+    type?: string;
+  };
+
+  return (
+    candidate.isURDFLink === true ||
+    candidate.isURDFJoint === true ||
+    candidate.isURDFVisual === true ||
+    candidate.isURDFCollider === true ||
+    candidate.type === 'URDFLink' ||
+    candidate.type === 'URDFJoint' ||
+    candidate.type === 'URDFVisual' ||
+    candidate.type === 'URDFCollider'
+  );
+}
+
+export function isSelectableHelperNode(object: THREE.Object3D | null): boolean {
+  return object?.userData?.isSelectableHelper === true;
+}
+
+export function isBlockingGizmoNode(object: THREE.Object3D | null): boolean {
+  if (!object || object.userData?.isGizmo !== true) {
+    return false;
+  }
+
+  return !isSelectableHelperNode(object);
+}
+
+export function isSelectableHelperObject(object: THREE.Object3D | null): boolean {
+  let current: THREE.Object3D | null = object;
+
+  while (current) {
+    if (isSelectableHelperNode(current)) {
+      return true;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
 export function isInternalHelperObject(object: THREE.Object3D | null): boolean {
   let current: THREE.Object3D | null = object;
 
   while (current) {
-    if (current.userData?.isGizmo === true || current.userData?.isHelper === true) {
+    if (isSelectableHelperNode(current)) {
+      current = current.parent;
+      continue;
+    }
+
+    if (isBlockingGizmoNode(current) || current.userData?.isHelper === true) {
       return true;
     }
 
-    if (String(current.name || '').startsWith('__')) {
+    if (String(current.name || '').startsWith('__') && !isRuntimeUrdfNode(current)) {
       return true;
     }
 
@@ -33,7 +89,9 @@ export function isVisibleInHierarchy(object: THREE.Object3D): boolean {
   return true;
 }
 
-export function hasPickableMaterial(material: THREE.Material | THREE.Material[] | undefined): boolean {
+export function hasPickableMaterial(
+  material: THREE.Material | THREE.Material[] | undefined,
+): boolean {
   if (!material) {
     return true;
   }

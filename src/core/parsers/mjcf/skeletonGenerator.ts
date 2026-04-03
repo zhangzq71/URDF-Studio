@@ -76,7 +76,7 @@ function collectMeshAssets(robot: RobotState, includeMeshes: boolean): string[] 
 
   Object.values(robot.links).forEach((link) => {
     [link.visual, link.collision, ...(link.collisionBodies || [])].forEach((geometry) => {
-      if (geometry.type !== GeometryType.MESH || !geometry.meshPath) {
+      if ((geometry.type !== GeometryType.MESH && geometry.type !== GeometryType.SDF) || !geometry.meshPath) {
         return;
       }
 
@@ -88,6 +88,92 @@ function collectMeshAssets(robot: RobotState, includeMeshes: boolean): string[] 
   });
 
   return Array.from(meshAssets).sort();
+}
+
+interface HfieldAssetEntry {
+  key: string;
+  name: string;
+  file?: string;
+  contentType?: string;
+  nrow?: number;
+  ncol?: number;
+  size: [number, number, number, number];
+  elevation?: number[];
+}
+
+function normalizeHfieldSize(geometry: UrdfLink['visual']): [number, number, number, number] | null {
+  const size = geometry.mjcfHfield?.size;
+  if (!size) {
+    return null;
+  }
+
+  return [size.radiusX, size.radiusY, size.elevationZ, size.baseZ];
+}
+
+function buildHfieldAssetKey(geometry: UrdfLink['visual']): string | null {
+  const size = normalizeHfieldSize(geometry);
+  if (!size) {
+    return null;
+  }
+
+  return JSON.stringify({
+    assetRef: geometry.assetRef || geometry.mjcfHfield?.name || '',
+    file: geometry.mjcfHfield?.file || '',
+    contentType: geometry.mjcfHfield?.contentType || '',
+    nrow: geometry.mjcfHfield?.nrow ?? null,
+    ncol: geometry.mjcfHfield?.ncol ?? null,
+    size,
+    elevation: geometry.mjcfHfield?.elevation || [],
+  });
+}
+
+function collectHfieldAssets(robot: RobotState): HfieldAssetEntry[] {
+  const hfieldAssets = new Map<string, HfieldAssetEntry>();
+  const usedNames = new Set<string>();
+  const buildAssetName = (link: UrdfLink, geometry: UrdfLink['visual']) => {
+    const base = (geometry.assetRef || geometry.mjcfHfield?.name || `${link.name || link.id}_hfield`)
+      .replace(/[^a-zA-Z0-9_]/g, '_')
+      .replace(/^_+|_+$/g, '') || 'hfield';
+    let candidate = base;
+    let suffix = 2;
+    while (usedNames.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    usedNames.add(candidate);
+    return candidate;
+  };
+
+  const register = (link: UrdfLink, geometry: UrdfLink['visual']) => {
+    if (geometry.type !== GeometryType.HFIELD) {
+      return;
+    }
+
+    const key = buildHfieldAssetKey(geometry);
+    const size = normalizeHfieldSize(geometry);
+    if (!key || !size || hfieldAssets.has(key)) {
+      return;
+    }
+
+    hfieldAssets.set(key, {
+      key,
+      name: buildAssetName(link, geometry),
+      file: geometry.mjcfHfield?.file,
+      contentType: geometry.mjcfHfield?.contentType,
+      nrow: geometry.mjcfHfield?.nrow,
+      ncol: geometry.mjcfHfield?.ncol,
+      size,
+      elevation: geometry.mjcfHfield?.elevation ? [...geometry.mjcfHfield.elevation] : undefined,
+    });
+  };
+
+  Object.values(robot.links).forEach((link) => {
+    [link.visual, link.collision, ...(link.collisionBodies || [])].forEach((geometry) => {
+      register(link, geometry);
+    });
+  });
+
+  return Array.from(hfieldAssets.values());
 }
 
 function buildMeshAssetNameMap(meshAssets: string[]): Map<string, string> {
@@ -152,6 +238,7 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
   };
 
   const meshAssets = collectMeshAssets(robot, includeMeshes);
+  const hfieldAssets = collectHfieldAssets(robot);
   const meshAssetNameMap = buildMeshAssetNameMap(meshAssets);
   const childJointMap = buildChildJointMap(robot);
   const parentJointMap = buildParentJointMap(robot);
@@ -174,6 +261,16 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
     }
 
     return meshAssetNameMap.get(normalized) ?? null;
+  };
+
+  const hfieldAssetNameMap = new Map(hfieldAssets.map((entry) => [entry.key, entry.name] as const));
+  const resolveHfieldAssetName = (geometry: UrdfLink['visual']): string | null => {
+    const key = buildHfieldAssetKey(geometry);
+    if (!key) {
+      return null;
+    }
+
+    return hfieldAssetNameMap.get(key) ?? null;
   };
 
   const buildInertialXml = (link: UrdfLink, indent: string): string => {
@@ -238,6 +335,10 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
       return `${indent}<geom ${attributes.join(' ')} type="box" size="${formatShape(geometry.dimensions.x / 2)} ${formatShape(geometry.dimensions.y / 2)} ${formatShape(geometry.dimensions.z / 2)}"/>\n`;
     }
 
+    if (geometry.type === GeometryType.PLANE) {
+      return `${indent}<geom ${attributes.join(' ')} type="plane" size="${formatShape(geometry.dimensions.x / 2)} ${formatShape(geometry.dimensions.y / 2)} 0.1"/>\n`;
+    }
+
     if (geometry.type === GeometryType.CYLINDER) {
       return `${indent}<geom ${attributes.join(' ')} type="cylinder" size="${formatShape(geometry.dimensions.x)} ${formatShape(geometry.dimensions.y / 2)}"/>\n`;
     }
@@ -246,8 +347,32 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
       return `${indent}<geom ${attributes.join(' ')} type="sphere" size="${formatShape(geometry.dimensions.x)}"/>\n`;
     }
 
+    if (geometry.type === GeometryType.ELLIPSOID) {
+      return `${indent}<geom ${attributes.join(' ')} type="ellipsoid" size="${formatShape(geometry.dimensions.x)} ${formatShape(geometry.dimensions.y)} ${formatShape(geometry.dimensions.z)}"/>\n`;
+    }
+
     if (geometry.type === GeometryType.CAPSULE) {
       return `${indent}<geom ${attributes.join(' ')} type="capsule" size="${formatShape(geometry.dimensions.x)} ${formatShape(geometry.dimensions.y / 2)}"/>\n`;
+    }
+
+    if (geometry.type === GeometryType.HFIELD) {
+      const hfieldName = resolveHfieldAssetName(geometry);
+      if (!hfieldName) {
+        throw new Error(`[MJCF skeleton export] Height field geometry on link "${link.name}" is missing MJCF hfield asset metadata.`);
+      }
+      return `${indent}<geom ${attributes.join(' ')} type="hfield" hfield="${escapeXmlAttribute(hfieldName)}"/>\n`;
+    }
+
+    if (geometry.type === GeometryType.SDF) {
+      const meshName = resolveMeshAssetName(geometry.meshPath);
+      const fallbackMeshRef = geometry.assetRef;
+      if (meshName) {
+        return `${indent}<geom ${attributes.join(' ')} type="sdf" mesh="${escapeXmlAttribute(meshName)}"/>\n`;
+      }
+      if (fallbackMeshRef) {
+        return `${indent}<geom ${attributes.join(' ')} type="sdf" mesh="${escapeXmlAttribute(fallbackMeshRef)}"/>\n`;
+      }
+      throw new Error(`[MJCF skeleton export] Signed distance field geometry on link "${link.name}" is missing a mesh asset reference.`);
     }
 
     if (geometry.type === GeometryType.MESH) {
@@ -313,7 +438,7 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
   xml += `    <joint actuatorfrclimited="true" type="hinge"/>\n`;
   xml += `  </default>\n\n`;
 
-  if (meshAssets.length > 0) {
+  if (meshAssets.length > 0 || hfieldAssets.length > 0) {
     xml += `  <asset>\n`;
     meshAssets.forEach((meshPath) => {
       const meshName = meshAssetNameMap.get(meshPath);
@@ -322,6 +447,20 @@ export const generateSkeletonXML = (robot: RobotState, options: SkeletonExportOp
       }
 
       xml += `    <mesh name="${escapeXmlAttribute(meshName)}" file="${escapeXmlAttribute(meshPath)}"/>\n`;
+    });
+    hfieldAssets.forEach(({ name, file, contentType, nrow, ncol, size, elevation }) => {
+      const attrs = [
+        `name="${escapeXmlAttribute(name)}"`,
+        file ? `file="${escapeXmlAttribute(file)}"` : '',
+        contentType ? `content_type="${escapeXmlAttribute(contentType)}"` : '',
+        !file && Number.isFinite(nrow) ? `nrow="${nrow}"` : '',
+        !file && Number.isFinite(ncol) ? `ncol="${ncol}"` : '',
+        `size="${formatShape(size[0])} ${formatShape(size[1])} ${formatShape(size[2])} ${formatShape(size[3])}"`,
+        !file && elevation && elevation.length > 0
+          ? `elevation="${elevation.map((value) => formatShape(value)).join(' ')}"`
+          : '',
+      ].filter(Boolean);
+      xml += `    <hfield ${attrs.join(' ')} />\n`;
     });
     xml += `  </asset>\n\n`;
   }

@@ -6,16 +6,19 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppMode, DetailLinkTab, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
+import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 
 // Language type
 export type Language = 'en' | 'zh';
 export type RotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
+export type GlobalFontSize = 'small' | 'medium' | 'large';
+export type CodeEditorFontFamily = 'jetbrains-mono' | 'fira-code' | 'system-mono';
 
 // View configuration for different modes
 export interface ViewConfig {
   showToolbar: boolean;
-  showOptionsPanel: boolean;      // For detail mode (URDFViewer)
-  showSkeletonOptionsPanel: boolean;  // For skeleton/hardware mode (Visualizer)
+  showOptionsPanel: boolean; // For viewer scene options
+  showVisualizerOptionsPanel: boolean; // For visualizer scene options
   showJointPanel: boolean;
 }
 
@@ -28,6 +31,7 @@ export interface ViewOptions {
   showInertia: boolean;
   showCenterOfMass: boolean;
   showCollision: boolean;
+  modelOpacity: number;
 }
 
 // Panel visibility state
@@ -49,7 +53,7 @@ export interface PanelLayoutState {
 }
 
 interface UIState {
-  // App mode (skeleton/detail/hardware)
+  // App mode
   appMode: AppMode;
   setAppMode: (mode: AppMode) => void;
 
@@ -111,14 +115,24 @@ interface UIState {
   setPanelSection: (section: string, collapsed: boolean) => void;
 
   // Font Size Preference
-  fontSize: 'small' | 'medium' | 'large';
-  setFontSize: (size: 'small' | 'medium' | 'large') => void;
+  fontSize: GlobalFontSize;
+  setFontSize: (size: GlobalFontSize) => void;
+
+  // Source code editor typography
+  codeEditorFontFamily: CodeEditorFontFamily;
+  setCodeEditorFontFamily: (fontFamily: CodeEditorFontFamily) => void;
+  codeEditorFontSize: number;
+  setCodeEditorFontSize: (size: number) => void;
+
+  // Source code editor
+  sourceCodeAutoApply: boolean;
+  setSourceCodeAutoApply: (enabled: boolean) => void;
 
   // Property editor rotation format
   rotationDisplayMode: RotationDisplayMode;
   setRotationDisplayMode: (mode: RotationDisplayMode) => void;
 
-  // Detail-mode link property tab
+  // Editor link property tab
   detailLinkTab: DetailLinkTab;
   setDetailLinkTab: (tab: DetailLinkTab) => void;
 
@@ -131,7 +145,7 @@ interface UIState {
 const defaultViewConfig: ViewConfig = {
   showToolbar: true,
   showOptionsPanel: true,
-  showSkeletonOptionsPanel: true,
+  showVisualizerOptionsPanel: true,
   showJointPanel: true,
 };
 
@@ -143,6 +157,7 @@ const defaultViewOptions: ViewOptions = {
   showInertia: false,
   showCenterOfMass: false,
   showCollision: false,
+  modelOpacity: 1,
 };
 
 const defaultPanels: PanelsState = {
@@ -161,6 +176,9 @@ const defaultPanelLayout: PanelLayoutState = {
   treeSidebarWidth: 264,
 };
 
+const normalizeDetailLinkTab = (value: unknown): DetailLinkTab =>
+  value === 'collision' || value === 'physics' ? value : value === 'joint' ? 'physics' : 'visual';
+
 // Detect system language
 const getSystemLang = (): Language => {
   if (typeof window !== 'undefined') {
@@ -168,7 +186,8 @@ const getSystemLang = (): Language => {
     if (saved === 'en' || saved === 'zh') {
       return saved;
     }
-    const systemLang = navigator.language || (navigator as unknown as { userLanguage?: string }).userLanguage;
+    const systemLang =
+      navigator.language || (navigator as unknown as { userLanguage?: string }).userLanguage;
     if (systemLang && systemLang.toLowerCase().startsWith('zh')) {
       return 'zh';
     }
@@ -180,9 +199,12 @@ const getSystemLang = (): Language => {
 const detectOs = (): 'mac' | 'win' => {
   if (typeof navigator !== 'undefined') {
     const userAgent = navigator.userAgent.toLowerCase();
-    const userAgentDataPlatform = (navigator as Navigator & {
-      userAgentData?: { platform?: string };
-    }).userAgentData?.platform?.toLowerCase() || '';
+    const userAgentDataPlatform =
+      (
+        navigator as Navigator & {
+          userAgentData?: { platform?: string };
+        }
+      ).userAgentData?.platform?.toLowerCase() || '';
     const osHint = `${userAgentDataPlatform} ${userAgent}`;
 
     if (osHint.includes('mac') || osHint.includes('darwin')) {
@@ -215,14 +237,43 @@ const getSavedSidebar = (): SidebarState => {
 };
 
 // Helper to apply font size (affects text size via CSS variable)
-const applyFontSize = (fontSize: 'small' | 'medium' | 'large') => {
+const DEFAULT_GLOBAL_FONT_SIZE: GlobalFontSize = 'medium';
+const DEFAULT_CODE_EDITOR_FONT_FAMILY: CodeEditorFontFamily = 'jetbrains-mono';
+const DEFAULT_CODE_EDITOR_FONT_SIZE = 13;
+const MIN_CODE_EDITOR_FONT_SIZE = 11;
+const MAX_CODE_EDITOR_FONT_SIZE = 24;
+
+const normalizeGlobalFontSize = (value: unknown): GlobalFontSize =>
+  value === 'small' || value === 'large' ? value : 'medium';
+
+const normalizeCodeEditorFontFamily = (value: unknown): CodeEditorFontFamily =>
+  value === 'fira-code' || value === 'system-mono' ? value : 'jetbrains-mono';
+
+const clampCodeEditorFontSize = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_CODE_EDITOR_FONT_SIZE;
+  }
+
+  return Math.round(
+    Math.min(MAX_CODE_EDITOR_FONT_SIZE, Math.max(MIN_CODE_EDITOR_FONT_SIZE, parsed)),
+  );
+};
+
+const applyFontSize = (fontSize: GlobalFontSize) => {
   if (typeof window === 'undefined') return;
   let scale: number;
   switch (fontSize) {
-    case 'small': scale = 0.85; break;  // 85%
-    case 'large': scale = 1.25; break;  // 125%
+    case 'small':
+      scale = 0.85;
+      break; // 85%
+    case 'large':
+      scale = 1.25;
+      break; // 125%
     case 'medium':
-    default: scale = 1.0; break;  // 100%
+    default:
+      scale = 1.0;
+      break; // 100%
   }
   document.documentElement.style.setProperty('--font-scale', scale.toString());
   document.documentElement.setAttribute('data-font-size', fontSize);
@@ -231,8 +282,9 @@ const applyFontSize = (fontSize: 'small' | 'medium' | 'large') => {
 // Helper to apply theme
 const applyTheme = (theme: Theme) => {
   if (typeof window === 'undefined') return;
-  
-  const isDark = theme === 'dark' || 
+
+  const isDark =
+    theme === 'dark' ||
     (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   if (isDark) {
@@ -246,8 +298,8 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       // App mode
-      appMode: 'skeleton',
-      setAppMode: (mode) => set({ appMode: mode }),
+      appMode: normalizeMergedAppMode('editor'),
+      setAppMode: (mode) => set({ appMode: normalizeMergedAppMode(mode) }),
 
       // Theme
       theme: getSavedTheme(),
@@ -302,7 +354,7 @@ export const useUIStore = create<UIState>()(
           // Persist to localStorage
           localStorage.setItem(
             side === 'left' ? 'leftSidebarCollapsed' : 'rightSidebarCollapsed',
-            String(newValue)
+            String(newValue),
           );
           return {
             sidebar: { ...state.sidebar, [key]: newValue },
@@ -313,7 +365,7 @@ export const useUIStore = create<UIState>()(
           const key = side === 'left' ? 'leftCollapsed' : 'rightCollapsed';
           localStorage.setItem(
             side === 'left' ? 'leftSidebarCollapsed' : 'rightSidebarCollapsed',
-            String(collapsed)
+            String(collapsed),
           );
           return {
             sidebar: { ...state.sidebar, [key]: collapsed },
@@ -339,16 +391,16 @@ export const useUIStore = create<UIState>()(
           let newPos = pos;
           // Only calculate center if no pos provided AND current pos is default (0,0)
           if (!newPos && state.settingsPos.x === 0 && state.settingsPos.y === 0) {
-             if (typeof window !== 'undefined') {
-                const defaultWidth = 296;
-                const defaultHeight = 360;
-                newPos = {
-                    x: Math.max(12, window.innerWidth / 2 - defaultWidth / 2),
-                    y: Math.max(12, window.innerHeight / 2 - defaultHeight / 2),
-                };
-             } else {
-                newPos = { x: 100, y: 100 };
-             }
+            if (typeof window !== 'undefined') {
+              const defaultWidth = 580;
+              const defaultHeight = 420;
+              newPos = {
+                x: Math.max(12, window.innerWidth / 2 - defaultWidth / 2),
+                y: Math.max(12, window.innerHeight / 2 - defaultHeight / 2),
+              };
+            } else {
+              newPos = { x: 100, y: 100 };
+            }
           }
           return {
             isSettingsOpen: true,
@@ -368,25 +420,38 @@ export const useUIStore = create<UIState>()(
 
       // Panel Sections
       panelSections: {},
-      setPanelSection: (section, collapsed) => 
+      setPanelSection: (section, collapsed) =>
         set((state) => ({
-          panelSections: { ...state.panelSections, [section]: collapsed }
+          panelSections: { ...state.panelSections, [section]: collapsed },
         })),
 
       // Font Size
-      fontSize: 'medium',
+      fontSize: DEFAULT_GLOBAL_FONT_SIZE,
       setFontSize: (size) => {
         applyFontSize(size);
         set({ fontSize: size });
       },
 
+      // Source code editor typography
+      codeEditorFontFamily: DEFAULT_CODE_EDITOR_FONT_FAMILY,
+      setCodeEditorFontFamily: (codeEditorFontFamily) =>
+        set({ codeEditorFontFamily: normalizeCodeEditorFontFamily(codeEditorFontFamily) }),
+      codeEditorFontSize: DEFAULT_CODE_EDITOR_FONT_SIZE,
+      setCodeEditorFontSize: (codeEditorFontSize) =>
+        set({ codeEditorFontSize: clampCodeEditorFontSize(codeEditorFontSize) }),
+
+      // Source code editor
+      sourceCodeAutoApply: true,
+      setSourceCodeAutoApply: (sourceCodeAutoApply) => set({ sourceCodeAutoApply }),
+
       // Property editor rotation format
       rotationDisplayMode: 'euler_deg',
       setRotationDisplayMode: (rotationDisplayMode) => set({ rotationDisplayMode }),
 
-      // Detail-mode link property tab
+      // Editor link property tab
       detailLinkTab: 'visual',
-      setDetailLinkTab: (detailLinkTab) => set({ detailLinkTab }),
+      setDetailLinkTab: (detailLinkTab) =>
+        set({ detailLinkTab: normalizeDetailLinkTab(detailLinkTab) }),
 
       // Structure tree geometry detail disclosure
       structureTreeShowGeometryDetails: false,
@@ -395,7 +460,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 6,
+      version: 10,
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
@@ -404,6 +469,10 @@ export const useUIStore = create<UIState>()(
         const state = persistedState as {
           panelLayout?: Partial<PanelLayoutState>;
           viewOptions?: Partial<ViewOptions>;
+          detailLinkTab?: unknown;
+          fontSize?: unknown;
+          codeEditorFontFamily?: unknown;
+          codeEditorFontSize?: unknown;
         };
 
         return {
@@ -416,6 +485,10 @@ export const useUIStore = create<UIState>()(
             ...defaultPanelLayout,
             ...state.panelLayout,
           },
+          fontSize: normalizeGlobalFontSize(state.fontSize),
+          codeEditorFontFamily: normalizeCodeEditorFontFamily(state.codeEditorFontFamily),
+          codeEditorFontSize: clampCodeEditorFontSize(state.codeEditorFontSize),
+          detailLinkTab: normalizeDetailLinkTab(state.detailLinkTab),
         };
       },
       partialize: (state) => ({
@@ -427,6 +500,9 @@ export const useUIStore = create<UIState>()(
         showImportWarning: state.showImportWarning,
         panelSections: state.panelSections,
         fontSize: state.fontSize,
+        codeEditorFontFamily: state.codeEditorFontFamily,
+        codeEditorFontSize: state.codeEditorFontSize,
+        sourceCodeAutoApply: state.sourceCodeAutoApply,
         rotationDisplayMode: state.rotationDisplayMode,
         detailLinkTab: state.detailLinkTab,
         structureTreeShowGeometryDetails: state.structureTreeShowGeometryDetails,
@@ -437,9 +513,23 @@ export const useUIStore = create<UIState>()(
           applyTheme(state.theme);
           document.documentElement.style.fontSize = '100%';
           // Re-apply font size
-          applyFontSize(state.fontSize || 'medium');
+          applyFontSize(normalizeGlobalFontSize(state.fontSize));
+          const normalizedCodeEditorFontFamily = normalizeCodeEditorFontFamily(
+            state.codeEditorFontFamily,
+          );
+          if (state.codeEditorFontFamily !== normalizedCodeEditorFontFamily) {
+            state.setCodeEditorFontFamily(normalizedCodeEditorFontFamily);
+          }
+          const normalizedCodeEditorFontSize = clampCodeEditorFontSize(state.codeEditorFontSize);
+          if (state.codeEditorFontSize !== normalizedCodeEditorFontSize) {
+            state.setCodeEditorFontSize(normalizedCodeEditorFontSize);
+          }
+          const normalizedDetailLinkTab = normalizeDetailLinkTab(state.detailLinkTab);
+          if (state.detailLinkTab !== normalizedDetailLinkTab) {
+            state.setDetailLinkTab(normalizedDetailLinkTab);
+          }
         }
       },
-    }
-  )
+    },
+  ),
 );

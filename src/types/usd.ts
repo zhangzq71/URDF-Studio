@@ -122,6 +122,10 @@ export interface UsdLinkDynamicsEntry {
 
 export interface UsdRobotMetadataSnapshot {
   stageSourcePath?: string | null;
+  source?: string;
+  stale?: boolean;
+  errorFlags?: ArrayLike<string>;
+  truthLoadError?: string | null;
   linkParentPairs?: ArrayLike<[string, string | null]>;
   jointCatalogEntries?: ArrayLike<UsdJointCatalogEntry>;
   linkDynamicsEntries?: ArrayLike<UsdLinkDynamicsEntry>;

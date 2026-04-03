@@ -10,9 +10,11 @@ import { MathUtils as DataUtils } from '@/shared/utils/math';
 
 interface InertiaBoxProps {
   link: UrdfLink;
+  hovered?: boolean;
+  selected?: boolean;
 }
 
-export const InertiaBox = React.memo(({ link }: InertiaBoxProps) => {
+export const InertiaBox = React.memo(({ link, hovered = false, selected = false }: InertiaBoxProps) => {
   const inertial = link.inertial;
   if (!inertial) return null;
 
@@ -33,20 +35,35 @@ export const InertiaBox = React.memo(({ link }: InertiaBoxProps) => {
   const originQuat = new THREE.Quaternion().setFromEuler(originRot);
   const finalQuat = originQuat.multiply(rotation);
   const finalEuler = new THREE.Euler().setFromQuaternion(finalQuat, 'ZYX');
+  const isActive = hovered || selected;
+  const fillColor = isActive ? 0x7dd3fc : 0x4a9eff;
+  const edgeColor = isActive ? 0xe0f2fe : 0x93c5fd;
+  const opacity = hovered ? 0.58 : selected ? 0.5 : 0.35;
 
   return (
     <group position={[pos.x, pos.y, pos.z]} rotation={finalEuler}>
       <mesh renderOrder={9999}>
         <boxGeometry args={[width, height, depth]} />
         <meshPhongMaterial
-          color={0x4a9eff}
+          color={fillColor}
+          emissive={isActive ? 0x0f172a : 0x000000}
           transparent
-          opacity={0.35}
+          opacity={opacity}
           depthWrite={false}
           depthTest={false}
-          shininess={50}
+          shininess={isActive ? 80 : 50}
         />
       </mesh>
+      <lineSegments renderOrder={10000} scale={hovered ? [1.01, 1.01, 1.01] : [1.005, 1.005, 1.005]}>
+        <edgesGeometry args={[new THREE.BoxGeometry(width, height, depth)]} />
+        <lineBasicMaterial
+          color={edgeColor}
+          transparent
+          opacity={hovered ? 0.95 : 0.7}
+          depthWrite={false}
+          depthTest={false}
+        />
+      </lineSegments>
     </group>
   );
 });

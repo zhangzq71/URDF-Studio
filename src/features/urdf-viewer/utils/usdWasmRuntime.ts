@@ -3,27 +3,14 @@ import {
   buildUsdBindingsScriptUrl,
   ensureClassicScriptLoaded,
 } from './usdBindingsScriptLoader.ts';
-import type { UsdLoadingProgress } from '../types';
+import type {
+  LoadUsdStageFn,
+  UsdFsHelperInstance,
+  UsdModule,
+} from '../runtime/viewer/usd-loader.types';
+import { logRuntimeFailure } from '@/core/utils/runtimeDiagnostics';
 
 const EMHD_BINDINGS_CACHE_KEY = '20260318a';
-
-type UsdModule = {
-  FS_createPath?: (...args: any[]) => void;
-  FS_createDataFile?: (...args: any[]) => void;
-  FS_readFile?: (path: string, opts?: { encoding?: 'utf8'; flags?: string }) => Uint8Array | string;
-  FS_writeFile?: (path: string, data: string | ArrayLike<number> | ArrayBufferView, opts?: { flags?: string }) => void;
-  FS_unlink?: (...args: any[]) => void;
-  flushPendingDeletes?: () => void;
-  HdWebSyncDriver?: new (...args: any[]) => any;
-};
-
-type UsdFsHelperInstance = {
-  canOperateOnUsdFilesystem: () => boolean;
-  clearStageFiles: (usdRoot: { clear?: () => void } | null) => void;
-  hasVirtualFilePath: (filePath: string) => boolean;
-  trackVirtualFilePath?: (filePath: string) => void;
-  untrackVirtualFilePath?: (filePath: string) => void;
-};
 
 type LoadVirtualFileFn = (args: {
   USD: UsdModule;
@@ -35,42 +22,11 @@ type LoadVirtualFileFn = (args: {
   onLoadRootUsdPath: (path: string) => Promise<void>;
 }) => Promise<void>;
 
-type LoadUsdStageFn = (args: {
-  USD: UsdModule;
-  usdFsHelper: UsdFsHelperInstance;
-  messageLog?: HTMLElement | null;
-  progressBar?: HTMLElement | null;
-  progressLabel?: HTMLElement | null;
-  showLoadUi?: boolean;
-  readStageMetadata?: boolean;
-  loadCollisionPrims?: boolean;
-  loadVisualPrims?: boolean;
-  loadPassLabel?: string;
-  params: URLSearchParams;
-  displayName: string;
-  pathToLoad: string;
-  isLoadActive: () => boolean;
-  debugFileHandling?: boolean;
-  onResolvedFilename: (normalizedPath: string, resolvedDisplayName: string) => void;
-  applyMeshFilters: () => void;
-  rebuildLinkAxes: () => void;
-  renderFrame: () => void;
-  onProgress?: (progress: UsdLoadingProgress) => void;
-}) => Promise<{
-  driver: any;
-  ready: boolean;
-  drawFailed: boolean;
-  timeout: number;
-  endTimeCode: number;
-  normalizedPath: string;
-  loadedCollisionPrims: boolean;
-  loadedVisualPrims: boolean;
-} | null>;
-
 type ApplyMeshVisibilityFiltersFn = (
   renderInterface: any,
   showVisualMeshes: boolean,
   showCollisionMeshes: boolean,
+  collisionAlwaysOnTop?: boolean,
 ) => void;
 
 export interface UsdWasmRuntime {
@@ -104,7 +60,10 @@ function resolveGetUsdModuleFn(): ((config: Record<string, any>) => Promise<UsdM
 export function resolvePreferredUsdThreadCount(preferredConcurrency?: number): number {
   const fallbackConcurrency = Number(globalThis.navigator?.hardwareConcurrency || 4);
   const resolvedConcurrency = preferredConcurrency ?? fallbackConcurrency;
-  return Math.max(1, Math.min(10, Math.floor(resolvedConcurrency) || 1));
+  // Keep the embedded USD runtime responsive on the main thread. Larger pthread
+  // pools improve peak throughput on paper, but in the browser they also raise
+  // CPU contention and make orbit/drag noticeably less smooth during imports.
+  return Math.max(1, Math.min(4, Math.floor(resolvedConcurrency) || 1));
 }
 
 function assertUsdRuntimeEnvironment(): void {
@@ -178,7 +137,7 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
             debugFileHandling: boolean,
           ) => UsdFsHelperInstance;
         }>,
-        import('../runtime/viewer/usd-loader.js') as Promise<{ loadUsdStage: LoadUsdStageFn }>,
+        import('../runtime/viewer/usd-loader-runtime.ts'),
         import('../runtime/viewer/upload-workflow.js') as Promise<{
           loadVirtualFile: LoadVirtualFileFn;
         }>,
@@ -224,8 +183,15 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
 }
 
 export function prewarmUsdWasmRuntimeInBackground(): void {
-  void ensureUsdWasmRuntime().catch(() => {
-    // Keep eager runtime prewarm best-effort; the foreground load path still surfaces real errors.
+  void ensureUsdWasmRuntime().catch((error) => {
+    logRuntimeFailure(
+      'prewarmUsdWasmRuntimeInBackground',
+      new Error(
+        'USD runtime prewarm failed. Foreground USD loading will retry and surface the original error.',
+        { cause: error },
+      ),
+      'warn',
+    );
   });
 }
 

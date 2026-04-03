@@ -21,7 +21,9 @@ function toQuaternionFromGeometryOrigin(origin?: UrdfVisual['origin']): THREE.Qu
 }
 
 function normalizeColor(value?: string | null): string {
-  return String(value || '').trim().toLowerCase();
+  return String(value || '')
+    .trim()
+    .toLowerCase();
 }
 
 export function resolveUsdRuntimeGeometry(
@@ -70,7 +72,7 @@ export function isUsdRuntimeGeometryVisible({
     return showVisual && link?.visible !== false && geometry?.visible !== false;
   }
 
-  return showCollision && geometry?.visible !== false;
+  return showCollision && link?.visible !== false && geometry?.visible !== false;
 }
 
 export function composeUsdGeometryLocalOverrideMatrix(
@@ -112,7 +114,10 @@ export function deriveUsdMeshBaseLocalMatrix({
   baselineGeometry: UrdfVisual | null | undefined;
   linkWorldMatrix: THREE.Matrix4;
 }): THREE.Matrix4 {
-  const authoredLocalMatrix = linkWorldMatrix.clone().invert().multiply(authoredWorldMatrix.clone());
+  const authoredLocalMatrix = linkWorldMatrix
+    .clone()
+    .invert()
+    .multiply(authoredWorldMatrix.clone());
   const baselineGeometryLocalMatrix = composeUsdGeometryLocalOverrideMatrix(baselineGeometry);
 
   return baselineGeometryLocalMatrix.clone().invert().multiply(authoredLocalMatrix);

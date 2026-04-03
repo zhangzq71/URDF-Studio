@@ -7,9 +7,7 @@ export type Language = 'en' | 'zh';
 export interface TranslationKeys {
   // Header
   appName: string;
-  skeleton: string;
-  detail: string;
-  hardware: string;
+  editor: string;
   aiAssistant: string;
   file: string;
   import: string;
@@ -79,10 +77,14 @@ export interface TranslationKeys {
   bridgePickParent: string;
   bridgePickChild: string;
   add: string;
+  bridgedComponent: string;
+  bridgedComponentLockedHint: string;
+  bridgeLimitRangeInvalid: string;
 
   // Property Editor
   properties: string;
   selectLinkOrJoint: string;
+  selectedJoint: string;
   previewReadOnlyHint: string;
   name: string;
   visualGeometry: string;
@@ -169,20 +171,30 @@ export interface TranslationKeys {
   custom: string;
   autoAlign: string;
   box: string;
+  plane: string;
   cylinder: string;
   sphere: string;
+  ellipsoid: string;
   capsule: string;
+  hfield: string;
+  sdf: string;
   mesh: string;
+  assetReference: string;
+  mjcfLimitedGeometryHint: string;
+  rows: string;
+  cols: string;
+  contentType: string;
+  baseHeight: string;
   width: string;
   depth: string;
   height: string;
   radius: string;
+  radiusX: string;
+  radiusY: string;
+  radiusZ: string;
   totalLength: string;
 
   // Visualizer
-  skeletonOptions: string;
-  detailOptions: string;
-  hardwareOptions: string;
   move: string;
   rotate: string;
   urdfFrame: string;
@@ -205,6 +217,8 @@ export interface TranslationKeys {
   clickToSelect: string;
   enableLabels: string;
   clickLabels: string;
+  workspaceAssemblyRenderFailedMergedData: string;
+  workspaceAssemblyRenderFailedViewerData: string;
   confirmTransformation: string;
   apply: string;
 
@@ -248,6 +262,7 @@ export interface TranslationKeys {
   showInertia: string;
   jointControls: string;
   joints: string;
+  jointsPanel: string;
   viewOptions: string;
   loadingRobot: string;
   loadingRobotPreparing: string;
@@ -255,6 +270,7 @@ export interface TranslationKeys {
   loadingRobotPreloadingDependencies: string;
   loadingRobotInitializingRenderer: string;
   loadingRobotStreamingMeshes: string;
+  loadingRobotParsingInitialMeshes: string;
   loadingRobotApplyingStageFixes: string;
   loadingRobotResolvingMetadata: string;
   loadingRobotFinalizingScene: string;
@@ -269,6 +285,7 @@ export interface TranslationKeys {
   toolbox: string;
   toolboxHoverHint: string;
   robotRedirect: string;
+  motrix: string;
   trajectoryEditing: string;
   featureInDevelopment: string;
   transformMode: string;
@@ -285,6 +302,7 @@ export interface TranslationKeys {
   aiAssistantDesc: string;
   measureToolboxDesc: string;
   motionTrackingDesc: string;
+  motrixDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
   bridgedpEngineDesc: string;
@@ -348,36 +366,58 @@ export interface TranslationKeys {
   deleteAllLibraryFilesConfirmMessage: string;
   rightClickToRename: string;
   rightClickForActions: string;
+  generateWorkspaceUrdf: string;
+  generateWorkspaceUrdfConfirmTitle: string;
+  generateWorkspaceUrdfConfirmMessage: string;
+  generateWorkspaceUrdfSuccess: string;
+  generateWorkspaceUrdfUnavailable: string;
+  generateWorkspaceUrdfDisconnected: string;
+  generateAndSwitchToSimpleMode: string;
+  switchToSimpleWithoutGenerate: string;
 
   // App Shell
   edit: string;
   view: string;
   toolbar: string;
+  codeEditor: string;
   sourceCode: string;
   snapshot: string;
   settings: string;
+  general: string;
   language: string;
   theme: string;
   about: string;
   more: string;
   importUspZipFile: string;
-  skeletonHardwareOptions: string;
   switchLanguage: string;
   toggleTheme: string;
   light: string;
   dark: string;
   system: string;
   importWarning: string;
+  sourceCodeAutoApply: string;
   fontSize: string;
+  interfaceFontSize: string;
+  fontFamily: string;
+  codeEditorFontSize: string;
   small: string;
   medium: string;
   large: string;
   resetFontSize: string;
+  resetCodeEditorTypography: string;
+  systemMonospace: string;
+  version: string;
+  resources: string;
   documentTitle: string;
   loadingPanel: string;
   loadingEditor: string;
   loadingOptimizer: string;
   loadingBridgeDialog: string;
+  importPreparationLoadingTitle: string;
+  importPreparationLoadingDetail: string;
+  preparingAssemblyComponent: string;
+  addingAssemblyComponentToWorkspace: string;
+  groundingAssemblyComponent: string;
   failedToParseFormat: string;
   xacroSourceOnlyPreviewHint: string;
   usdPreviewRequiresOpen: string;
@@ -406,12 +446,57 @@ export interface TranslationKeys {
   exportLibraryUnsupportedFormat: string;
   usdExportRequiresLoadedStage: string;
   usdExportUnavailable: string;
+  usdExportWorkerUnsupportedMeshes: string;
   usdLoadInProgress: string;
   exportPartialWithAssetFailures: string;
   exportedWithMissingMeshes: string;
   exportedSuccess: string;
   generatingSnapshot: string;
   snapshotFailed: string;
+  snapshotDialogDescription: string;
+  snapshotResolutionLongEdge: string;
+  snapshotRenderDetail: string;
+  snapshotDetailViewport: string;
+  snapshotDetailHigh: string;
+  snapshotDetailUltra: string;
+  snapshotDetailViewportHint: string;
+  snapshotDetailHighHint: string;
+  snapshotDetailUltraHint: string;
+  snapshotImageFormat: string;
+  snapshotEnvironment: string;
+  snapshotEnvironmentViewport: string;
+  snapshotEnvironmentStudio: string;
+  snapshotEnvironmentCity: string;
+  snapshotEnvironmentContrast: string;
+  snapshotShadowStyle: string;
+  snapshotShadowSoft: string;
+  snapshotShadowBalanced: string;
+  snapshotShadowCrisp: string;
+  snapshotFloorStyle: string;
+  snapshotFloorShadow: string;
+  snapshotFloorContact: string;
+  snapshotFloorReflective: string;
+  snapshotDof: string;
+  snapshotDofOff: string;
+  snapshotDofSubtle: string;
+  snapshotDofHero: string;
+  snapshotBackground: string;
+  snapshotBackgroundViewport: string;
+  snapshotBackgroundStudio: string;
+  snapshotBackgroundSky: string;
+  snapshotBackgroundDark: string;
+  snapshotBackgroundTransparent: string;
+  snapshotResolutionPixels: string;
+  snapshotFormatPng: string;
+  snapshotFormatJpeg: string;
+  snapshotFormatWebp: string;
+  snapshotCompressionQuality: string;
+  snapshotCompressionLossless: string;
+  snapshotHideGrid: string;
+  snapshotAAMode: string;
+  snapshotAdvancedLook: string;
+  snapshotCapture: string;
+  snapshotCapturing: string;
   failedToProcessFiles: string;
 
   // About Modal
@@ -466,12 +551,17 @@ export interface TranslationKeys {
   // Export Dialog
   exportDialog: string;
   exportFormat: string;
+  exportFormatProject: string;
   exportFormatMJCF: string;
   exportFormatURDF: string;
   exportFormatXacro: string;
   exportFormatSDF: string;
   exportFormatUSD: string;
   exportComingSoon: string;
+  exportUsdFileFormat: string;
+  exportUsdFileFormatDesc: string;
+  exportUsdFileFormatUsd: string;
+  exportUsdFileFormatUsda: string;
   exportCompressMeshes: string;
   exportCompressMeshesDesc: string;
   simulatorPreset: string;
@@ -501,6 +591,14 @@ export interface TranslationKeys {
   exportOutputSection: string;
   exportOptionsSection: string;
   exportDoExport: string;
+  exportDoExportProject: string;
+  exportProjectWorkspaceSummary: string;
+  exportProjectWorkspaceSummaryDesc: string;
+  disconnectedWorkspaceUrdfExportTitle: string;
+  disconnectedWorkspaceUrdfExportMessage: string;
+  exportMultipleUrdfs: string;
+  continueEditing: string;
+  exportFooterProjectArchive: string;
   exportProgressTitle: string;
   exportProgressKeepWindowOpen: string;
   exportProgressStepCounter: string;
@@ -516,6 +614,15 @@ export interface TranslationKeys {
   exportProgressCollectingAssets: string;
   exportProgressCollectingAssetsPreparingDetail: string;
   exportProgressCollectingAssetsDetail: string;
+  exportProgressPackingProjectAssets: string;
+  exportProgressPackingProjectAssetsPreparingDetail: string;
+  exportProgressPackingProjectAssetsDetail: string;
+  exportProgressWritingProjectData: string;
+  exportProgressWritingProjectDataDetail: string;
+  exportProgressBundlingProjectComponents: string;
+  exportProgressBundlingProjectComponentsDetail: string;
+  exportProgressGeneratingProjectOutputs: string;
+  exportProgressGeneratingProjectOutputsDetail: string;
   exportProgressBuildingUsdScene: string;
   exportProgressUsdScenePreparingDetail: string;
   exportProgressUsdSceneDetail: string;
@@ -529,7 +636,7 @@ export interface TranslationKeys {
   exportProgressPackagingDetail: string;
   exportProgressPackagingDetailFile: string;
   exportProgressArchiveFallbackFile: string;
-  
+
   // Feature Convergence
   modelOpacity: string;
   coordinateAxes: string;

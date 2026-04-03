@@ -1,44 +1,60 @@
 /**
  * Settings Modal Component
- * Draggable settings panel for UI configuration (Theme, Language, Text Size)
+ * Desktop-first settings surface for interface, editor, view, and about preferences.
  */
 import React from 'react';
-import { Settings, X, Sun, Moon, Monitor, Type, Languages, RotateCcw, AlertTriangle } from 'lucide-react';
-import { useUIStore } from '@/store';
+import {
+  Code,
+  Eye,
+  Info,
+  Minus,
+  Monitor,
+  Moon,
+  RotateCcw,
+  Settings,
+  Sun,
+  Type,
+  X,
+  Plus,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { translations } from '@/shared/i18n';
-import { SegmentedControl, Switch, Button, IconButton } from '@/shared/components/ui';
+
 import { OptionsPanelContainer } from '@/shared/components/Panel';
+import { Button, IconButton, Select, Switch } from '@/shared/components/ui';
+import { translations } from '@/shared/i18n';
+import { useUIStore, type CodeEditorFontFamily } from '@/store';
+import { SettingsAboutPane } from './settings/SettingsAboutPane';
 
-const DEFAULT_SETTINGS_WIDTH = 296;
-const DEFAULT_SETTINGS_MIN_WIDTH = 272;
-const DEFAULT_SETTINGS_MAX_WIDTH = 420;
-const DEFAULT_SETTINGS_MIN_HEIGHT = 256;
-const DEFAULT_SETTINGS_MAX_HEIGHT = 560;
+const DEFAULT_SETTINGS_WIDTH = 620;
+const DEFAULT_SETTINGS_MIN_WIDTH = 520;
+const DEFAULT_SETTINGS_MAX_WIDTH = 760;
+const DEFAULT_SETTINGS_MIN_HEIGHT = 380;
+const DEFAULT_SETTINGS_MAX_HEIGHT = 600;
 const SETTINGS_VIEWPORT_MARGIN = 12;
-const SETTINGS_ESTIMATED_HEIGHT = 360;
+const SETTINGS_ESTIMATED_HEIGHT = 460;
+const DEFAULT_CODE_EDITOR_FONT_FAMILY: CodeEditorFontFamily = 'jetbrains-mono';
+const DEFAULT_CODE_EDITOR_FONT_SIZE = 13;
+const SETTINGS_ICON_STROKE_WIDTH = 1.65;
+const SETTINGS_INLINE_BUTTON_CLASSNAME =
+  'h-7 rounded-[6px] border-border-black px-2.5 text-[11px] font-medium shadow-none';
+const SETTINGS_SELECT_CLASSNAME =
+  'h-8 rounded-[6px] border-border-black bg-panel-bg px-2.5 pr-8 py-0 text-[12px] font-medium shadow-sm';
+const SETTINGS_TEXT_ACTION_CLASSNAME =
+  'h-7 rounded-[6px] px-2.5 text-[11px] font-medium text-text-secondary shadow-none hover:bg-settings-muted hover:text-text-primary active:bg-settings-muted';
 
-const clamp = (value: number, min: number, max: number) => {
-  if (max < min) return min;
-  return Math.max(min, Math.min(max, value));
-};
+type SettingsPage = 'general' | 'sourceCode' | 'view' | 'about';
 
 interface SettingsSectionProps {
   icon: React.ReactNode;
   title: string;
   children: React.ReactNode;
+  actions?: React.ReactNode;
 }
 
-function SettingsSection({ icon, title, children }: SettingsSectionProps) {
-  return (
-    <section className="rounded-xl border border-border-black bg-element-bg/55 px-2.5 py-2.5">
-      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-tertiary">
-        <span className="flex h-3.5 w-3.5 items-center justify-center">{icon}</span>
-        <span>{title}</span>
-      </div>
-      {children}
-    </section>
-  );
+interface SettingsRowProps {
+  label?: string;
+  children: React.ReactNode;
+  stacked?: boolean;
 }
 
 interface ToggleRowProps {
@@ -47,11 +63,311 @@ interface ToggleRowProps {
   onChange: (checked: boolean) => void;
 }
 
+interface SettingsNavItem {
+  key: SettingsPage;
+  icon: React.ReactNode;
+  title: string;
+}
+
+interface SettingsNavButtonProps {
+  item: SettingsNavItem;
+  isActive: boolean;
+  onSelect: (page: SettingsPage) => void;
+}
+
+interface SettingsSegmentOption<T> {
+  value: T;
+  label: string;
+  icon?: React.ReactNode;
+}
+
+interface SettingsSegmentedControlProps<T> {
+  options: ReadonlyArray<SettingsSegmentOption<T>>;
+  value: T;
+  onChange: (value: T) => void;
+  className?: string;
+}
+
+interface SettingsStepperProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onChange: (value: number) => void;
+  inputTestId: string;
+  decreaseTestId: string;
+  increaseTestId: string;
+}
+
+interface CodePreviewLineProps {
+  number: number;
+  children: React.ReactNode;
+}
+
+const clamp = (value: number, min: number, max: number) => {
+  if (max < min) return min;
+  return Math.max(min, Math.min(max, value));
+};
+
+const resolveCodeEditorFontFamilyCss = (fontFamily: CodeEditorFontFamily) => {
+  switch (fontFamily) {
+    case 'fira-code':
+      return "'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace";
+    case 'system-mono':
+      return "ui-monospace, 'SFMono-Regular', 'Consolas', 'Monaco', 'Liberation Mono', 'Courier New', monospace";
+    case 'jetbrains-mono':
+    default:
+      return "'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace";
+  }
+};
+
+function SettingsSection({ icon, title, children, actions }: SettingsSectionProps) {
+  return (
+    <section className="overflow-hidden rounded-[10px] border border-border-black bg-settings-card/95">
+      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border-black/70 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[7px] border border-border-black bg-panel-bg text-settings-accent">
+            {icon}
+          </span>
+          <h3 className="truncate text-[11px] font-semibold tracking-[0.06em] text-text-secondary uppercase">
+            {title}
+          </h3>
+        </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
+      </div>
+      <div className="divide-y divide-border-black/70">{children}</div>
+    </section>
+  );
+}
+
+function SettingsRow({ label, children, stacked = false }: SettingsRowProps) {
+  if (stacked) {
+    return (
+      <div className="space-y-2 px-3 py-2.5">
+        {label ? (
+          <div className="text-[11px] font-medium leading-4.5 text-text-secondary">{label}</div>
+        ) : null}
+        <div>{children}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2">
+      {label ? (
+        <div className="min-w-0 text-[11px] font-medium leading-4.5 text-text-secondary">
+          {label}
+        </div>
+      ) : null}
+      <div className="flex max-w-full items-center justify-end gap-2">{children}</div>
+    </div>
+  );
+}
+
 function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border-black/70 bg-panel-bg/80 px-2.5 py-2">
-      <span className="text-[11px] leading-4 text-text-secondary">{label}</span>
-      <Switch checked={checked} onChange={onChange} size="sm" />
+    <SettingsRow label={label}>
+      <Switch checked={checked} onChange={onChange} size="md" />
+    </SettingsRow>
+  );
+}
+
+function SettingsNavButton({ item, isActive, onSelect }: SettingsNavButtonProps) {
+  return (
+    <button
+      type="button"
+      data-settings-page={item.key}
+      onClick={() => onSelect(item.key)}
+      className={`relative flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-left transition-colors ${
+        isActive
+          ? 'bg-settings-accent-soft text-text-primary'
+          : 'text-text-secondary hover:bg-panel-bg/75 hover:text-text-primary'
+      }`}
+    >
+      <span
+        className={`absolute bottom-1.5 left-1 top-1.5 w-0.5 rounded-full ${
+          isActive ? 'bg-settings-accent' : 'bg-transparent'
+        }`}
+      />
+      <span className={`${isActive ? 'text-settings-accent' : 'text-text-tertiary'}`}>
+        {item.icon}
+      </span>
+      <span className="min-w-0 flex-1 text-[11px] font-medium leading-4.5">{item.title}</span>
+    </button>
+  );
+}
+
+function SettingsSegmentedControl<T extends string | number>({
+  options,
+  value,
+  onChange,
+  className = '',
+}: SettingsSegmentedControlProps<T>) {
+  return (
+    <div
+      className={`inline-flex min-h-7 max-w-full flex-wrap items-center rounded-[8px] border border-border-black bg-settings-muted p-0.5 ${className}`.trim()}
+    >
+      {options.map((option) => {
+        const isSelected = value === option.value;
+        return (
+          <button
+            key={String(option.value)}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`inline-flex h-6 items-center justify-center gap-1.5 rounded-[6px] px-2.5 text-[11px] font-medium transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-settings-accent-soft ${
+              isSelected
+                ? 'bg-panel-bg text-text-primary shadow-sm ring-1 ring-border-black/60'
+                : 'text-text-secondary hover:bg-panel-bg/80 hover:text-text-primary'
+            }`}
+          >
+            {option.icon ? (
+              <span className={isSelected ? 'text-settings-accent' : 'text-text-tertiary'}>
+                {option.icon}
+              </span>
+            ) : null}
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SettingsStepper({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  onChange,
+  inputTestId,
+  decreaseTestId,
+  increaseTestId,
+}: SettingsStepperProps) {
+  const adjustValue = React.useCallback(
+    (delta: number) => {
+      onChange(value + delta);
+    },
+    [onChange, value],
+  );
+
+  const handleInputChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextValue = Number(event.currentTarget.value);
+      if (Number.isNaN(nextValue)) {
+        return;
+      }
+      onChange(nextValue);
+    },
+    [onChange],
+  );
+
+  return (
+    <div className="inline-flex h-7 items-center overflow-hidden rounded-[6px] border border-border-black bg-panel-bg shadow-sm">
+      <button
+        type="button"
+        data-testid={decreaseTestId}
+        aria-label={`${label} -${step}`}
+        className="flex h-full w-7 items-center justify-center text-text-secondary transition-colors hover:bg-settings-muted hover:text-text-primary disabled:opacity-50"
+        onClick={() => adjustValue(-step)}
+        disabled={value <= min}
+      >
+        <Minus className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+      </button>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        data-testid={inputTestId}
+        onChange={handleInputChange}
+        className="h-full w-12 border-x border-border-black/70 bg-transparent px-0 text-center text-[12px] font-medium text-text-primary outline-none"
+      />
+      <button
+        type="button"
+        data-testid={increaseTestId}
+        aria-label={`${label} +${step}`}
+        className="flex h-full w-7 items-center justify-center text-text-secondary transition-colors hover:bg-settings-muted hover:text-text-primary disabled:opacity-50"
+        onClick={() => adjustValue(step)}
+        disabled={value >= max}
+      >
+        <Plus className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+      </button>
+    </div>
+  );
+}
+
+function CodePreviewLine({ number, children }: CodePreviewLineProps) {
+  return (
+    <div className="grid grid-cols-[18px_minmax(0,1fr)] items-start gap-2.5">
+      <span className="select-none text-right text-[11px] text-text-tertiary/80">{number}</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function SettingsCodePreview({
+  codeEditorFontFamily,
+  codeEditorFontSize,
+}: {
+  codeEditorFontFamily: CodeEditorFontFamily;
+  codeEditorFontSize: number;
+}) {
+  return (
+    <div className="overflow-hidden rounded-[10px] border border-border-black bg-panel-bg">
+      <div className="flex items-center justify-between border-b border-border-black bg-settings-muted px-2.5 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-settings-accent" />
+          <span className="text-[10px] font-medium text-text-secondary">preview.urdf</span>
+        </div>
+        <span className="text-[10px] text-text-tertiary">XML</span>
+      </div>
+      <pre
+        className="overflow-x-auto bg-panel-bg p-2.5 text-text-secondary"
+        style={{
+          fontFamily: resolveCodeEditorFontFamilyCss(codeEditorFontFamily),
+          fontSize: `${codeEditorFontSize}px`,
+          lineHeight: 1.6,
+        }}
+      >
+        <code>
+          <CodePreviewLine number={1}>
+            <span className="text-code-tag">&lt;joint</span>{' '}
+            <span className="text-code-attr">name</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;hip_joint&quot;</span>{' '}
+            <span className="text-code-attr">type</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;revolute&quot;</span>
+            <span className="text-code-tag">&gt;</span>
+          </CodePreviewLine>
+          <CodePreviewLine number={2}>
+            <span className="text-code-tag">&lt;origin</span>{' '}
+            <span className="text-code-attr">xyz</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;0 0 0&quot;</span>{' '}
+            <span className="text-code-attr">rpy</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;0 0 0&quot;</span>{' '}
+            <span className="text-code-tag">/&gt;</span>
+          </CodePreviewLine>
+          <CodePreviewLine number={3}>
+            <span className="text-code-tag">&lt;limit</span>{' '}
+            <span className="text-code-attr">effort</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;42&quot;</span>{' '}
+            <span className="text-code-attr">velocity</span>
+            <span className="text-text-secondary">=</span>
+            <span className="text-code-value">&quot;8.0&quot;</span>{' '}
+            <span className="text-code-tag">/&gt;</span>
+          </CodePreviewLine>
+          <CodePreviewLine number={4}>
+            <span className="text-code-tag">&lt;/joint&gt;</span>
+          </CodePreviewLine>
+        </code>
+      </pre>
     </div>
   );
 }
@@ -73,6 +389,12 @@ export function SettingsModal() {
     setViewOption,
     fontSize,
     setFontSize,
+    sourceCodeAutoApply,
+    setSourceCodeAutoApply,
+    codeEditorFontFamily,
+    setCodeEditorFontFamily,
+    codeEditorFontSize,
+    setCodeEditorFontSize,
   } = useUIStore(
     useShallow((state) => ({
       isSettingsOpen: state.isSettingsOpen,
@@ -90,18 +412,38 @@ export function SettingsModal() {
       setViewOption: state.setViewOption,
       fontSize: state.fontSize,
       setFontSize: state.setFontSize,
+      sourceCodeAutoApply: state.sourceCodeAutoApply,
+      setSourceCodeAutoApply: state.setSourceCodeAutoApply,
+      codeEditorFontFamily: state.codeEditorFontFamily,
+      setCodeEditorFontFamily: state.setCodeEditorFontFamily,
+      codeEditorFontSize: state.codeEditorFontSize,
+      setCodeEditorFontSize: state.setCodeEditorFontSize,
     })),
   );
+
+  const [activePage, setActivePage] = React.useState<SettingsPage>('general');
   const t = translations[lang];
   const panelRef = React.useRef<HTMLDivElement>(null);
+  const dragMoveHandlerRef = React.useRef<((event: MouseEvent) => void) | null>(null);
+  const dragEndHandlerRef = React.useRef<(() => void) | null>(null);
+  const dragPreviousUserSelectRef = React.useRef('');
+  const dragPreviousCursorRef = React.useRef('');
 
-  const maxPanelWidth = typeof window !== 'undefined'
-    ? Math.max(DEFAULT_SETTINGS_MIN_WIDTH, Math.min(DEFAULT_SETTINGS_MAX_WIDTH, window.innerWidth - SETTINGS_VIEWPORT_MARGIN * 2))
-    : DEFAULT_SETTINGS_MAX_WIDTH;
+  const maxPanelWidth =
+    typeof window !== 'undefined'
+      ? Math.max(
+          DEFAULT_SETTINGS_MIN_WIDTH,
+          Math.min(DEFAULT_SETTINGS_MAX_WIDTH, window.innerWidth - SETTINGS_VIEWPORT_MARGIN * 2),
+        )
+      : DEFAULT_SETTINGS_MAX_WIDTH;
 
-  const maxPanelHeight = typeof window !== 'undefined'
-    ? Math.max(DEFAULT_SETTINGS_MIN_HEIGHT, Math.min(DEFAULT_SETTINGS_MAX_HEIGHT, window.innerHeight - SETTINGS_VIEWPORT_MARGIN * 2))
-    : DEFAULT_SETTINGS_MAX_HEIGHT;
+  const maxPanelHeight =
+    typeof window !== 'undefined'
+      ? Math.max(
+          DEFAULT_SETTINGS_MIN_HEIGHT,
+          Math.min(DEFAULT_SETTINGS_MAX_HEIGHT, window.innerHeight - SETTINGS_VIEWPORT_MARGIN * 2),
+        )
+      : DEFAULT_SETTINGS_MAX_HEIGHT;
 
   const clampSettingsPosition = React.useCallback((x: number, y: number) => {
     if (typeof window === 'undefined') {
@@ -116,6 +458,25 @@ export function SettingsModal() {
       x: clamp(x, SETTINGS_VIEWPORT_MARGIN, window.innerWidth - width - SETTINGS_VIEWPORT_MARGIN),
       y: clamp(y, SETTINGS_VIEWPORT_MARGIN, window.innerHeight - height - SETTINGS_VIEWPORT_MARGIN),
     };
+  }, []);
+
+  const clearDragListeners = React.useCallback(() => {
+    const moveHandler = dragMoveHandlerRef.current;
+    const endHandler = dragEndHandlerRef.current;
+
+    if (moveHandler) {
+      document.removeEventListener('mousemove', moveHandler);
+      dragMoveHandlerRef.current = null;
+    }
+
+    if (endHandler) {
+      document.removeEventListener('mouseup', endHandler);
+      window.removeEventListener('blur', endHandler);
+      dragEndHandlerRef.current = null;
+    }
+
+    document.body.style.userSelect = dragPreviousUserSelectRef.current;
+    document.body.style.cursor = dragPreviousCursorRef.current;
   }, []);
 
   React.useEffect(() => {
@@ -153,15 +514,31 @@ export function SettingsModal() {
     };
   }, [clampSettingsPosition, isSettingsOpen, setSettingsPos]);
 
-  const handleDragStart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startY = e.clientY;
+  React.useEffect(() => {
+    if (isSettingsOpen) {
+      return undefined;
+    }
+
+    clearDragListeners();
+    return undefined;
+  }, [clearDragListeners, isSettingsOpen]);
+
+  React.useEffect(
+    () => () => {
+      clearDragListeners();
+    },
+    [clearDragListeners],
+  );
+
+  const handleDragStart = (event: React.MouseEvent) => {
+    event.preventDefault();
+    clearDragListeners();
+    const startX = event.clientX;
+    const startY = event.clientY;
     const initialX = settingsPos.x;
     const initialY = settingsPos.y;
-    const previousUserSelect = document.body.style.userSelect;
-    const previousCursor = document.body.style.cursor;
-
+    dragPreviousUserSelectRef.current = document.body.style.userSelect;
+    dragPreviousCursorRef.current = document.body.style.cursor;
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'move';
 
@@ -173,111 +550,133 @@ export function SettingsModal() {
     };
 
     const handleMouseUp = () => {
-      document.body.style.userSelect = previousUserSelect;
-      document.body.style.cursor = previousCursor;
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      clearDragListeners();
     };
 
+    dragMoveHandlerRef.current = handleMouseMove;
+    dragEndHandlerRef.current = handleMouseUp;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', handleMouseUp);
   };
 
-  if (!isSettingsOpen) {
-    return null;
-  }
+  const settingsPages = React.useMemo<SettingsNavItem[]>(
+    () => [
+      {
+        key: 'general',
+        icon: <Settings className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />,
+        title: t.general,
+      },
+      {
+        key: 'sourceCode',
+        icon: <Code className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />,
+        title: t.codeEditor,
+      },
+      {
+        key: 'view',
+        icon: <Eye className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />,
+        title: t.view,
+      },
+      {
+        key: 'about',
+        icon: <Info className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />,
+        title: t.about,
+      },
+    ],
+    [t.about, t.codeEditor, t.general, t.view],
+  );
 
-  return (
-    <div
-      ref={panelRef}
-      style={{ left: settingsPos.x, top: settingsPos.y }}
-      className="fixed z-[100] pointer-events-auto"
-      onClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-      onWheel={(event) => event.stopPropagation()}
-    >
-      <OptionsPanelContainer
-        width={DEFAULT_SETTINGS_WIDTH}
-        minWidth={DEFAULT_SETTINGS_MIN_WIDTH}
-        maxWidth={maxPanelWidth}
-        minHeight={DEFAULT_SETTINGS_MIN_HEIGHT}
-        maxHeight={maxPanelHeight}
-        resizable
-        resizeTitle={t.resize}
-        className="overflow-hidden rounded-2xl shadow-xl"
-      >
-        <div
-          onMouseDown={handleDragStart}
-          className="flex cursor-move select-none items-center justify-between gap-3 border-b border-border-black bg-element-bg px-3 py-2.5"
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="rounded-md border border-border-black bg-panel-bg p-1 text-system-blue shadow-sm">
-              <Settings className="h-3.5 w-3.5" />
-            </div>
-            <h2 className="truncate text-[13px] font-semibold text-text-primary">
-              {t.settings}
-            </h2>
-          </div>
-          <div onMouseDown={(event) => event.stopPropagation()}>
-            <IconButton
-              onClick={closeSettings}
-              size="sm"
-              variant="close"
-              aria-label={t.close}
+  const codeEditorFontFamilyOptions = React.useMemo(
+    () => [
+      { value: 'jetbrains-mono', label: 'JetBrains Mono' },
+      { value: 'fira-code', label: 'Fira Code' },
+      { value: 'system-mono', label: t.systemMonospace },
+    ],
+    [t.systemMonospace],
+  );
+
+  const resetCodeEditorTypography = React.useCallback(() => {
+    setCodeEditorFontFamily(DEFAULT_CODE_EDITOR_FONT_FAMILY);
+    setCodeEditorFontSize(DEFAULT_CODE_EDITOR_FONT_SIZE);
+  }, [setCodeEditorFontFamily, setCodeEditorFontSize]);
+
+  const pageTitle = settingsPages.find((page) => page.key === activePage)?.title ?? t.settings;
+
+  const detailPane = (() => {
+    switch (activePage) {
+      case 'sourceCode':
+        return (
+          <div className="space-y-3">
+            <SettingsSection
+              icon={<Code className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />}
+              title={t.codeEditor}
+              actions={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={resetCodeEditorTypography}
+                  className={SETTINGS_INLINE_BUTTON_CLASSNAME}
+                  icon={
+                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+                  }
+                >
+                  {t.resetCodeEditorTypography}
+                </Button>
+              }
             >
-              <X className="w-3.5 h-3.5" />
-            </IconButton>
+              <ToggleRow
+                label={t.sourceCodeAutoApply}
+                checked={sourceCodeAutoApply}
+                onChange={setSourceCodeAutoApply}
+              />
+              <SettingsRow label={t.fontFamily}>
+                <div className="w-36">
+                  <Select
+                    data-testid="settings-code-editor-font-family"
+                    options={codeEditorFontFamilyOptions}
+                    value={codeEditorFontFamily}
+                    className={SETTINGS_SELECT_CLASSNAME}
+                    onChange={(event) =>
+                      setCodeEditorFontFamily(event.currentTarget.value as CodeEditorFontFamily)
+                    }
+                  />
+                </div>
+              </SettingsRow>
+              <SettingsRow label={t.codeEditorFontSize}>
+                <SettingsStepper
+                  label={t.codeEditorFontSize}
+                  value={codeEditorFontSize}
+                  min={11}
+                  max={24}
+                  onChange={setCodeEditorFontSize}
+                  inputTestId="settings-code-editor-font-size"
+                  decreaseTestId="settings-code-editor-font-size-decrease"
+                  increaseTestId="settings-code-editor-font-size-increase"
+                />
+              </SettingsRow>
+            </SettingsSection>
+
+            <SettingsSection
+              icon={<Type className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />}
+              title={t.preview}
+            >
+              <SettingsRow stacked label={t.sourceCode}>
+                <SettingsCodePreview
+                  codeEditorFontFamily={codeEditorFontFamily}
+                  codeEditorFontSize={codeEditorFontSize}
+                />
+              </SettingsRow>
+            </SettingsSection>
           </div>
-        </div>
-        <div className="flex-1 min-h-0 space-y-3 overflow-y-auto p-3">
-          <SettingsSection
-            icon={<Languages className="h-3 w-3" />}
-            title={t.language}
-          >
-            <SegmentedControl
-              options={[
-                { value: 'en', label: 'English' },
-                { value: 'zh', label: '中文' },
-              ]}
-              value={lang}
-              onChange={(val) => setLang(val as 'en' | 'zh')}
-              size="xs"
-              className="w-full"
-            />
-          </SettingsSection>
+        );
 
-          <SettingsSection
-            icon={theme === 'light' ? <Sun className="h-3 w-3" /> : theme === 'dark' ? <Moon className="h-3 w-3" /> : <Monitor className="h-3 w-3" />}
-            title={t.theme}
-          >
-            <SegmentedControl
-              options={[
-                { value: 'light', label: t.light, icon: <Sun className="h-3 w-3" /> },
-                { value: 'dark', label: t.dark, icon: <Moon className="h-3 w-3" /> },
-                { value: 'system', label: t.system, icon: <Monitor className="h-3 w-3" /> },
-              ]}
-              value={theme}
-              onChange={(val) => setTheme(val as 'light' | 'dark' | 'system')}
-              size="xs"
-              className="w-full"
-            />
-          </SettingsSection>
-
-          <div className="rounded-xl border border-border-black bg-element-bg/55 px-2.5 py-2.5">
-            <ToggleRow
-              label={t.importWarning}
-              checked={showImportWarning}
-              onChange={setShowImportWarning}
-            />
-          </div>
-
-          <SettingsSection
-            icon={<Monitor className="h-3 w-3" />}
-            title={t.viewOptions}
-          >
-            <div className="space-y-1.5">
+      case 'view':
+        return (
+          <div className="space-y-3">
+            <SettingsSection
+              icon={<Monitor className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />}
+              title={t.view}
+            >
               <ToggleRow
                 label={t.showWorldOriginAxes}
                 checked={showWorldOriginAxes}
@@ -288,38 +687,175 @@ export function SettingsModal() {
                 checked={showUsageGuide}
                 onChange={(checked) => setViewOption('showUsageGuide', checked)}
               />
-            </div>
-          </SettingsSection>
+            </SettingsSection>
+          </div>
+        );
 
-          <SettingsSection
-            icon={<Type className="h-3 w-3" />}
-            title={t.fontSize}
-          >
-            <div className="space-y-2">
-              <SegmentedControl
-                options={[
-                  { value: 'small', label: t.small },
-                  { value: 'medium', label: t.medium },
-                  { value: 'large', label: t.large },
-                ]}
-                value={fontSize}
-                onChange={(val) => setFontSize(val as 'small' | 'medium' | 'large')}
-                size="xs"
-                className="w-full"
+      case 'about':
+        return <SettingsAboutPane t={t} />;
+
+      case 'general':
+      default:
+        return (
+          <div className="space-y-3">
+            <SettingsSection
+              icon={<Settings className="h-4 w-4" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />}
+              title={t.general}
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFontSize('medium')}
+                  className={SETTINGS_TEXT_ACTION_CLASSNAME}
+                  icon={
+                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+                  }
+                >
+                  {t.resetFontSize}
+                </Button>
+              }
+            >
+              <SettingsRow label={t.language}>
+                <SettingsSegmentedControl
+                  options={[
+                    { value: 'en', label: 'English' },
+                    { value: 'zh', label: '中文' },
+                  ]}
+                  value={lang}
+                  onChange={(value) => setLang(value as 'en' | 'zh')}
+                />
+              </SettingsRow>
+              <SettingsRow label={t.theme}>
+                <SettingsSegmentedControl
+                  options={[
+                    {
+                      value: 'light',
+                      label: t.light,
+                      icon: (
+                        <Sun className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+                      ),
+                    },
+                    {
+                      value: 'dark',
+                      label: t.dark,
+                      icon: (
+                        <Moon className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+                      ),
+                    },
+                    {
+                      value: 'system',
+                      label: t.system,
+                      icon: (
+                        <Monitor className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+                      ),
+                    },
+                  ]}
+                  value={theme}
+                  onChange={(value) => setTheme(value as 'light' | 'dark' | 'system')}
+                />
+              </SettingsRow>
+              <SettingsRow label={t.interfaceFontSize}>
+                <SettingsSegmentedControl
+                  options={[
+                    { value: 'small', label: t.small },
+                    { value: 'medium', label: t.medium },
+                    { value: 'large', label: t.large },
+                  ]}
+                  value={fontSize}
+                  onChange={(value) => setFontSize(value as 'small' | 'medium' | 'large')}
+                />
+              </SettingsRow>
+              <ToggleRow
+                label={t.importWarning}
+                checked={showImportWarning}
+                onChange={setShowImportWarning}
               />
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  setFontSize('medium');
-                }}
-                className="w-full justify-center"
-                icon={<RotateCcw className="h-3 w-3" />}
-              >
-                {t.resetFontSize}
-              </Button>
+            </SettingsSection>
+          </div>
+        );
+    }
+  })();
+
+  if (!isSettingsOpen) {
+    return null;
+  }
+
+  return (
+    <div
+      ref={panelRef}
+      style={{ left: settingsPos.x, top: settingsPos.y }}
+      className="pointer-events-auto fixed z-[100]"
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
+    >
+      <OptionsPanelContainer
+        width={DEFAULT_SETTINGS_WIDTH}
+        height={SETTINGS_ESTIMATED_HEIGHT}
+        minWidth={DEFAULT_SETTINGS_MIN_WIDTH}
+        maxWidth={maxPanelWidth}
+        minHeight={DEFAULT_SETTINGS_MIN_HEIGHT}
+        maxHeight={maxPanelHeight}
+        resizable
+        resizeTitle={t.resize}
+        className="overflow-hidden rounded-[18px] bg-settings-shell shadow-[0_18px_48px_rgba(15,23,42,0.08),0_8px_18px_rgba(15,23,42,0.06),0_1px_3px_rgba(15,23,42,0.04)] dark:shadow-[0_20px_52px_rgba(0,0,0,0.42),0_10px_28px_rgba(0,0,0,0.34)]"
+      >
+        <div className="flex h-full min-h-0 flex-col bg-settings-shell">
+          <div
+            onMouseDown={handleDragStart}
+            className="flex min-h-11 cursor-move select-none items-center justify-between gap-3 border-b border-border-black bg-panel-bg/95 px-3.5 py-2.5"
+          >
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="rounded-[7px] border border-border-black bg-settings-card p-1.25 text-settings-accent">
+                <Settings className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+              </div>
+              <div className="flex min-w-0 items-baseline gap-2">
+                <h2 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-text-primary">
+                  {t.settings}
+                </h2>
+                <p className="truncate text-[11px] font-medium text-text-tertiary">{pageTitle}</p>
+              </div>
             </div>
-          </SettingsSection>
+            <div onMouseDown={(event) => event.stopPropagation()}>
+              <IconButton
+                onClick={closeSettings}
+                size="sm"
+                variant="close"
+                aria-label={t.close}
+                className="h-6.5 w-6.5 rounded-[6px] p-0"
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={SETTINGS_ICON_STROKE_WIDTH} />
+              </IconButton>
+            </div>
+          </div>
+
+          <div className="grid min-h-0 flex-1 grid-cols-[108px_minmax(0,1fr)] gap-2.5 p-2.5">
+            <aside className="min-h-0 py-0.5">
+              <div className="space-y-1">
+                {settingsPages.map((page) => (
+                  <SettingsNavButton
+                    key={page.key}
+                    item={page}
+                    isActive={activePage === page.key}
+                    onSelect={setActivePage}
+                  />
+                ))}
+              </div>
+            </aside>
+
+            <section className="flex min-h-0 flex-col overflow-hidden rounded-[12px] border border-border-black bg-panel-bg">
+              <div className="border-b border-border-black bg-panel-bg px-3.5 py-2">
+                <div className="text-[12px] font-semibold tracking-[-0.01em] text-text-primary">
+                  {pageTitle}
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-settings-shell p-3">
+                {detailPane}
+              </div>
+            </section>
+          </div>
         </div>
       </OptionsPanelContainer>
     </div>

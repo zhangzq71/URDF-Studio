@@ -41,6 +41,16 @@ function findRobotLinkObject(robotModel: THREE.Object3D, linkName: string): THRE
   return found;
 }
 
+function getSyntheticGeomParentName(candidate: string | null | undefined): string | null {
+  const trimmed = String(candidate || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = trimmed.match(/^(.*)_geom_\d+$/);
+  return match?.[1]?.trim() || null;
+}
+
 function getEffectiveMeasureSelection(
   selection?: MeasureSelectionLike,
   fallbackSelection?: MeasureSelectionLike,
@@ -85,6 +95,35 @@ function resolveRobotLinkData(
   }
 
   return Object.values(robotLinks).find((link) => link.name === identity || link.name === linkObject?.name) ?? null;
+}
+
+function resolveRobotRuntimeLinkObject(
+  robot: THREE.Object3D,
+  selectionId: string,
+  linkData?: UrdfLink | null,
+): THREE.Object3D | null {
+  const candidates = [
+    selectionId,
+    linkData?.id,
+    linkData?.name,
+    getSyntheticGeomParentName(selectionId),
+    getSyntheticGeomParentName(linkData?.id),
+    getSyntheticGeomParentName(linkData?.name),
+  ];
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (!candidate) {
+      continue;
+    }
+
+    const linkObject = findRobotLinkObject(robot, candidate);
+    if (linkObject) {
+      return linkObject;
+    }
+  }
+
+  return null;
 }
 
 function resolveUsdLinkId(
@@ -168,8 +207,7 @@ export function resolveRobotMeasureTargetFromSelection(
   }
 
   const linkData = resolveRobotLinkData(robotLinks, effectiveSelection.id);
-  const linkObject = findRobotLinkObject(robot, effectiveSelection.id)
-    ?? findRobotLinkObject(robot, linkData?.name || '');
+  const linkObject = resolveRobotRuntimeLinkObject(robot, effectiveSelection.id, linkData);
   if (!linkObject) {
     return null;
   }

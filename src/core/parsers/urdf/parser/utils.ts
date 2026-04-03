@@ -1,4 +1,5 @@
-import { Vector3, Euler } from '@/types/geometry';
+import * as THREE from 'three';
+import type { Euler, QuaternionXYZW, UrdfOrigin, Vector3 } from '@/types/geometry';
 
 /**
  * Preprocess XML content to fix common issues
@@ -49,6 +50,50 @@ export const parseRPY = (str: string | null): Euler => {
         r: isNaN(parts[0]) ? 0 : parts[0], 
         p: isNaN(parts[1]) ? 0 : parts[1], 
         y: isNaN(parts[2]) ? 0 : parts[2] 
+    };
+};
+
+const tempQuaternion = new THREE.Quaternion();
+const tempEuler = new THREE.Euler();
+
+export const parseQuaternionXYZW = (str: string | null | undefined): QuaternionXYZW | undefined => {
+    if (!str) return undefined;
+    const parts = str.trim().split(/\s+/).map((value) => parseFloat(value));
+    if (parts.length < 4 || parts.some((value) => !Number.isFinite(value))) {
+        return undefined;
+    }
+
+    return {
+        x: parts[0],
+        y: parts[1],
+        z: parts[2],
+        w: parts[3],
+    };
+};
+
+export const quaternionXYZWToRPY = (quat: QuaternionXYZW): Euler => {
+    tempQuaternion.set(quat.x, quat.y, quat.z, quat.w).normalize();
+    tempEuler.setFromQuaternion(tempQuaternion, 'ZYX');
+    return {
+        r: tempEuler.x,
+        p: tempEuler.y,
+        y: tempEuler.z,
+    };
+};
+
+export const parseOrigin = (originEl: Element | null | undefined): UrdfOrigin => {
+    const xyz = parseVec3(originEl?.getAttribute("xyz") || null);
+    const quatXyzw = parseQuaternionXYZW(originEl?.getAttribute("quat_xyzw"));
+    const rpy = originEl?.hasAttribute("rpy")
+        ? parseRPY(originEl.getAttribute("rpy"))
+        : quatXyzw
+            ? quaternionXYZWToRPY(quatXyzw)
+            : parseRPY(null);
+
+    return {
+        xyz,
+        rpy,
+        ...(quatXyzw ? { quatXyzw } : {}),
     };
 };
 

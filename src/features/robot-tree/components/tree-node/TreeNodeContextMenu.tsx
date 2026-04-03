@@ -10,7 +10,6 @@ interface TreeNodeContextMenuProps {
   contextMenuHasVisual: boolean;
   contextMenuHasCollision: boolean;
   contextMenuGeometryType: GeometryType | null;
-  isSkeleton: boolean;
   t: TranslationKeys;
   readOnly: boolean;
   onRenameMenuAction: () => void;
@@ -26,7 +25,6 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
   contextMenuHasVisual,
   contextMenuHasCollision,
   contextMenuGeometryType,
-  isSkeleton,
   t,
   readOnly,
   onRenameMenuAction,
@@ -48,11 +46,9 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
             {t.rename}
           </ContextMenuItem>
 
-          {isSkeleton && (
-            <ContextMenuItem onClick={onAddChildMenuAction} icon={<Plus size={12} />}>
-              {t.addChildLink}
-            </ContextMenuItem>
-          )}
+          <ContextMenuItem onClick={onAddChildMenuAction} icon={<Plus size={12} />}>
+            {t.addChildLink}
+          </ContextMenuItem>
 
           {contextMenu.target.type === 'link' && contextMenuHasVisual && (
             <ContextMenuItem onClick={() => onDeleteLinkGeometry('visual')} icon={<Shapes size={12} />} tone="danger">

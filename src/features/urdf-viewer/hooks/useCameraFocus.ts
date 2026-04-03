@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { URDFViewerProps } from '../types';
+import type { URDFViewerProps, ViewerSceneMode } from '../types';
 import {
     resolveCameraAutoFrameScopeKey,
     shouldAutoFrameRobotChange,
@@ -17,7 +17,7 @@ export interface UseCameraFocusOptions {
     robot: THREE.Object3D | null;
     focusTarget: string | null | undefined;
     selection?: URDFViewerProps['selection'];
-    mode?: 'detail' | 'hardware';
+    mode?: ViewerSceneMode;
     autoFrameOnRobotChange?: boolean;
     autoFrameScopeKey?: string | null;
     active?: boolean;
@@ -182,13 +182,13 @@ export function useCameraFocus({
                 };
             },
             applyFrame: ({ state }) => {
-                if (resolvedFocusObject || mode === 'hardware' || userInterruptedAutoFrameRef.current) {
+                if (resolvedFocusObject || userInterruptedAutoFrameRef.current) {
                     return false;
                 }
 
                 return frameObject(robot, state);
             },
-            isActive: () => active && !resolvedFocusObject && mode !== 'hardware' && !userInterruptedAutoFrameRef.current,
+            isActive: () => active && !resolvedFocusObject && !userInterruptedAutoFrameRef.current,
             delays: [0, 96, 224],
         });
     }, [active, autoFrameOnRobotChange, currentAutoFrameScopeKey, focusTarget, frameObject, mode, resolvedFocusObject, robot]);
@@ -197,8 +197,6 @@ export function useCameraFocus({
     useFrame((state, delta) => {
         void state;
         if (!active) return;
-        // Skip in hardware mode to improve performance
-        if (mode === 'hardware') return;
 
         if (isFocusingRef.current && focusTargetRef.current && cameraTargetPosRef.current && controlsWithTarget) {
             const orbitControls = controlsWithTarget;

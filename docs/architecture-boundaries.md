@@ -1,6 +1,6 @@
 # Architecture Boundaries
 
-Last updated: 2026-03-08
+Last updated: 2026-04-01
 
 ## Target Dependency Direction
 
@@ -25,7 +25,8 @@ Rules for new code:
 
 ### Canonical Data Sources
 
-- `DEFAULT_MOTOR_LIBRARY` canonical source: `src/shared/data/motorLibrary.ts`
+- `DEFAULT_MOTOR_LIBRARY` canonical source: `src/shared/data/defaultMotorLibrary.json`
+- `src/shared/data/motorLibrary.ts` now owns validation, normalization, and import-path detection only
 - `src/features/hardware-config/index.ts` remains a compatibility re-export only
 
 ### Shared Three.js Utilities

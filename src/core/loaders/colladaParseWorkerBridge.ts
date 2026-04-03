@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import {
   canSerializeColladaInWorker,
   createSceneFromSerializedColladaData,
-  parseColladaSceneData,
   type SerializedColladaSceneData,
 } from './colladaWorkerSceneData';
 import type {
@@ -37,6 +36,7 @@ interface CreateColladaParseWorkerPoolClientOptions {
 }
 
 interface ColladaParseWorkerPoolClient {
+  clearCache: () => void;
   dispose: (rejectPendingWith?: unknown) => void;
   load: (assetUrl: string, manager: THREE.LoadingManager) => Promise<THREE.Object3D>;
 }
@@ -57,118 +57,16 @@ function resolveDefaultWorkerCount(): number {
   }
 
   const hardwareConcurrency = Number(navigator.hardwareConcurrency || 2);
-  return Math.max(1, Math.min(4, hardwareConcurrency - 1));
-}
-
-async function fetchColladaText(assetUrl: string): Promise<string> {
-  const response = await fetch(assetUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Collada asset: ${response.status} ${response.statusText}`);
-  }
-
-  return await response.text();
-}
-
-function invokeWorkerListener(
-  listener: EventListenerOrEventListenerObject,
-  event: Event,
-): void {
-  if (typeof listener === 'function') {
-    listener(event);
-    return;
-  }
-
-  listener.handleEvent(event);
-}
-
-function createInlineColladaParseWorker(): WorkerLike {
-  const messageListeners = new Set<EventListenerOrEventListenerObject>();
-  const errorListeners = new Set<EventListenerOrEventListenerObject>();
-  let terminated = false;
-
-  const emitMessage = (payload: ColladaParseWorkerResponse): void => {
-    const event = { data: payload } as MessageEvent<ColladaParseWorkerResponse>;
-    messageListeners.forEach((listener) => {
-      invokeWorkerListener(listener, event as unknown as Event);
-    });
-  };
-
-  const emitError = (requestId: number, error: unknown): void => {
-    const workerError = createWorkerError({
-      error,
-      message: error instanceof Error ? error.message : 'Collada parse worker failed',
-    });
-    emitMessage({
-      type: 'parse-collada-error',
-      requestId,
-      error: workerError.message,
-    });
-  };
-
-  return {
-    addEventListener(type, listener) {
-      if (type === 'message') {
-        messageListeners.add(listener);
-        return;
-      }
-
-      errorListeners.add(listener);
-    },
-    removeEventListener(type, listener) {
-      if (type === 'message') {
-        messageListeners.delete(listener);
-        return;
-      }
-
-      errorListeners.delete(listener);
-    },
-    postMessage(message) {
-      queueMicrotask(() => {
-        void (async () => {
-          if (terminated || message.type !== 'parse-collada') {
-            return;
-          }
-
-          try {
-            const colladaText = await fetchColladaText(message.assetUrl);
-            if (terminated) {
-              return;
-            }
-
-            emitMessage({
-              type: 'parse-collada-result',
-              requestId: message.requestId,
-              result: parseColladaSceneData(colladaText, message.assetUrl),
-            });
-          } catch (error) {
-            if (terminated) {
-              return;
-            }
-
-            emitError(message.requestId, error);
-          }
-        })();
-      });
-    },
-    terminate() {
-      terminated = true;
-      messageListeners.clear();
-      errorListeners.clear();
-    },
-  };
+  return Math.max(1, Math.min(10, Math.floor(hardwareConcurrency / 2)));
 }
 
 export function createColladaParseWorkerPoolClient(
   {
     cacheLimit = DEFAULT_CACHE_LIMIT,
-    canUseWorker = () => typeof Worker !== 'undefined' || typeof window === 'undefined',
-    createWorker = () => (
-      typeof Worker !== 'undefined'
-        ? new Worker(
-          new URL('./workers/colladaParse.worker.ts', import.meta.url),
-          { type: 'module' },
-        )
-        : createInlineColladaParseWorker()
+    canUseWorker = () => typeof Worker !== 'undefined',
+    createWorker = () => new Worker(
+      new URL('./workers/colladaParse.worker.ts', import.meta.url),
+      { type: 'module' },
     ),
     getWorkerCount = resolveDefaultWorkerCount,
   }: CreateColladaParseWorkerPoolClientOptions = {},
@@ -221,6 +119,10 @@ export function createColladaParseWorkerPoolClient(
         request.reject(rejectPendingWith);
       });
     }
+  };
+
+  const clearCache = (): void => {
+    resolvedCache.clear();
   };
 
   const handleWorkerMessage = (event: MessageEvent<ColladaParseWorkerResponse>): void => {
@@ -332,6 +234,7 @@ export function createColladaParseWorkerPoolClient(
   };
 
   return {
+    clearCache,
     dispose: disposeWorkerPool,
     load,
   };
@@ -344,6 +247,10 @@ export async function loadColladaScene(
   manager: THREE.LoadingManager,
 ): Promise<THREE.Object3D> {
   return await sharedColladaParseWorkerPoolClient.load(assetUrl, manager);
+}
+
+export function clearColladaParseWorkerPoolClientCache(): void {
+  sharedColladaParseWorkerPoolClient.clearCache();
 }
 
 export function disposeColladaParseWorkerPoolClient(rejectPendingWith?: unknown): void {

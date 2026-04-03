@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { GeometryType } from '@/types';
 
 import { MathUtils } from './math.ts';
 
-type GeometryTypeValue = 'box' | 'cylinder' | 'sphere' | 'capsule' | 'mesh' | 'none';
+type GeometryTypeValue = 'box' | 'cylinder' | 'sphere' | 'capsule' | 'mesh' | 'none' | GeometryType;
 
 interface Vector3Like {
   x?: number;
@@ -71,8 +72,10 @@ function toFiniteDimension(value: number | undefined, fallback = 0): number {
 function computeCapsuleVolume(totalLength: number, radius: number): number {
   if (totalLength <= 0 || radius <= 0) return 0;
   const clampedRadius = Math.min(radius, totalLength / 2);
-  return Math.PI * clampedRadius * clampedRadius * totalLength
-    - (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius;
+  return (
+    Math.PI * clampedRadius * clampedRadius * totalLength -
+    (2 / 3) * Math.PI * clampedRadius * clampedRadius * clampedRadius
+  );
 }
 
 function normalizeAxis(axis: PrincipalAxisVector): PrincipalAxisVector {
@@ -178,8 +181,9 @@ function computeDensityFromGeometries(
 
 export function computeLinkDensity(link: LinkLike | undefined): LinkDensityResult {
   const mass = Number(link?.inertial?.mass ?? 0);
-  const collisionGeometries = [link?.collision, ...(link?.collisionBodies ?? [])]
-    .filter((geometry): geometry is GeometryLike => Boolean(geometry?.type && geometry.type !== 'none'));
+  const collisionGeometries = [link?.collision, ...(link?.collisionBodies ?? [])].filter(
+    (geometry): geometry is GeometryLike => Boolean(geometry?.type && geometry.type !== 'none'),
+  );
 
   if (collisionGeometries.length > 0) {
     const density = computeDensityFromGeometries(mass, collisionGeometries);
@@ -204,7 +208,9 @@ export function computeLinkDensity(link: LinkLike | undefined): LinkDensityResul
   };
 }
 
-export function computeInertialDerivedValues(inertial: InertialLike | undefined): InertialDerivedValues | null {
+export function computeInertialDerivedValues(
+  inertial: InertialLike | undefined,
+): InertialDerivedValues | null {
   if (!inertial?.inertia) {
     return null;
   }
@@ -239,16 +245,8 @@ export function computeInertialDerivedValues(inertial: InertialLike | undefined)
   }
 
   return {
-    diagonalInertia: [
-      principalPairs[0].value,
-      principalPairs[1].value,
-      principalPairs[2].value,
-    ],
-    principalAxes: [
-      principalPairs[0].axis,
-      principalPairs[1].axis,
-      principalPairs[2].axis,
-    ],
+    diagonalInertia: [principalPairs[0].value, principalPairs[1].value, principalPairs[2].value],
+    principalAxes: [principalPairs[0].axis, principalPairs[1].axis, principalPairs[2].axis],
   };
 }
 
@@ -271,17 +269,48 @@ export function composeInertiaTensorFromDerivedValues(
   const sumMomentProducts = (
     rowAccessor: (axis: PrincipalAxisVector) => number,
     colAccessor: (axis: PrincipalAxisVector) => number,
-  ): number => moments.reduce(
-    (sum, moment, index) => sum + moment * rowAccessor(axes[index]!) * colAccessor(axes[index]!),
-    0,
-  );
+  ): number =>
+    moments.reduce(
+      (sum, moment, index) => sum + moment * rowAccessor(axes[index]!) * colAccessor(axes[index]!),
+      0,
+    );
 
   return {
-    ixx: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.x)),
-    ixy: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.y)),
-    ixz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.x, (axis) => axis.z)),
-    iyy: sanitizeTensorComponent(sumMomentProducts((axis) => axis.y, (axis) => axis.y)),
-    iyz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.y, (axis) => axis.z)),
-    izz: sanitizeTensorComponent(sumMomentProducts((axis) => axis.z, (axis) => axis.z)),
+    ixx: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.x,
+        (axis) => axis.x,
+      ),
+    ),
+    ixy: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.x,
+        (axis) => axis.y,
+      ),
+    ),
+    ixz: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.x,
+        (axis) => axis.z,
+      ),
+    ),
+    iyy: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.y,
+        (axis) => axis.y,
+      ),
+    ),
+    iyz: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.y,
+        (axis) => axis.z,
+      ),
+    ),
+    izz: sanitizeTensorComponent(
+      sumMomentProducts(
+        (axis) => axis.z,
+        (axis) => axis.z,
+      ),
+    ),
   };
 }

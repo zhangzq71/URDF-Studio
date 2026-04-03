@@ -25,8 +25,8 @@ export const LIGHTING_CONFIG = {
 
 export const STUDIO_ENVIRONMENT_INTENSITY = {
   viewer: {
-    light: 0.34,
-    dark: 0.32,
+    light: 0.3,
+    dark: 0.29,
   },
   workspace: {
     light: 0.42,

@@ -13,7 +13,7 @@ test('resolveCanvasDpr keeps resting canvases crisp up to the resting cap', () =
   );
 });
 
-test('resolveCanvasDpr keeps interactive canvases at full resolution up to the cap', () => {
+test('resolveCanvasDpr keeps interactive canvases at the resting DPR cap to avoid grid thickness shifts', () => {
   assert.equal(
     resolveCanvasDpr({ devicePixelRatio: 2.5, isInteracting: true }),
     RESTING_DPR_CAP,

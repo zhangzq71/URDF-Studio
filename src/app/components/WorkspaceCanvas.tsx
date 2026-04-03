@@ -1,5 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, type RootState } from '@react-three/fiber';
+import { Canvas, type RootState, useThree } from '@react-three/fiber';
 import { Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import type { Theme } from '@/types';
@@ -10,7 +10,9 @@ import {
   NeutralStudioEnvironment,
   SceneLighting,
   SnapshotManager,
+  type SnapshotCaptureAction,
   useAdaptiveInteractionQuality,
+  WorkspaceCanvasInteractionStateProvider,
   UsageGuide,
   WorkspaceOrbitControls,
   WORKSPACE_CANVAS_BACKGROUND,
@@ -20,8 +22,12 @@ import {
   WorldOriginAxes,
 } from '@/shared/components/3d';
 import type { WorkspaceOrbitControlsProps } from '@/shared/components/3d/scene/WorkspaceOrbitControls';
-import { useEffectiveTheme } from '@/shared/hooks';
 import { attachContextMenuBlocker } from '@/shared/utils';
+import {
+  resolveWorkspaceCanvasEnvironmentIntensity,
+  type WorkspaceCanvasEnvironmentIntensityByTheme,
+  useWorkspaceCanvasTheme,
+} from './workspaceCanvasConfig';
 
 interface WorkspaceCanvasProps {
   theme: Theme;
@@ -30,7 +36,7 @@ interface WorkspaceCanvasProps {
   className?: string;
   containerRef?: React.RefObject<HTMLDivElement>;
   sceneRef?: React.RefObject<THREE.Scene | null>;
-  snapshotAction?: React.RefObject<(() => void) | null>;
+  snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
   children: React.ReactNode;
   overlays?: React.ReactNode;
   onPointerMissed?: () => void;
@@ -41,6 +47,10 @@ interface WorkspaceCanvasProps {
   onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
   environment?: 'hdr' | 'studio' | 'none';
   environmentIntensity?: number;
+  environmentIntensityByTheme?: WorkspaceCanvasEnvironmentIntensityByTheme;
+  groundOffset?: number;
+  toneMapping?: THREE.ToneMapping;
+  toneMappingExposure?: number;
   cameraFollowPrimary?: boolean;
   orbitControlsProps?: Partial<WorkspaceOrbitControlsProps>;
   controlLayerKey?: string;
@@ -51,9 +61,21 @@ interface WorkspaceCanvasProps {
   contextLostMessage?: string;
   showWorldOriginAxes?: boolean;
   showUsageGuide?: boolean;
+  renderKey?: string;
+}
+
+function CanvasRenderKeyInvalidator({ renderKey }: { renderKey: string }) {
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    invalidate();
+  }, [invalidate, renderKey]);
+
+  return null;
 }
 
 export const WorkspaceCanvas = ({
+  theme,
   lang,
   robotName = 'robot',
   className = 'relative w-full h-full',
@@ -70,6 +92,10 @@ export const WorkspaceCanvas = ({
   onMouseLeave,
   environment = 'none',
   environmentIntensity = 0.36,
+  environmentIntensityByTheme,
+  groundOffset = 0,
+  toneMapping = THREE.ACESFilmicToneMapping,
+  toneMappingExposure,
   cameraFollowPrimary = false,
   orbitControlsProps,
   controlLayerKey = 'default',
@@ -77,17 +103,22 @@ export const WorkspaceCanvas = ({
   contextLostMessage,
   showWorldOriginAxes = true,
   showUsageGuide = true,
+  renderKey = 'default',
 }: WorkspaceCanvasProps) => {
-  const effectiveTheme = useEffectiveTheme();
+  const effectiveTheme = useWorkspaceCanvasTheme(theme);
   const [contextLost, setContextLost] = useState(false);
   const contextMenuCleanupRef = useRef<(() => void) | null>(null);
-  const {
-    dpr,
-    isInteracting,
-    beginInteraction,
-    endInteraction,
-    pulseInteraction,
-  } = useAdaptiveInteractionQuality();
+  const { dpr, isInteracting, beginInteraction, endInteraction, pulseInteraction } =
+    useAdaptiveInteractionQuality();
+  const resolvedEnvironmentIntensity = useMemo(
+    () =>
+      resolveWorkspaceCanvasEnvironmentIntensity({
+        effectiveTheme,
+        environmentIntensity,
+        environmentIntensityByTheme,
+      }),
+    [effectiveTheme, environmentIntensity, environmentIntensityByTheme],
+  );
 
   const finalOrbitControlsProps = useMemo<Partial<WorkspaceOrbitControlsProps>>(
     () => ({
@@ -102,7 +133,7 @@ export const WorkspaceCanvas = ({
         orbitControlsProps?.onEnd?.();
       },
     }),
-    [beginInteraction, endInteraction, orbitControlsProps]
+    [beginInteraction, endInteraction, orbitControlsProps],
   );
 
   const handleCreated = useCallback(
@@ -119,9 +150,8 @@ export const WorkspaceCanvas = ({
 
       contextMenuCleanupRef.current?.();
       const cleanupCanvasBlocker = attachContextMenuBlocker(canvas);
-      const cleanupSurfaceBlocker = surfaceEventTarget === canvas
-        ? () => {}
-        : attachContextMenuBlocker(surfaceEventTarget);
+      const cleanupSurfaceBlocker =
+        surfaceEventTarget === canvas ? () => {} : attachContextMenuBlocker(surfaceEventTarget);
       contextMenuCleanupRef.current = () => {
         cleanupSurfaceBlocker();
         cleanupCanvasBlocker();
@@ -140,9 +170,11 @@ export const WorkspaceCanvas = ({
       canvas.addEventListener('webglcontextlost', handleContextLost, false);
       canvas.addEventListener('webglcontextrestored', handleContextRestored, false);
 
-      (canvas as HTMLCanvasElement & {
-        __workspaceCanvasCleanup?: () => void;
-      }).__workspaceCanvasCleanup = () => {
+      (
+        canvas as HTMLCanvasElement & {
+          __workspaceCanvasCleanup?: () => void;
+        }
+      ).__workspaceCanvasCleanup = () => {
         canvas.removeEventListener('webglcontextlost', handleContextLost);
         canvas.removeEventListener('webglcontextrestored', handleContextRestored);
         contextMenuCleanupRef.current?.();
@@ -151,7 +183,7 @@ export const WorkspaceCanvas = ({
 
       onCreated?.(state);
     },
-    [onCreated, sceneRef]
+    [onCreated, sceneRef],
   );
 
   useEffect(() => {
@@ -170,7 +202,7 @@ export const WorkspaceCanvas = ({
       beginInteraction();
       onPointerDownCapture?.(event);
     },
-    [beginInteraction, onPointerDownCapture]
+    [beginInteraction, onPointerDownCapture],
   );
 
   const handleMouseMove = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -180,7 +212,7 @@ export const WorkspaceCanvas = ({
       }
       onMouseMove?.(event);
     },
-    [beginInteraction, onMouseMove]
+    [beginInteraction, onMouseMove],
   );
 
   const handleMouseUp = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -188,7 +220,7 @@ export const WorkspaceCanvas = ({
       endInteraction();
       onMouseUp?.(event);
     },
-    [endInteraction, onMouseUp]
+    [endInteraction, onMouseUp],
   );
 
   const handleMouseLeave = useCallback<React.MouseEventHandler<HTMLDivElement>>(
@@ -196,7 +228,7 @@ export const WorkspaceCanvas = ({
       endInteraction(0);
       onMouseLeave?.(event);
     },
-    [endInteraction, onMouseLeave]
+    [endInteraction, onMouseLeave],
   );
 
   return (
@@ -225,8 +257,9 @@ export const WorkspaceCanvas = ({
         }}
         gl={{
           antialias: true,
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: environment === 'hdr' ? 1.0 : 1.1,
+          alpha: true,
+          toneMapping,
+          toneMappingExposure: toneMappingExposure ?? (environment === 'hdr' ? 1.0 : 1.1),
           powerPreference: 'high-performance',
           failIfMajorPerformanceCaveat: false,
         }}
@@ -234,13 +267,25 @@ export const WorkspaceCanvas = ({
         onPointerMissed={onPointerMissed}
         translate="no"
       >
-        <CanvasResizeSync />
-        <color attach="background" args={[effectiveTheme === 'light' ? background.light : background.dark]} />
-        <Suspense fallback={null}>
-          {environment === 'hdr' && (
-            <Environment files="/potsdamer_platz_1k.hdr" environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0} />
-          )}
-          {environment === 'studio' && <NeutralStudioEnvironment intensity={environmentIntensity} />}
+        <WorkspaceCanvasInteractionStateProvider isInteracting={isInteracting}>
+          <CanvasRenderKeyInvalidator renderKey={renderKey} />
+          <CanvasResizeSync />
+          <color
+            attach="background"
+            args={[effectiveTheme === 'light' ? background.light : background.dark]}
+          />
+          {/* Keep async environment assets isolated so static canvas scaffolding never blanks out. */}
+          <Suspense fallback={null}>
+            {environment === 'hdr' && (
+              <Environment
+                files="/potsdamer_platz_1k.hdr"
+                environmentIntensity={effectiveTheme === 'light' ? 0.8 : 1.0}
+              />
+            )}
+            {environment === 'studio' && (
+              <NeutralStudioEnvironment intensity={resolvedEnvironmentIntensity} />
+            )}
+          </Suspense>
           <SceneLighting
             theme={effectiveTheme}
             cameraFollowPrimary={cameraFollowPrimary}
@@ -248,9 +293,15 @@ export const WorkspaceCanvas = ({
             // re-enable causes a visible flash on dense models like Unitree B2.
             enableShadows={cameraFollowPrimary ? true : !isInteracting}
           />
-          <SnapshotManager actionRef={snapshotAction} robotName={robotName} />
-          {children}
-          <AdaptiveGroundPlane theme={effectiveTheme} />
+          <SnapshotManager
+            actionRef={snapshotAction}
+            robotName={robotName}
+            theme={effectiveTheme}
+            groundOffset={groundOffset}
+          />
+          {/* Model/scene loaders can suspend during imports, but the horizon/grid/controls must stay visible. */}
+          <Suspense fallback={null}>{children}</Suspense>
+          <AdaptiveGroundPlane theme={effectiveTheme} groundOffset={groundOffset} showShadow />
           {showWorldOriginAxes && <WorldOriginAxes />}
           <WorkspaceOrbitControls key={`orbit-${controlLayerKey}`} {...finalOrbitControlsProps} />
           <GizmoHelper key={`gizmo-${controlLayerKey}`} alignment="bottom-right" margin={[68, 68]}>
@@ -261,7 +312,7 @@ export const WorkspaceCanvas = ({
               scale={34}
             />
           </GizmoHelper>
-        </Suspense>
+        </WorkspaceCanvasInteractionStateProvider>
       </Canvas>
 
       {lang && showUsageGuide ? <UsageGuide lang={lang} /> : null}

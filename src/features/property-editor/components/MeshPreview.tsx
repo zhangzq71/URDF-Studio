@@ -5,9 +5,8 @@
 import React, { Suspense, useMemo, useRef, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { STLRenderer, OBJRenderer, DAERenderer, GLTFRenderer } from '@/shared/components/3d';
+import { MeshAssetNode } from '@/shared/components/3d';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
-import { getSourceFileDirectory } from '@/core/parsers/meshPathUtils';
 
 interface MeshPreviewProps {
   meshPath: string;
@@ -109,12 +108,10 @@ function RotatingGroup({ children }: { children: React.ReactNode }) {
 /** Render the appropriate mesh based on file extension */
 function MeshContent({
   meshPath,
-  assetUrl,
   assets,
   normalizeColladaRoot = false,
 }: {
   meshPath: string;
-  assetUrl: string;
   assets: Record<string, string>;
   normalizeColladaRoot?: boolean;
 }) {
@@ -123,39 +120,22 @@ function MeshContent({
     []
   );
   useEffect(() => () => { material.dispose(); }, [material]);
-  const ext = meshPath.split('.').pop()?.toLowerCase();
-  const assetBaseDir = getSourceFileDirectory(meshPath);
 
-  if (ext === 'stl') {
-    return <STLRenderer url={assetUrl} material={material} />;
-  } else if (ext === 'obj') {
-    return <OBJRenderer url={assetUrl} material={material} color="#6b9bd2" assets={assets} assetBaseDir={assetBaseDir} />;
-  } else if (ext === 'dae') {
-    return (
-      <DAERenderer
-        url={assetUrl}
-        material={material}
-        assets={assets}
-        assetBaseDir={assetBaseDir}
-        normalizeRoot={normalizeColladaRoot}
-      />
-    );
-  } else if (ext === 'gltf' || ext === 'glb') {
-    return (
-      <GLTFRenderer
-        url={assetUrl}
-        material={material}
-        assets={assets}
-        assetBaseDir={assetBaseDir}
-        preserveOriginalMaterial
-      />
-    );
-  }
   return (
-    <mesh>
-      <boxGeometry args={[0.1, 0.1, 0.1]} />
-      <meshStandardMaterial color="gray" wireframe />
-    </mesh>
+    <MeshAssetNode
+      meshPath={meshPath}
+      assets={assets}
+      material={material}
+      color="#6b9bd2"
+      normalizeRoot={normalizeColladaRoot}
+      preserveOriginalMaterial
+      unknownContent={
+        <mesh>
+          <boxGeometry args={[0.1, 0.1, 0.1]} />
+          <meshStandardMaterial color="gray" wireframe />
+        </mesh>
+      }
+    />
   );
 }
 
@@ -197,7 +177,6 @@ export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
           <RotatingGroup>
             <MeshContent
               meshPath={meshPath}
-              assetUrl={assetUrl}
               assets={assets}
               normalizeColladaRoot={normalizeColladaRoot}
             />

@@ -8,6 +8,7 @@ import { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRob
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+globalThis.XMLSerializer = dom.window.XMLSerializer as typeof XMLSerializer;
 
 function createUsdFile(name = 'robots/demo/demo.usd'): RobotFile {
   return {
@@ -153,9 +154,10 @@ test('resolveRobotFileData returns a ready result for sdf files', () => {
 });
 
 test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/demo/model.sdf',
-    content: `<?xml version="1.0"?>
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/demo/model.sdf',
+      content: `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="demo_sdf">
     <link name="base_link">
@@ -176,10 +178,11 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
     </link>
   </model>
 </sdf>`,
-    format: 'sdf' as unknown as RobotFile['format'],
-  }, {
-    allFileContents: {
-      'robots/demo/materials/scripts/demo.material': `material Demo/Diffuse
+      format: 'sdf' as unknown as RobotFile['format'],
+    },
+    {
+      allFileContents: {
+        'robots/demo/materials/scripts/demo.material': `material Demo/Diffuse
 {
   technique
   {
@@ -192,8 +195,9 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
     }
   }
 }`,
+      },
     },
-  });
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -203,9 +207,10 @@ test('resolveRobotFileData forwards auxiliary text files to the sdf parser', () 
 });
 
 test('resolveRobotFileData expands included sdf models from bundled file contents', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/assembly/model.sdf',
-    content: `<?xml version="1.0"?>
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/assembly/model.sdf',
+      content: `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="assembly">
     <include>
@@ -223,10 +228,11 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </joint>
   </model>
 </sdf>`,
-    format: 'sdf' as unknown as RobotFile['format'],
-  }, {
-    allFileContents: {
-      'robots/arm/model.sdf': `<?xml version="1.0"?>
+      format: 'sdf' as unknown as RobotFile['format'],
+    },
+    {
+      allFileContents: {
+        'robots/arm/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="arm">
     <link name="base">
@@ -254,7 +260,7 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </joint>
   </model>
 </sdf>`,
-      'robots/tool/model.sdf': `<?xml version="1.0"?>
+        'robots/tool/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="tool">
     <link name="base">
@@ -268,8 +274,9 @@ test('resolveRobotFileData expands included sdf models from bundled file content
     </link>
   </model>
 </sdf>`,
+      },
     },
-  });
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -286,7 +293,6 @@ test('resolveRobotFileData returns a parse error when XML parser APIs are unavai
   const previousDomParser = globalThis.DOMParser;
 
   try {
-    // @ts-expect-error intentional test mutation
     delete globalThis.DOMParser;
 
     const result = resolveRobotFileData(createSdfFile());
@@ -295,9 +301,25 @@ test('resolveRobotFileData returns a parse error when XML parser APIs are unavai
       assert.fail('Expected missing XML parser APIs to return a parse error');
     }
     assert.equal(result.reason, 'parse_failed');
+    assert.match(result.message ?? '', /robots\/demo\/model\.sdf/);
   } finally {
     globalThis.DOMParser = previousDomParser;
   }
+});
+
+test('resolveRobotFileData keeps file context on malformed URDF imports', () => {
+  const result = resolveRobotFileData({
+    name: 'robots/demo/broken.urdf',
+    content: '<robot name="broken">',
+    format: 'urdf',
+  });
+
+  assert.equal(result.status, 'error');
+  if (result.status !== 'error') {
+    assert.fail('Expected malformed URDF import result to be an error');
+  }
+  assert.equal(result.reason, 'parse_failed');
+  assert.match(result.message ?? '', /URDF file "robots\/demo\/broken\.urdf"/);
 });
 
 test('resolveRobotFileData returns an error result for unsupported formats', () => {
@@ -313,22 +335,27 @@ test('resolveRobotFileData returns an error result for unsupported formats', () 
   }
   assert.equal(String(result.format), 'unsupported');
   assert.equal(result.reason, 'unsupported_format');
+  assert.match(result.message ?? '', /robots\/demo\/invalid\.txt/);
 });
 
 test('resolveRobotFileData prefers packaged URDF truth for standalone xacro entries', () => {
-  const result = resolveRobotFileData({
-    name: 'robots/b2w_description/xacro/robot.xacro',
-    content: '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="broken"><link name="wrong_link" /></robot>',
-    format: 'xacro',
-  }, {
-    availableFiles: [
-      {
-        name: 'robots/b2w_description/urdf/b2w_description.urdf',
-        content: '<robot name="b2w_truth"><link name="truth_link" /></robot>',
-        format: 'urdf',
-      },
-    ],
-  });
+  const result = resolveRobotFileData(
+    {
+      name: 'robots/b2w_description/xacro/robot.xacro',
+      content:
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="broken"><link name="wrong_link" /></robot>',
+      format: 'xacro',
+    },
+    {
+      availableFiles: [
+        {
+          name: 'robots/b2w_description/urdf/b2w_description.urdf',
+          content: '<robot name="b2w_truth"><link name="truth_link" /></robot>',
+          format: 'urdf',
+        },
+      ],
+    },
+  );
 
   assert.equal(result.status, 'ready');
   if (result.status !== 'ready') {
@@ -337,8 +364,14 @@ test('resolveRobotFileData prefers packaged URDF truth for standalone xacro entr
   assert.equal(result.robotData.name, 'b2w_truth');
   assert.ok(result.robotData.links.truth_link);
   assert.equal(result.robotData.links.wrong_link, undefined);
-  assert.equal(result.resolvedUrdfContent, '<robot name="b2w_truth"><link name="truth_link" /></robot>');
-  assert.equal(result.resolvedUrdfSourceFilePath, 'robots/b2w_description/urdf/b2w_description.urdf');
+  assert.equal(
+    result.resolvedUrdfContent,
+    '<robot name="b2w_truth"><link name="truth_link" /></robot>',
+  );
+  assert.equal(
+    result.resolvedUrdfSourceFilePath,
+    'robots/b2w_description/urdf/b2w_description.urdf',
+  );
 });
 
 test('resolveRobotFileData classifies linkless xacro fragments as source-only previews', () => {
@@ -351,6 +384,24 @@ test('resolveRobotFileData classifies linkless xacro fragments as source-only pr
   assert.equal(result.status, 'error');
   if (result.status !== 'error') {
     assert.fail('Expected source-only xacro fragment import result to be an error');
+  }
+  assert.equal(result.reason, 'source_only_fragment');
+});
+
+test('resolveRobotFileData classifies worldbody-free MJCF fragments as source-only previews', () => {
+  const result = resolveRobotFileData({
+    name: 'robots/demo/mjcf/keyframes.xml',
+    content: `<mujoco>
+  <keyframe>
+    <key name="home" qpos="0 0 0" />
+  </keyframe>
+</mujoco>`,
+    format: 'mjcf',
+  });
+
+  assert.equal(result.status, 'error');
+  if (result.status !== 'error') {
+    assert.fail('Expected source-only MJCF fragment import result to be an error');
   }
   assert.equal(result.reason, 'source_only_fragment');
 });

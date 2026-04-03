@@ -4,16 +4,11 @@
  */
 
 import React, { useRef, useState, useCallback, useEffect, ReactNode } from 'react';
-import { 
-  Checkbox, 
-  IconButton,
-  Slider as UiSlider, 
-  SegmentedControl as UiSegmentedControl,
-  SegmentedControlOption as UiSegmentedControlOption
-} from '@/shared/components/ui';
+import { Checkbox, IconButton, Slider as UiSlider } from '@/shared/components/ui';
 
 // Drag grip icon SVG path
-const DRAG_GRIP_PATH = "M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z";
+const DRAG_GRIP_PATH =
+  'M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z';
 
 // Chevron icons
 const ChevronDown = () => (
@@ -40,7 +35,7 @@ const CloseIcon = () => (
   </svg>
 );
 
-const DragGripIcon = ({ className = "w-3 h-3" }: { className?: string }) => (
+const DragGripIcon = ({ className = 'w-3 h-3' }: { className?: string }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 20 20">
     <path d={DRAG_GRIP_PATH} />
   </svg>
@@ -73,11 +68,11 @@ export const CheckboxOption: React.FC<CheckboxOptionProps> = ({
   );
 
   return (
-    <div className={compact ? "px-1 py-0.5" : ""}>
+    <div className={compact ? 'px-1 py-0.5' : ''}>
       <Checkbox
         checked={checked}
         onChange={onChange}
-        label={content as any} 
+        label={content as any}
         className="text-[11px]" // Ensure checkbox text is small
       />
     </div>
@@ -98,6 +93,7 @@ interface SliderOptionProps {
   icon?: ReactNode;
   showPercentage?: boolean;
   labelClassName?: string;
+  disabled?: boolean;
 }
 
 export const SliderOption: React.FC<SliderOptionProps> = ({
@@ -113,10 +109,39 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
   icon,
   showPercentage = false,
   labelClassName = '',
+  disabled = false,
 }) => {
   const paddingClass = compact
     ? `${indent ? 'pl-2.5' : ''} pr-1.5 pb-1`
     : `${indent ? 'pl-4' : ''} pr-1.5 pb-1.5`;
+  const formatSliderValue = React.useCallback(
+    (nextValue: number) =>
+      showPercentage ? `${Math.round(nextValue * 100)}%` : nextValue.toFixed(decimals),
+    [decimals, showPercentage],
+  );
+  const parseSliderValue = React.useCallback(
+    (input: string) => {
+      const normalized = input.trim().replace(/,/g, '');
+      if (!normalized) {
+        return null;
+      }
+
+      const numericValue = Number.parseFloat(normalized.replace(/[^0-9eE+.-]/g, ''));
+      if (!Number.isFinite(numericValue)) {
+        return null;
+      }
+
+      if (!showPercentage) {
+        return numericValue;
+      }
+
+      const hasPercentSign = normalized.includes('%');
+      const looksLikeRawRatio =
+        !hasPercentSign && normalized.includes('.') && Math.abs(numericValue) <= 1;
+      return looksLikeRawRatio ? numericValue : numericValue / 100;
+    },
+    [showPercentage],
+  );
 
   return (
     <div className={paddingClass}>
@@ -129,8 +154,11 @@ export const SliderOption: React.FC<SliderOptionProps> = ({
         label={label}
         icon={icon}
         showValue={true}
-        formatValue={(val) => showPercentage ? `${Math.round(val * 100)}%` : val.toFixed(decimals)}
+        formatValue={formatSliderValue}
+        parseValue={parseSliderValue}
         labelClassName={`text-[10px] text-text-tertiary mb-1 ${labelClassName}`}
+        compactThumb={compact}
+        disabled={disabled}
       />
     </div>
   );
@@ -201,46 +229,15 @@ export const ToggleSliderOption: React.FC<ToggleSliderOptionProps> = ({
           icon={sliderConfig.icon}
           showPercentage={sliderConfig.showPercentage}
           labelClassName={sliderConfig.labelClassName}
+          disabled={sliderConfig.disabled}
         />
       )}
     </div>
   );
 };
 
-// ============== Segmented Control (Apple Style with Blue Selection) ==============
-// Re-exporting or wrapping the UI component
-interface SegmentedControlProps<T> {
-  options: UiSegmentedControlOption<T>[];
-  value: T;
-  onChange: (value: T) => void;
-  size?: 'xs' | 'sm' | 'md';
-}
-
-export function SegmentedControl<T extends string | number>({
-  options,
-  value,
-  onChange,
-  size = 'xs', // Default to xs for option panels
-}: SegmentedControlProps<T>) {
-  return (
-    <div className="mb-1">
-      <UiSegmentedControl
-        options={options}
-        value={value}
-        onChange={onChange}
-        size={size}
-      />
-    </div>
-  );
-}
-
-// Deprecated: Use SegmentedControl instead
-export const ToggleButtonGroup = SegmentedControl;
-
 // ============== Section Divider ==============
-export const SectionDivider = () => (
-  <div className="border-t border-border-black my-1" />
-);
+export const SectionDivider = () => <div className="border-t border-border-black my-1" />;
 
 // ============== Collapsible Section ==============
 interface CollapsibleSectionProps {
@@ -300,25 +297,27 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   };
 
   return (
-    <div className={`${useDividerStyle ? 'border-t border-border-black/60 first:border-t-0' : ''} ${className}`}>
+    <div
+      className={`${useDividerStyle ? 'border-t border-border-black/60 first:border-t-0' : ''} ${className}`}
+    >
       <button
         type="button"
         onClick={handleToggle}
-        className={`w-full flex items-center justify-between px-2 py-2 text-[10px] font-bold uppercase tracking-wider text-text-tertiary hover:bg-element-hover transition-colors text-left ${triggerClassName}`}
+        className={`w-full flex items-center justify-between px-2 py-2 text-[10px] font-semibold tracking-[0.02em] text-text-tertiary hover:bg-element-hover transition-colors text-left ${triggerClassName}`}
       >
         <span className={titleClassName}>{title}</span>
-        <span className={`transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} ${iconClassName}`}>
+        <span
+          className={`transition-transform duration-200 ${collapsed ? '' : 'rotate-90'} ${iconClassName}`}
+        >
           <ChevronRight />
         </span>
       </button>
-      <div 
+      <div
         className={`overflow-hidden transition-all duration-200 ${
           collapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
         } ${contentClassName}`}
       >
-        <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>
-          {children}
-        </div>
+        <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>{children}</div>
       </div>
     </div>
   );
@@ -328,6 +327,7 @@ interface GroundPlaneControlsProps {
   autoFitLabel?: string;
   autoFitIcon?: ReactNode;
   compact?: boolean;
+  disabled?: boolean;
   offsetLabel: string;
   offsetValue: number;
   onAutoFit?: () => void;
@@ -342,6 +342,7 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
   autoFitLabel,
   autoFitIcon,
   compact = true,
+  disabled = false,
   offsetLabel,
   offsetValue,
   onAutoFit,
@@ -363,13 +364,15 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
         compact={compact}
         indent={sliderIndent}
         labelClassName={sliderLabelClassName}
+        disabled={disabled}
       />
       <div className="flex gap-1.5 px-2 pb-2">
         {onAutoFit && autoFitLabel && (
           <button
             type="button"
             onClick={onAutoFit}
-            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25"
+            disabled={disabled}
+            className="flex flex-1 items-center justify-center gap-1 rounded-md border border-system-blue/20 bg-system-blue/10 px-2 py-1 text-[10px] font-medium text-system-blue transition-colors hover:bg-system-blue/15 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-system-blue/10 dark:border-system-blue/30 dark:bg-system-blue/20 dark:hover:bg-system-blue/25 dark:disabled:hover:bg-system-blue/20"
           >
             {autoFitIcon}
             {autoFitLabel}
@@ -378,7 +381,8 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
         <button
           type="button"
           onClick={onReset}
-          className="flex items-center justify-center gap-1 rounded-md bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover"
+          disabled={disabled}
+          className="flex items-center justify-center gap-1 rounded-md bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-element-bg"
         >
           {resetLabel}
         </button>
@@ -386,7 +390,6 @@ export const GroundPlaneControls: React.FC<GroundPlaneControlsProps> = ({
     </>
   );
 };
-
 
 // ============== Options Panel Header ==============
 interface OptionsPanelHeaderProps {
@@ -409,23 +412,25 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
   showCollapseButton = true,
   onClose,
   onMouseDown,
-  expandText = "Expand",
-  collapseText = "Collapse",
-  closeText = "Close",
+  expandText = 'Expand',
+  collapseText = 'Collapse',
+  closeText = 'Close',
   additionalControls,
 }) => {
   return (
     <div
-      className="text-[9px] text-text-tertiary uppercase font-bold tracking-wide px-2 py-1 cursor-move bg-element-bg hover:bg-element-hover select-none flex min-w-0 items-center justify-between gap-1 shrink-0 border-b border-border-black/60 transition-colors"
+      className="group flex min-w-0 shrink-0 select-none touch-none items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg px-2.5 py-2 text-[10px] transition-colors cursor-grab active:cursor-grabbing hover:bg-element-hover"
       onMouseDown={onMouseDown}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1">
-        <span className="hidden shrink-0 @[220px]:inline-flex">
-          <DragGripIcon />
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-black/60 bg-panel-bg text-text-tertiary shadow-sm transition-colors group-hover:border-system-blue/20 group-hover:text-system-blue">
+          <DragGripIcon className="w-3.5 h-3.5" />
         </span>
-        <span className="truncate whitespace-nowrap leading-tight">{title}</span>
+        <span className="truncate whitespace-nowrap font-semibold leading-none text-text-secondary group-hover:text-text-primary">
+          {title}
+        </span>
       </div>
-      <div className="flex min-w-fit shrink-0 items-center gap-0.5">
+      <div className="flex min-w-fit shrink-0 items-center gap-1">
         {additionalControls}
         {showCollapseButton && (
           <button
@@ -434,7 +439,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               e.stopPropagation();
               onToggleCollapse();
             }}
-            className="rounded-md p-0 hover:bg-element-hover transition-colors"
+            className="rounded-md p-0.5 text-text-tertiary transition-colors hover:bg-panel-bg hover:text-text-primary"
             title={isCollapsed ? expandText : collapseText}
           >
             {isCollapsed ? <ChevronDown /> : <ChevronUp />}
@@ -448,7 +453,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
               onClose();
             }}
             size="sm"
-            className="p-0"
+            className="p-0.5"
             variant="close"
             title={closeText}
           >
@@ -479,8 +484,8 @@ export const OptionsPanelContent: React.FC<OptionsPanelContentProps> = ({
       } ${className} flex flex-col min-h-0`}
     >
       <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar min-h-0">
-         {/* No padding here, padding moved to sections or specific children */}
-         {children}
+        {/* No padding here, padding moved to sections or specific children */}
+        {children}
       </div>
     </div>
   );
@@ -518,7 +523,7 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     width,
     height: height || 'auto',
   });
-  
+
   const startSize = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   const startPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const resizeDirection = useRef<'right' | 'bottom' | 'corner' | null>(null);
@@ -536,84 +541,105 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
     document.body.style.userSelect = bodyUserSelectRef.current;
   }, []);
 
-  const handleResizeMove = useCallback((e: PointerEvent) => {
-    if (!resizeDirection.current) return;
-    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+  const handleResizeMove = useCallback(
+    (e: PointerEvent) => {
+      if (!resizeDirection.current) return;
+      if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
 
-    e.preventDefault();
+      e.preventDefault();
 
-    const deltaX = e.clientX - startPos.current.x;
-    const deltaY = e.clientY - startPos.current.y;
+      const deltaX = e.clientX - startPos.current.x;
+      const deltaY = e.clientY - startPos.current.y;
 
-    let newWidth = startSize.current.width;
-    let newHeight = startSize.current.height;
+      let newWidth = startSize.current.width;
+      let newHeight = startSize.current.height;
 
-    if (resizeDirection.current === 'right' || resizeDirection.current === 'corner') {
-      newWidth += deltaX;
-      if (newWidth < minWidth) newWidth = minWidth;
-      if (newWidth > maxWidth) newWidth = maxWidth;
-    }
-
-    if (resizeDirection.current === 'bottom' || resizeDirection.current === 'corner') {
-      newHeight += deltaY;
-      if (newHeight < minHeight) newHeight = minHeight;
-      if (newHeight > maxHeight) newHeight = maxHeight;
-    }
-
-    setPanelSize((prev) => ({
-      width: resizeDirection.current === 'right' || resizeDirection.current === 'corner' ? newWidth : prev.width,
-      height: resizeDirection.current === 'bottom' || resizeDirection.current === 'corner' ? newHeight : prev.height
-    }));
-  }, [maxHeight, maxWidth, minHeight, minWidth]);
-
-  const handleResizeEnd = useCallback((e?: PointerEvent | Event) => {
-    if (e && 'pointerId' in e && activePointerId.current !== null && e.pointerId !== activePointerId.current) {
-      return;
-    }
-
-    document.removeEventListener('pointermove', handleResizeMove);
-    document.removeEventListener('pointerup', handleResizeEnd);
-    document.removeEventListener('pointercancel', handleResizeEnd);
-    window.removeEventListener('blur', handleResizeEnd);
-
-    restoreBodyInteractionStyles();
-    resizeDirection.current = null;
-    activePointerId.current = null;
-  }, [handleResizeMove, restoreBodyInteractionStyles]);
-
-  const handleResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>, direction: 'right' | 'bottom' | 'corner') => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const currentElement = e.currentTarget.parentElement;
-    if (!currentElement) return;
-
-    startSize.current = {
-      width: currentElement.offsetWidth,
-      height: currentElement.offsetHeight
-    };
-    startPos.current = { x: e.clientX, y: e.clientY };
-    resizeDirection.current = direction;
-    activePointerId.current = e.pointerId;
-
-    if (e.currentTarget.setPointerCapture) {
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // Ignore if pointer capture is not available for current environment.
+      if (resizeDirection.current === 'right' || resizeDirection.current === 'corner') {
+        newWidth += deltaX;
+        if (newWidth < minWidth) newWidth = minWidth;
+        if (newWidth > maxWidth) newWidth = maxWidth;
       }
-    }
 
-    document.addEventListener('pointermove', handleResizeMove);
-    document.addEventListener('pointerup', handleResizeEnd);
-    document.addEventListener('pointercancel', handleResizeEnd);
-    window.addEventListener('blur', handleResizeEnd);
+      if (resizeDirection.current === 'bottom' || resizeDirection.current === 'corner') {
+        newHeight += deltaY;
+        if (newHeight < minHeight) newHeight = minHeight;
+        if (newHeight > maxHeight) newHeight = maxHeight;
+      }
 
-    const cursor = direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
-    captureBodyInteractionStyles();
-    document.body.style.cursor = cursor;
-    document.body.style.userSelect = 'none';
-  }, [captureBodyInteractionStyles, handleResizeEnd, handleResizeMove]);
+      setPanelSize((prev) => ({
+        width:
+          resizeDirection.current === 'right' || resizeDirection.current === 'corner'
+            ? newWidth
+            : prev.width,
+        height:
+          resizeDirection.current === 'bottom' || resizeDirection.current === 'corner'
+            ? newHeight
+            : prev.height,
+      }));
+    },
+    [maxHeight, maxWidth, minHeight, minWidth],
+  );
+
+  const handleResizeEnd = useCallback(
+    (e?: PointerEvent | Event) => {
+      if (
+        e &&
+        'pointerId' in e &&
+        activePointerId.current !== null &&
+        e.pointerId !== activePointerId.current
+      ) {
+        return;
+      }
+
+      document.removeEventListener('pointermove', handleResizeMove);
+      document.removeEventListener('pointerup', handleResizeEnd);
+      document.removeEventListener('pointercancel', handleResizeEnd);
+      window.removeEventListener('blur', handleResizeEnd);
+
+      restoreBodyInteractionStyles();
+      resizeDirection.current = null;
+      activePointerId.current = null;
+    },
+    [handleResizeMove, restoreBodyInteractionStyles],
+  );
+
+  const handleResizeStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, direction: 'right' | 'bottom' | 'corner') => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const currentElement = e.currentTarget.parentElement;
+      if (!currentElement) return;
+
+      startSize.current = {
+        width: currentElement.offsetWidth,
+        height: currentElement.offsetHeight,
+      };
+      startPos.current = { x: e.clientX, y: e.clientY };
+      resizeDirection.current = direction;
+      activePointerId.current = e.pointerId;
+
+      if (e.currentTarget.setPointerCapture) {
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignore if pointer capture is not available for current environment.
+        }
+      }
+
+      document.addEventListener('pointermove', handleResizeMove);
+      document.addEventListener('pointerup', handleResizeEnd);
+      document.addEventListener('pointercancel', handleResizeEnd);
+      window.addEventListener('blur', handleResizeEnd);
+
+      const cursor =
+        direction === 'right' ? 'ew-resize' : direction === 'bottom' ? 'ns-resize' : 'nwse-resize';
+      captureBodyInteractionStyles();
+      document.body.style.cursor = cursor;
+      document.body.style.userSelect = 'none';
+    },
+    [captureBodyInteractionStyles, handleResizeEnd, handleResizeMove],
+  );
 
   useEffect(() => {
     return () => {
@@ -623,36 +649,44 @@ export const OptionsPanelContainer: React.FC<OptionsPanelContainerProps> = ({
 
   const currentHeight = isCollapsed ? 'auto' : panelSize.height;
   // Prevent panel from expanding beyond its set height when collapsing (if height is not auto)
-  const constrainedMaxHeight = (isCollapsed && panelSize.height !== 'auto') ? panelSize.height : undefined;
+  const constrainedMaxHeight =
+    isCollapsed && panelSize.height !== 'auto' ? panelSize.height : undefined;
 
   return (
     <div
       className={`bg-panel-bg rounded-xl border border-border-black flex flex-col shadow-xl overflow-hidden relative @container ${className}`}
-      style={{ width: panelSize.width, height: currentHeight, maxHeight: constrainedMaxHeight ?? maxHeight }}
+      style={{
+        width: panelSize.width,
+        height: currentHeight,
+        maxHeight: constrainedMaxHeight ?? maxHeight,
+      }}
     >
       {children}
       {resizable && !isCollapsed && (
         <>
-            {/* Right Handle */}
-            <div 
-                className="absolute right-0.5 top-10 bottom-4 w-2 cursor-ew-resize rounded-full z-40 hover:bg-system-blue/20 transition-colors"
-                onPointerDown={(e) => handleResizeStart(e, 'right')}
-            />
-            {/* Bottom Handle */}
-            <div 
-                className="absolute bottom-0 left-0 w-full h-1.5 cursor-ns-resize z-40 hover:bg-system-blue/20 transition-colors"
-                onPointerDown={(e) => handleResizeStart(e, 'bottom')}
-            />
-            {/* Corner Handle */}
-            <div 
-                className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-transparent"
-                onPointerDown={(e) => handleResizeStart(e, 'corner')}
-                title={resizeTitle}
+          {/* Right Handle */}
+          <div
+            className="absolute right-0.5 top-10 bottom-4 w-2 cursor-ew-resize rounded-full z-40 hover:bg-system-blue/20 transition-colors"
+            onPointerDown={(e) => handleResizeStart(e, 'right')}
+          />
+          {/* Bottom Handle */}
+          <div
+            className="absolute bottom-0 left-0 w-full h-1.5 cursor-ns-resize z-40 hover:bg-system-blue/20 transition-colors"
+            onPointerDown={(e) => handleResizeStart(e, 'bottom')}
+          />
+          {/* Corner Handle */}
+          <div
+            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity bg-transparent"
+            onPointerDown={(e) => handleResizeStart(e, 'corner')}
+            title={resizeTitle}
+          >
+            <svg
+              viewBox="0 0 6 6"
+              className="w-2 h-2 text-text-tertiary fill-current transform rotate-45 pointer-events-none"
             >
-                <svg viewBox="0 0 6 6" className="w-2 h-2 text-text-tertiary fill-current transform rotate-45 pointer-events-none">
-                    <path d="M4 4 L6 6 M2 2 L6 2 L6 6 L2 6 Z" />
-                </svg>
-            </div>
+              <path d="M4 4 L6 6 M2 2 L6 2 L6 6 L2 6 Z" />
+            </svg>
+          </div>
         </>
       )}
     </div>
@@ -671,9 +705,7 @@ interface UseDraggablePanelReturn {
   handleMouseUp: () => void;
 }
 
-export function useDraggablePanel(
-  initialCollapsed: boolean = false
-): UseDraggablePanelReturn {
+export function useDraggablePanel(initialCollapsed: boolean = false): UseDraggablePanelReturn {
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(initialCollapsed);
@@ -688,7 +720,7 @@ export function useDraggablePanel(
       // Direct DOM manipulation for performance (avoids React re-renders during drag)
       const newX = e.clientX - dragOffset.current.x;
       const newY = e.clientY - dragOffset.current.y;
-      
+
       panelRef.current.style.left = `${newX}px`;
       panelRef.current.style.top = `${newY}px`;
     }
@@ -697,40 +729,43 @@ export function useDraggablePanel(
   const handleMouseUp = useCallback(() => {
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
-    
+
     // Sync final position to React state to persist it
     if (panelRef.current) {
-       // We can read the style we just set, or recalculate.
-       // Recalculating from the last event would require the event object, 
-       // but handleMouseUp usually doesn't need coordinates if we trust the DOM.
-       // However, we need to save the 'x' and 'y' numbers.
-       // Let's parse them from the style or bounding rect?
-       // Bounding rect is safest.
-       // NOTE: We need the position relative to the viewport/offset parent.
-       // Since OptionsPanel uses `fixed` or `absolute` positioning typically...
-       // The original logic used `clientX - offset`.
-       // We can't easily get `clientX` here if we don't accept the event.
-       // But wait, the previous interface had `handleMouseUp: () => void`. 
-       // Let's change it to accept `MouseEvent` or just read from DOM.
-       
-       const left = parseFloat(panelRef.current.style.left || '0');
-       const top = parseFloat(panelRef.current.style.top || '0');
-       setPosition({ x: left, y: top });
+      // We can read the style we just set, or recalculate.
+      // Recalculating from the last event would require the event object,
+      // but handleMouseUp usually doesn't need coordinates if we trust the DOM.
+      // However, we need to save the 'x' and 'y' numbers.
+      // Let's parse them from the style or bounding rect?
+      // Bounding rect is safest.
+      // NOTE: We need the position relative to the viewport/offset parent.
+      // Since OptionsPanel uses `fixed` or `absolute` positioning typically...
+      // The original logic used `clientX - offset`.
+      // We can't easily get `clientX` here if we don't accept the event.
+      // But wait, the previous interface had `handleMouseUp: () => void`.
+      // Let's change it to accept `MouseEvent` or just read from DOM.
+
+      const left = parseFloat(panelRef.current.style.left || '0');
+      const top = parseFloat(panelRef.current.style.top || '0');
+      setPosition({ x: left, y: top });
     }
   }, [handleMouseMove]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (panelRef.current) {
-      const rect = panelRef.current.getBoundingClientRect();
-      dragOffset.current = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      };
-      
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-    }
-  }, [handleMouseMove, handleMouseUp]);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (panelRef.current) {
+        const rect = panelRef.current.getBoundingClientRect();
+        dragOffset.current = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+      }
+    },
+    [handleMouseMove, handleMouseUp],
+  );
 
   useEffect(() => {
     return () => {
@@ -757,7 +792,13 @@ interface OptionsPanelProps {
   show: boolean;
   onClose?: () => void;
   position?: { x: number; y: number } | null;
-  defaultPosition?: { top?: string; right?: string; left?: string; bottom?: string; transform?: string };
+  defaultPosition?: {
+    top?: string;
+    right?: string;
+    left?: string;
+    bottom?: string;
+    transform?: string;
+  };
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   onMouseDown?: (e: React.MouseEvent) => void;
@@ -771,6 +812,8 @@ interface OptionsPanelProps {
   additionalControls?: ReactNode;
   resizeTitle?: string;
   panelClassName?: string;
+  onMouseEnter?: React.MouseEventHandler<HTMLDivElement>;
+  onMouseLeave?: React.MouseEventHandler<HTMLDivElement>;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
@@ -792,6 +835,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
   additionalControls,
   resizeTitle,
   panelClassName = '',
+  onMouseEnter,
+  onMouseLeave,
 }) => {
   if (!show) return null;
 
@@ -813,6 +858,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
       onClick={stopPanelEventPropagation}
       onContextMenu={stopPanelEventPropagation}
       onDoubleClick={stopPanelEventPropagation}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       onPointerDown={stopPanelEventPropagation}
       onWheel={stopPanelEventPropagation}
     >
@@ -832,9 +879,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
           onMouseDown={onMouseDown}
           additionalControls={additionalControls}
         />
-        <OptionsPanelContent isCollapsed={isCollapsed}>
-          {children}
-        </OptionsPanelContent>
+        <OptionsPanelContent isCollapsed={isCollapsed}>{children}</OptionsPanelContent>
       </OptionsPanelContainer>
     </div>
   );

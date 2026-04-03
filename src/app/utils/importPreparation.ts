@@ -1,12 +1,15 @@
 import JSZip from 'jszip';
 import {
   resolveRobotFileData,
+  isStandaloneXacroEntry,
   type RobotImportResult,
 } from '@/core/parsers/importRobotFile';
 import { isMJCF } from '@/core/parsers/mjcf';
 import { isSDF } from '@/core/parsers/sdf/sdfParser';
 import { isUSDA } from '@/core/parsers/usd';
+import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { isXacro } from '@/core/parsers/xacro';
+import { isMotorLibraryDataFilePath } from '@/shared/data/motorLibrary';
 import {
   createImportPathCollisionMap,
   isAssetFile,
@@ -14,7 +17,7 @@ import {
   remapImportedPath,
 } from '@/features/file-io/utils';
 import {
-  createMemoizedRobotImportResolver,
+  isUrdfSelfContainedInImportBundle,
   pickPreferredImportFile,
 } from '@/app/hooks/importPreferredFile';
 import { inferCommonPackageAssetBundleRoot } from './importPackageAssetReferences.ts';
@@ -23,6 +26,7 @@ import type { RobotFile } from '@/types';
 
 const USD_BINARY_MAGIC = new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67]); // "PXR-USDC"
 const usdTextDecoder = new TextDecoder();
+const MAX_EAGER_TEXT_USD_BYTES = 1024 * 1024;
 
 export interface PreparedImportBlobFile {
   name: string;
@@ -59,6 +63,7 @@ export interface PreparedImportPayload {
 export interface PrepareImportPayloadArgs {
   files: readonly ImportPreparationFileInput[];
   existingPaths: readonly string[];
+  preResolvePreferredImport?: boolean;
 }
 
 export interface ImportPreparationFileDescriptor {
@@ -73,12 +78,13 @@ export interface PrepareImportWorkerRequest {
   requestId: number;
   files: ImportPreparationFileDescriptor[];
   existingPaths: string[];
+  preResolvePreferredImport?: boolean;
 }
 
 export interface PrepareImportWorkerResponse {
   type: 'prepare-import-result' | 'prepare-import-error';
   requestId: number;
-  payload?: import('./importPreparationTransfer').PreparedImportWorkerPayload;
+  payload?: PreparedImportPayload;
   error?: string;
 }
 
@@ -194,10 +200,48 @@ export function createImportedUsdFile(name: string, bytes: Uint8Array): RobotFil
     || lowerName.endsWith('.usdz')
     || hasBinaryMagic(bytes, USD_BINARY_MAGIC);
   const isTextUsd = !isBinaryUsd && (lowerName.endsWith('.usda') || isLikelyTextBuffer(bytes));
+  // Large USDA sidecar layers can be hundreds of MB. Keep them blob-backed and
+  // avoid eagerly decoding them into JS strings during folder import.
+  const shouldDecodeTextContent = isTextUsd && bytes.byteLength <= MAX_EAGER_TEXT_USD_BYTES;
 
   return {
     name,
-    content: isTextUsd ? usdTextDecoder.decode(bytes) : '',
+    content: shouldDecodeTextContent ? usdTextDecoder.decode(bytes) : '',
+    format: 'usd',
+  };
+}
+
+async function createImportedUsdFileFromLooseFile(
+  name: string,
+  file: File,
+): Promise<RobotFile> {
+  const lowerName = name.toLowerCase();
+
+  if (lowerName.endsWith('.usdc') || lowerName.endsWith('.usdz')) {
+    return {
+      name,
+      content: '',
+      format: 'usd',
+    };
+  }
+
+  if (lowerName.endsWith('.usda')) {
+    return {
+      name,
+      content: file.size <= MAX_EAGER_TEXT_USD_BYTES ? await file.text() : '',
+      format: 'usd',
+    };
+  }
+
+  const sampleBytes = new Uint8Array(
+    await file.slice(0, Math.min(file.size, 2048)).arrayBuffer(),
+  );
+  const isBinaryUsd = hasBinaryMagic(sampleBytes, USD_BINARY_MAGIC);
+  const isTextUsd = !isBinaryUsd && isLikelyTextBuffer(sampleBytes);
+
+  return {
+    name,
+    content: isTextUsd && file.size <= MAX_EAGER_TEXT_USD_BYTES ? await file.text() : '',
     format: 'usd',
   };
 }
@@ -444,9 +488,189 @@ function isAuxiliaryTextImportPath(lowerPath: string): boolean {
   return lowerPath.endsWith('.material');
 }
 
+const FAST_IMPORT_VARIANT_PENALTY_BY_TOKEN = new Map<string, number>([
+  ['with', 2],
+  ['hand', 8],
+  ['gripper', 8],
+  ['ftp', 10],
+  ['dfq', 10],
+  ['dual', 8],
+  ['arm', 4],
+  ['mode', 7],
+  ['lock', 6],
+  ['waist', 4],
+  ['sensor', 3],
+  ['camera', 3],
+  ['comp', 5],
+  ['debug', 6],
+  ['test', 6],
+  ['collision', 5],
+  ['visual', 2],
+  ['scene', 9],
+  ['demo', 4],
+  ['example', 4],
+]);
+
+const FAST_IMPORT_HELPER_PENALTY_BY_TOKEN = new Map<string, number>([
+  ['scene', 12],
+  ['world', 10],
+  ['terrain', 8],
+  ['floor', 8],
+  ['env', 8],
+  ['environment', 8],
+  ['visualize', 10],
+  ['viewer', 10],
+  ['launcher', 10],
+  ['demo', 4],
+  ['example', 4],
+  ['playground', 6],
+]);
+
+function getImportPathDepth(path: string): number {
+  return normalizeImportPath(path).split('/').filter(Boolean).length;
+}
+
+function getImportBaseName(path: string): string {
+  const normalized = normalizeImportPath(path);
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] || normalized;
+}
+
+function getImportStem(path: string): string {
+  const baseName = getImportBaseName(path);
+  const lastDotIndex = baseName.lastIndexOf('.');
+  return (lastDotIndex >= 0 ? baseName.slice(0, lastDotIndex) : baseName).toLowerCase();
+}
+
+function tokenizeImportIdentity(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function scoreFastImportVariantPenalty(fileName: string): number {
+  const tokens = tokenizeImportIdentity(getImportStem(fileName));
+  const tokenSet = new Set(tokens);
+
+  let penalty = 0;
+  tokens.forEach((token) => {
+    penalty += FAST_IMPORT_VARIANT_PENALTY_BY_TOKEN.get(token) ?? 0;
+  });
+
+  if (tokenSet.has('with') && (tokenSet.has('hand') || tokenSet.has('gripper'))) {
+    penalty += 6;
+  }
+
+  if (tokenSet.has('dual') && tokenSet.has('arm')) {
+    penalty += 6;
+  }
+
+  if (tokenSet.has('lock') && tokenSet.has('waist')) {
+    penalty += 4;
+  }
+
+  return penalty;
+}
+
+function scoreFastImportHelperPenalty(fileName: string): number {
+  return tokenizeImportIdentity(getImportStem(fileName)).reduce(
+    (penalty, token) => penalty + (FAST_IMPORT_HELPER_PENALTY_BY_TOKEN.get(token) ?? 0),
+    0,
+  );
+}
+
+function compareFastImportPathPreference(leftName: string, rightName: string): number {
+  const depthDiff = getImportPathDepth(leftName) - getImportPathDepth(rightName);
+  if (depthDiff !== 0) {
+    return depthDiff;
+  }
+
+  const leftBase = getImportBaseName(leftName);
+  const rightBase = getImportBaseName(rightName);
+  if (leftBase.length !== rightBase.length) {
+    return leftBase.length - rightBase.length;
+  }
+
+  return leftName.localeCompare(rightName);
+}
+
+function pickFastPreparedPreferredFile(files: RobotFile[]): RobotFile | null {
+  const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+  if (robotDefinitionFiles.length === 0) {
+    return files[0] ?? null;
+  }
+
+  const urdfFiles = robotDefinitionFiles.filter((file) => file.format === 'urdf');
+  if (urdfFiles.length > 0) {
+    return [...urdfFiles].sort((left, right) => {
+      const leftSelfContained = isUrdfSelfContainedInImportBundle(left, robotDefinitionFiles);
+      const rightSelfContained = isUrdfSelfContainedInImportBundle(right, robotDefinitionFiles);
+      if (leftSelfContained !== rightSelfContained) {
+        return Number(rightSelfContained) - Number(leftSelfContained);
+      }
+
+      const variantPenaltyDiff = scoreFastImportVariantPenalty(left.name) - scoreFastImportVariantPenalty(right.name);
+      if (variantPenaltyDiff !== 0) {
+        return variantPenaltyDiff;
+      }
+
+      return compareFastImportPathPreference(left.name, right.name);
+    })[0] ?? null;
+  }
+
+  const mjcfFiles = robotDefinitionFiles.filter((file) => file.format === 'mjcf');
+  if (mjcfFiles.length > 0) {
+    return [...mjcfFiles].sort((left, right) => {
+      const helperPenaltyDiff = scoreFastImportHelperPenalty(left.name) - scoreFastImportHelperPenalty(right.name);
+      if (helperPenaltyDiff !== 0) {
+        return helperPenaltyDiff;
+      }
+
+      return compareFastImportPathPreference(left.name, right.name);
+    })[0] ?? null;
+  }
+
+  const preferredUsd = pickPreferredUsdRootFile(
+    robotDefinitionFiles.filter((file) => file.format === 'usd'),
+  );
+  if (preferredUsd) {
+    return preferredUsd;
+  }
+
+  const standaloneXacroFiles = robotDefinitionFiles.filter((file) => (
+    file.format === 'xacro' && isStandaloneXacroEntry(file)
+  ));
+  if (standaloneXacroFiles.length > 0) {
+    return [...standaloneXacroFiles].sort((left, right) => (
+      compareFastImportPathPreference(left.name, right.name)
+    ))[0] ?? null;
+  }
+
+  const xacroFiles = robotDefinitionFiles.filter((file) => file.format === 'xacro');
+  if (xacroFiles.length > 0) {
+    return [...xacroFiles].sort((left, right) => (
+      compareFastImportPathPreference(left.name, right.name)
+    ))[0] ?? null;
+  }
+
+  const sdfFiles = robotDefinitionFiles.filter((file) => file.format === 'sdf');
+  if (sdfFiles.length > 0) {
+    return [...sdfFiles].sort((left, right) => (
+      compareFastImportPathPreference(left.name, right.name)
+    ))[0] ?? null;
+  }
+
+  return robotDefinitionFiles[0] ?? files[0] ?? null;
+}
+
 function renameCollectedImportPayload(
   payload: CollectedImportPayload,
   existingPaths: readonly string[],
+  options: {
+    preResolvePreferredImport?: boolean;
+  } = {},
 ): PreparedImportPayload {
   const importedPaths = [
     ...payload.robotFiles.map((file) => file.name),
@@ -478,27 +702,29 @@ function renameCollectedImportPayload(
       path: remapImportedPath(file.path, pathCollisionMap),
     })),
   };
-  const importTextFileContents = Object.fromEntries(
-    renamedPayload.textFiles.map((file) => [file.path, file.content]),
-  );
-  const resolvePreferredImport = createMemoizedRobotImportResolver(renamedPayload.robotFiles);
-  const preferredFile = pickPreferredImportFile(
-    renamedPayload.robotFiles,
-    renamedPayload.robotFiles,
-    resolvePreferredImport,
-  );
-  const preferredImportResult = preferredFile
+  const shouldPreResolvePreferredImport = options.preResolvePreferredImport !== false;
+  const importTextFileContents = shouldPreResolvePreferredImport
+    ? Object.fromEntries(
+      renamedPayload.textFiles.map((file) => [file.path, file.content]),
+    )
+    : {};
+  const preferredFile = shouldPreResolvePreferredImport
+    ? pickPreferredImportFile(renamedPayload.robotFiles, renamedPayload.robotFiles)
+    : pickFastPreparedPreferredFile(renamedPayload.robotFiles);
+  const preferredImportResult = shouldPreResolvePreferredImport && preferredFile
     ? (
       preferredFile.format === 'xacro' || preferredFile.format === 'sdf'
         ? resolveRobotFileData(preferredFile, {
           availableFiles: renamedPayload.robotFiles,
           allFileContents: importTextFileContents,
         })
-        : resolvePreferredImport(preferredFile)
+        : resolveRobotFileData(preferredFile, {
+          availableFiles: renamedPayload.robotFiles,
+        })
     )
     : null;
 
-  const preResolvedImports = preferredFile && preferredImportResult
+  const preResolvedImports = shouldPreResolvePreferredImport && preferredFile && preferredImportResult
     ? [{
       fileName: preferredFile.name,
       format: preferredFile.format,
@@ -524,6 +750,7 @@ async function collectImportPayloadFromZipFile(zipFile: File): Promise<Collected
   };
   const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
   const entryTasks: Promise<void>[] = [];
+  const auxiliaryTextEntries: Array<{ path: string; entry: JSZip.JSZipObject }> = [];
 
   zip.forEach((relativePath, fileEntry) => {
     if (fileEntry.dir || shouldSkipImportPath(relativePath)) {
@@ -548,15 +775,14 @@ async function collectImportPayloadFromZipFile(zipFile: File): Promise<Collected
         return;
       }
 
-      if (lowerPath.includes('motor library') && lowerPath.endsWith('.txt')) {
+      if (isMotorLibraryDataFilePath(relativePath)) {
         const content = await fileEntry.async('string');
         payload.libraryFiles.push({ path: relativePath, content });
         return;
       }
 
       if (isAuxiliaryTextImportPath(lowerPath)) {
-        const content = await fileEntry.async('string');
-        payload.textFiles.push({ path: relativePath, content });
+        auxiliaryTextEntries.push({ path: relativePath, entry: fileEntry });
         return;
       }
 
@@ -571,6 +797,14 @@ async function collectImportPayloadFromZipFile(zipFile: File): Promise<Collected
   });
 
   await Promise.all(entryTasks);
+
+  if (payload.robotFiles.some((file) => file.format === 'sdf') && auxiliaryTextEntries.length > 0) {
+    await Promise.all(auxiliaryTextEntries.map(async ({ path, entry }) => {
+      const content = await entry.async('string');
+      payload.textFiles.push({ path, content });
+    }));
+  }
+
   return payload;
 }
 
@@ -582,6 +816,7 @@ async function collectImportPayloadFromLooseFiles(files: readonly ImportPreparat
     libraryFiles: [],
     textFiles: [],
   };
+  const auxiliaryTextFiles: Array<{ path: string; file: File }> = [];
 
   await Promise.all(files.map(async (input) => {
     const file = resolveImportInputFile(input);
@@ -593,8 +828,7 @@ async function collectImportPayloadFromLooseFiles(files: readonly ImportPreparat
     }
 
     if (isUsdFamilyPath(path)) {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      payload.robotFiles.push(createImportedUsdFile(path, bytes));
+      payload.robotFiles.push(await createImportedUsdFileFromLooseFile(path, file));
       payload.usdSourceFiles.push({ name: path, blob: file });
       return;
     }
@@ -608,15 +842,14 @@ async function collectImportPayloadFromLooseFiles(files: readonly ImportPreparat
       return;
     }
 
-    if (path.includes('motor library') && lowerPath.endsWith('.txt')) {
+    if (isMotorLibraryDataFilePath(path)) {
       const content = await file.text();
       payload.libraryFiles.push({ path, content });
       return;
     }
 
     if (isAuxiliaryTextImportPath(lowerPath)) {
-      const content = await file.text();
-      payload.textFiles.push({ path, content });
+      auxiliaryTextFiles.push({ path, file });
       return;
     }
 
@@ -628,12 +861,20 @@ async function collectImportPayloadFromLooseFiles(files: readonly ImportPreparat
     }
   }));
 
+  if (payload.robotFiles.some((file) => file.format === 'sdf') && auxiliaryTextFiles.length > 0) {
+    await Promise.all(auxiliaryTextFiles.map(async ({ path, file }) => {
+      const content = await file.text();
+      payload.textFiles.push({ path, content });
+    }));
+  }
+
   return payload;
 }
 
 export async function prepareImportPayload({
   files,
   existingPaths,
+  preResolvePreferredImport = true,
 }: PrepareImportPayloadArgs): Promise<PreparedImportPayload> {
   const firstFile = files[0] ? resolveImportInputFile(files[0]) : null;
   const collectedPayload = files.length === 1 && firstFile && firstFile.name.toLowerCase().endsWith('.zip')
@@ -643,5 +884,8 @@ export async function prepareImportPayload({
   return renameCollectedImportPayload(
     normalizeLooseImportBundleRoot(collectedPayload),
     existingPaths,
+    {
+      preResolvePreferredImport,
+    },
   );
 }

@@ -14,7 +14,7 @@ interface LinkJointEditorProps {
   mode: AppMode;
   motorLibrary: Record<string, MotorSpec[]>;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
-  t: typeof translations['en'];
+  t: (typeof translations)['en'];
   lang: Language;
 }
 
@@ -41,7 +41,9 @@ export const LinkJointEditor: React.FC<LinkJointEditorProps> = ({
     ];
   }, [linkId, robot]);
 
-  const [activeJointId, setActiveJointId] = useState<string | null>(relatedJoints[0]?.joint.id ?? null);
+  const [activeJointId, setActiveJointId] = useState<string | null>(
+    relatedJoints[0]?.joint.id ?? null,
+  );
 
   useEffect(() => {
     if (relatedJoints.length === 0) {
@@ -68,7 +70,7 @@ export const LinkJointEditor: React.FC<LinkJointEditorProps> = ({
     <div className="space-y-2.5">
       {relatedJoints.length > 1 ? (
         <div className="rounded-lg border border-border-black bg-panel-bg p-1.5 shadow-sm">
-          <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-text-tertiary">
+          <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold tracking-[0.02em] text-text-tertiary">
             <Waypoints className="h-3.5 w-3.5 text-system-blue" />
             <span>{t.joints}</span>
           </div>

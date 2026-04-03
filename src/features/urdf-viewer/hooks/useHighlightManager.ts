@@ -3,19 +3,23 @@ import * as THREE from 'three';
 import type { UrdfLink } from '@/types';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import {
-    highlightMaterial,
-    collisionHighlightMaterial
+    createHighlightOverrideMaterial,
+    disposeMaterial,
 } from '../utils/materials';
 import { _pooledRay, _pooledBox3 } from '../constants';
-import { collectPickTargets, type PickTargetMode } from '../utils/pickTargets';
-import { resolveEffectiveInteractionSubType } from '../utils/interactionMode';
+import {
+    collectPickTargets,
+    collectSelectableHelperTargets,
+    type PickTargetMode
+} from '../utils/pickTargets';
+import { resolveTopLayerInteractionSubType } from '../utils/interactionMode';
 
 export interface UseHighlightManagerOptions {
     robot: THREE.Object3D | null;
     robotVersion: number;
-    highlightMode: 'link' | 'collision';
     showCollision: boolean;
     showVisual: boolean;
+    showCollisionAlwaysOnTop: boolean;
     robotLinks?: Record<string, UrdfLink>;
     linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
 }
@@ -46,20 +50,24 @@ interface HighlightedMaterialState {
     opacity: number;
     depthTest: boolean;
     depthWrite: boolean;
+    colorHex?: number;
+    emissiveHex?: number;
+    emissiveIntensity?: number;
 }
 
 export interface HighlightedMeshSnapshot {
     material: THREE.Material | THREE.Material[];
     renderOrder: number;
     materialStates: HighlightedMaterialState[];
+    activeRole: 'visual' | 'collision' | null;
 }
 
 export function useHighlightManager({
     robot,
     robotVersion,
-    highlightMode,
     showCollision,
     showVisual,
+    showCollisionAlwaysOnTop,
     robotLinks,
     linkMeshMapRef
 }: UseHighlightManagerOptions): UseHighlightManagerResult {
@@ -99,7 +107,7 @@ export function useHighlightManager({
             boundingBoxNeedsUpdateRef.current = true;
             robotBoundingBoxUpdatedAtRef.current = 0;
         }
-    }, [robot, showCollision, showVisual, highlightMode, robotLinks]);
+    }, [robot, showCollision, showVisual, showCollisionAlwaysOnTop, robotLinks]);
 
     const getCollisionGeometryByIndex = useCallback((linkData: UrdfLink | undefined, colliderIndex: number) => {
         if (!linkData) return undefined;
@@ -138,14 +146,11 @@ export function useHighlightManager({
     }, [getColliderIndex, getCollisionGeometryByIndex]);
 
     const getActiveBoundingMode = useCallback((): PickTargetMode | null => {
-        const { subType } = resolveEffectiveInteractionSubType(
-            highlightMode,
-            showVisualRef.current,
-            showCollisionRef.current
-        );
-
-        return subType;
-    }, [highlightMode]);
+        if (showVisualRef.current && showCollisionRef.current) return 'all';
+        if (showCollisionRef.current) return 'collision';
+        if (showVisualRef.current) return 'visual';
+        return null;
+    }, []);
 
     // Helper to get/update robot bounding box (cached)
     const getRobotBoundingBox = useCallback((forceRefresh = false) => {
@@ -168,17 +173,22 @@ export function useHighlightManager({
             const pickTargets = targetMode
                 ? collectPickTargets(linkMeshMapRef.current, targetMode)
                 : [];
+            const helperTargets = collectSelectableHelperTargets(robot);
+            const seenTargetIds = new Set<number>(pickTargets.map((target) => target.id));
+            const boundingTargets = pickTargets.concat(
+                helperTargets.filter((target) => !seenTargetIds.has(target.id))
+            );
 
             boundingBox.makeEmpty();
 
-            if (pickTargets.length > 0) {
+            if (boundingTargets.length > 0) {
                 if (forceRefresh || boundingBoxNeedsUpdateRef.current || robotBoundingBoxUpdatedAtRef.current === 0) {
                     robot.updateMatrixWorld(true);
                 }
 
-                for (let i = 0; i < pickTargets.length; i += 1) {
-                    const mesh = pickTargets[i] as THREE.Mesh;
-                    const geometry = mesh.geometry;
+                for (let i = 0; i < boundingTargets.length; i += 1) {
+                    const target = boundingTargets[i] as THREE.Object3D & { geometry?: THREE.BufferGeometry };
+                    const geometry = target.geometry;
 
                     if (!geometry) continue;
                     if (!geometry.boundingBox) {
@@ -186,7 +196,7 @@ export function useHighlightManager({
                     }
                     if (!geometry.boundingBox) continue;
 
-                    _pooledBox3.copy(geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+                    _pooledBox3.copy(geometry.boundingBox).applyMatrix4(target.matrixWorld);
                     boundingBox.union(_pooledBox3);
                 }
 
@@ -250,8 +260,23 @@ export function useHighlightManager({
                 opacity: material?.opacity ?? 1,
                 depthTest: material?.depthTest ?? true,
                 depthWrite: material?.depthWrite ?? true,
+                colorHex: (material as any)?.color?.isColor ? (material as any).color.getHex() : undefined,
+                emissiveHex: (material as any)?.emissive?.isColor ? (material as any).emissive.getHex() : undefined,
+                emissiveIntensity: Number.isFinite((material as any)?.emissiveIntensity)
+                    ? Number((material as any).emissiveIntensity)
+                    : undefined,
             })),
+            activeRole: null,
         };
+    }, []);
+
+    const disposeHighlightOverrideMaterials = useCallback((material: THREE.Material | THREE.Material[]) => {
+        const materials = Array.isArray(material) ? material : [material];
+        materials.forEach((entry) => {
+            if (!entry) return;
+            if ((entry as any).userData?.isHighlightOverrideMaterial !== true) return;
+            disposeMaterial(entry, false);
+        });
     }, []);
 
     const restoreHighlightedMeshSnapshot = useCallback((
@@ -259,6 +284,11 @@ export function useHighlightManager({
         snapshot: HighlightedMeshSnapshot,
         shouldBeVisible: boolean,
     ) => {
+        const currentMaterial = mesh.material;
+        if (currentMaterial !== snapshot.material) {
+            disposeHighlightOverrideMaterials(currentMaterial as THREE.Material | THREE.Material[]);
+        }
+
         mesh.material = snapshot.material;
         mesh.renderOrder = snapshot.renderOrder;
         mesh.visible = shouldBeVisible;
@@ -272,8 +302,63 @@ export function useHighlightManager({
             material.opacity = materialState.opacity;
             material.depthTest = materialState.depthTest;
             material.depthWrite = materialState.depthWrite;
+            if (
+                materialState.colorHex !== undefined
+                && (material as any).color?.isColor
+            ) {
+                (material as any).color.setHex(materialState.colorHex);
+            }
+            if (
+                materialState.emissiveHex !== undefined
+                && (material as any).emissive?.isColor
+            ) {
+                (material as any).emissive.setHex(materialState.emissiveHex);
+            }
+            if (
+                materialState.emissiveIntensity !== undefined
+                && 'emissiveIntensity' in (material as any)
+            ) {
+                (material as any).emissiveIntensity = materialState.emissiveIntensity;
+            }
+            material.needsUpdate = true;
         });
-    }, []);
+        snapshot.activeRole = null;
+    }, [disposeHighlightOverrideMaterials]);
+
+    const applyHighlightToMesh = useCallback((
+        mesh: THREE.Mesh,
+        targetSubType: 'visual' | 'collision'
+    ) => {
+        let snapshot = highlightedMeshesRef.current.get(mesh);
+        if (!snapshot) {
+            snapshot = captureHighlightedMeshSnapshot(mesh);
+            highlightedMeshesRef.current.set(mesh, snapshot);
+        } else if (snapshot.activeRole === targetSubType) {
+            mesh.visible = true;
+            if (mesh.parent) mesh.parent.visible = true;
+            if (targetSubType === 'collision') {
+                mesh.renderOrder = 1000;
+            }
+            return;
+        } else {
+            restoreHighlightedMeshSnapshot(mesh, snapshot, true);
+        }
+
+        const sourceMaterials = Array.isArray(snapshot.material)
+            ? snapshot.material
+            : [snapshot.material];
+        const overrideMaterials = sourceMaterials.map((sourceMaterial) => (
+            createHighlightOverrideMaterial(sourceMaterial, targetSubType)
+        ));
+
+        mesh.material = Array.isArray(snapshot.material) ? overrideMaterials : overrideMaterials[0];
+        mesh.visible = true;
+        if (mesh.parent) mesh.parent.visible = true;
+        if (targetSubType === 'collision') {
+            mesh.renderOrder = 1000;
+        }
+        snapshot.activeRole = targetSubType;
+    }, [captureHighlightedMeshSnapshot, restoreHighlightedMeshSnapshot]);
 
     // Revert all highlighted meshes using the tracked Map (O(n) where n = highlighted, not total)
     const revertAllHighlights = useCallback(() => {
@@ -289,6 +374,10 @@ export function useHighlightManager({
         highlightedMeshesRef.current.clear();
     }, [getMeshVisibility, restoreHighlightedMeshSnapshot]);
 
+    useEffect(() => {
+        revertAllHighlights();
+    }, [revertAllHighlights, robot, robotVersion]);
+
     // PERFORMANCE: Helper function to highlight/unhighlight link geometry
     // Uses pre-built linkMeshMap for O(1) lookup instead of traverse
     const highlightGeometry = useCallback((
@@ -300,7 +389,14 @@ export function useHighlightManager({
         if (!robot) return;
 
         try {
-            const targetSubType = subType || (highlightMode === 'collision' ? 'collision' : 'visual');
+            const targetSubType = subType || resolveTopLayerInteractionSubType({
+                showVisual,
+                showCollision,
+                collisionAlwaysOnTop: showCollisionAlwaysOnTop,
+            });
+            if (!targetSubType) {
+                return;
+            }
 
             // CRITICAL: Check if the corresponding display option is enabled
             // In link mode, only highlight if showVisual is true
@@ -344,20 +440,7 @@ export function useHighlightManager({
                     if (!getMeshVisibility(child)) return;
 
                     highlightedAnyMesh = true;
-                    if (!highlightedMeshesRef.current.has(child)) {
-                        highlightedMeshesRef.current.set(child, captureHighlightedMeshSnapshot(child));
-                    }
-                    child.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
-                    child.visible = true;
-                    if (child.parent) child.parent.visible = true;
-
-                    if (targetSubType === 'collision' && child.material) {
-                        (child.material as any).transparent = true;
-                        (child.material as any).opacity = 1.0;
-                        (child.material as any).depthTest = false;
-                        (child.material as any).depthWrite = false;
-                        child.renderOrder = 1000;
-                    }
+                    applyHighlightToMesh(child, targetSubType);
                 });
 
                 if (highlightedAnyMesh) {
@@ -377,20 +460,7 @@ export function useHighlightManager({
                             targetGroup.traverse((c: any) => {
                                 if (c.isMesh && !c.userData?.isGizmo) {
                                     if (!getMeshVisibility(c)) return;
-                                    if (!highlightedMeshesRef.current.has(c)) {
-                                        highlightedMeshesRef.current.set(c, captureHighlightedMeshSnapshot(c));
-                                    }
-                                    c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
-                                    c.visible = true;
-                                    if (c.parent) c.parent.visible = true;
-
-                                    if (targetSubType === 'collision' && c.material) {
-                                        (c.material as any).transparent = true;
-                                        (c.material as any).opacity = 1.0;
-                                        (c.material as any).depthTest = false;
-                                        (c.material as any).depthWrite = false;
-                                        c.renderOrder = 1000;
-                                    }
+                                    applyHighlightToMesh(c, targetSubType);
                                 }
                             });
                             return;
@@ -408,20 +478,7 @@ export function useHighlightManager({
                         if (mesh.userData?.isGizmo) continue;
                         if (!getMeshVisibility(mesh)) continue;
 
-                        if (!highlightedMeshesRef.current.has(mesh)) {
-                            highlightedMeshesRef.current.set(mesh, captureHighlightedMeshSnapshot(mesh));
-                        }
-                        mesh.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
-                        mesh.visible = true;
-                        if (mesh.parent) mesh.parent.visible = true;
-
-                        if (targetSubType === 'collision' && mesh.material) {
-                            (mesh.material as any).transparent = true;
-                            (mesh.material as any).opacity = 1.0;
-                            (mesh.material as any).depthTest = false;
-                            (mesh.material as any).depthWrite = false;
-                            mesh.renderOrder = 1000;
-                        }
+                        applyHighlightToMesh(mesh, targetSubType);
                     }
                     return;
                 }
@@ -435,20 +492,7 @@ export function useHighlightManager({
                             const isCollider = c.isURDFCollider || c.userData.isCollisionMesh;
                             const shouldHighlight = (targetSubType === 'collision' && isCollider) || (targetSubType === 'visual' && !isCollider);
                             if (shouldHighlight && getMeshVisibility(c)) {
-                                if (!highlightedMeshesRef.current.has(c)) {
-                                    highlightedMeshesRef.current.set(c, captureHighlightedMeshSnapshot(c));
-                                }
-                                c.material = targetSubType === 'collision' ? collisionHighlightMaterial : highlightMaterial;
-                                c.visible = true;
-                                if (c.parent) c.parent.visible = true;
-
-                                if (targetSubType === 'collision' && c.material) {
-                                    (c.material as any).transparent = true;
-                                    (c.material as any).opacity = 1.0;
-                                    (c.material as any).depthTest = false;
-                                    (c.material as any).depthWrite = false;
-                                    c.renderOrder = 1000;
-                                }
+                                applyHighlightToMesh(c, targetSubType);
                             }
                         }
                         c.children?.forEach(fallbackTraverse);
@@ -459,7 +503,7 @@ export function useHighlightManager({
         } catch (err) {
             console.error("Error in highlightGeometry:", err);
         }
-    }, [robot, showCollision, showVisual, highlightMode, revertAllHighlights, linkMeshMapRef, getCollisionGeometryByIndex, getMeshVisibility, captureHighlightedMeshSnapshot]);
+    }, [robot, showCollision, showVisual, showCollisionAlwaysOnTop, revertAllHighlights, linkMeshMapRef, getCollisionGeometryByIndex, getMeshVisibility, applyHighlightToMesh]);
 
     return {
         highlightGeometry,

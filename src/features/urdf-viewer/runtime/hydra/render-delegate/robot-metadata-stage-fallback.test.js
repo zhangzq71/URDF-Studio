@@ -476,6 +476,87 @@ test('buildRobotMetadataSnapshotForStage seeds helper links from driver joint re
     }
 });
 
+test('buildRobotMetadataSnapshotForStage promotes folded collision-only semantic child links when stage collider metadata names them explicitly', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+        delegate.meshes = {
+            '/Robot/FL_calf/collisions.proto_mesh_id0': {},
+            '/Robot/FL_calf/collisions.proto_mesh_id1': {},
+        };
+        delegate._protoMeshMetadataByMeshId = new Map();
+        delegate._robotMetadataSnapshotByStageSource = new Map();
+        delegate._robotMetadataBuildPromisesByStageSource = new Map();
+        delegate._nowPerfMs = () => 1234;
+        delegate.getNormalizedStageSourcePath = () => '/robots/go2_folded_collision.usd';
+        delegate.getResolvedPrimPathForMeshId = (meshId) => (
+            meshId === '/Robot/FL_calf/collisions.proto_mesh_id0'
+                ? '/Robot/FL_calf/collisions/FL_calf/mesh'
+                : '/Robot/FL_calf/collisions/FL_calflower/mesh'
+        );
+        delegate.getStage = () => ({
+            GetRootLayer() {
+                return createLayer(`#usda 1.0
+(
+    defaultPrim = "Robot"
+)
+
+def Scope "colliders"
+{
+    def Xform "FL_calf"
+    {
+        def Xform "collision_0"
+        {
+            def Mesh "mesh"
+            {
+            }
+        }
+    }
+
+    def Xform "FL_calflower"
+    {
+        def Xform "collision_0"
+        {
+            def Mesh "mesh"
+            {
+            }
+        }
+    }
+}
+`);
+            },
+            GetUsedLayers() {
+                return [];
+            },
+        });
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/go2_folded_collision.usd', null);
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.source, 'usd-stage');
+        assert.deepEqual(snapshot.linkParentPairs, [
+            ['/Robot/FL_calflower', '/Robot/FL_calf'],
+        ]);
+        assert.deepEqual(snapshot.meshCountsByLinkPath, {
+            '/Robot/FL_calf': {
+                visualMeshCount: 0,
+                collisionMeshCount: 1,
+                collisionPrimitiveCounts: { mesh: 1 },
+            },
+            '/Robot/FL_calflower': {
+                visualMeshCount: 0,
+                collisionMeshCount: 1,
+                collisionPrimitiveCounts: { mesh: 1 },
+            },
+        });
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
 test('startRobotMetadataWarmupForStage refreshes cached scene snapshots with resolved metadata', async () => {
     const delegate = Object.create(ThreeRenderDelegateCore.prototype);
     delegate._robotMetadataSnapshotByStageSource = new Map();
@@ -543,4 +624,76 @@ test('startRobotMetadataWarmupForStage refreshes cached scene snapshots with res
     assert.ok(cachedSceneSnapshot.robotTree.linkParentPairs.some(([childPath, parentPath]) => childPath === '/Robot/base_link/imu_link' && parentPath === '/Robot/base_link'));
     assert.equal(cachedSceneSnapshot.robotMetadataSnapshot.jointCatalogEntries.length, 1);
     assert.equal(emittedSceneSnapshot?.robotMetadataSnapshot?.jointCatalogEntries?.length, 1);
+});
+
+test('buildRobotMetadataSnapshotForStage marks metadata stale when driver physics record reads fail', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+        driver: {
+            GetRobotMetadataSnapshot() {
+                return {
+                    stageSourcePath: '/robots/two_link_robot.usd',
+                    source: 'usd-stage-cpp',
+                    linkParentPairs: [],
+                    jointCatalogEntries: [],
+                    linkDynamicsEntries: [],
+                };
+            },
+            GetPhysicsJointRecords() {
+                throw new Error('joint-record-fetch-failed');
+            },
+            GetPhysicsLinkDynamicsRecords() {
+                throw new Error('link-dynamics-fetch-failed');
+            },
+        },
+    };
+
+    try {
+        const delegate = createFallbackMetadataDelegate();
+        delegate.getStage = () => null;
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot.usd', null);
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.stale, true);
+        assert.deepEqual(
+            snapshot.errorFlags,
+            ['physics-joint-records-unavailable', 'physics-link-dynamics-unavailable'],
+        );
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('startRobotMetadataWarmupForStage annotates stale metadata when URDF truth load fails', async () => {
+    const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+    delegate._robotMetadataSnapshotByStageSource = new Map();
+    delegate._robotMetadataBuildPromisesByStageSource = new Map();
+    delegate._robotSceneSnapshotByStageSource = new Map();
+    delegate._nowPerfMs = () => 456;
+    delegate.getNormalizedStageSourcePath = () => '/robots/helper_links.usd';
+    delegate.shouldAllowUrdfHttpFallback = () => true;
+    delegate.buildRobotMetadataSnapshotForStage = () => ({
+        stageSourcePath: '/robots/helper_links.usd',
+        generatedAtMs: 456,
+        source: 'usd-stage-cpp',
+        linkParentPairs: [['/Robot/base_link', null]],
+        jointCatalogEntries: [],
+        linkDynamicsEntries: [],
+        meshCountsByLinkPath: {},
+    });
+    delegate.startUrdfTruthLoadForStage = () => Promise.reject(new Error('truth-load-failed'));
+    delegate.emitRobotMetadataSnapshotReady = () => {};
+    delegate.emitRobotSceneSnapshotReady = () => {};
+
+    const snapshot = await delegate.startRobotMetadataWarmupForStage('/robots/helper_links.usd', {
+        force: true,
+        skipIdleWait: true,
+    });
+
+    assert.ok(snapshot);
+    assert.equal(snapshot.stale, true);
+    assert.deepEqual(snapshot.errorFlags, ['urdf-truth-load-failed']);
+    assert.match(String(snapshot.truthLoadError || ''), /truth-load-failed/);
 });

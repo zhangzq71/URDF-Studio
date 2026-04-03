@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 type UIStoreModule = typeof import('./uiStore.ts');
-const UI_STORE_PERSIST_VERSION = 6;
+const UI_STORE_PERSIST_VERSION = 10;
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -44,10 +44,13 @@ async function loadUIStore(seedState?: Record<string, unknown>) {
   const dom = installDom();
 
   if (seedState) {
-    dom.window.localStorage.setItem('urdf-studio-ui', JSON.stringify({
-      state: seedState,
-      version: UI_STORE_PERSIST_VERSION,
-    }));
+    dom.window.localStorage.setItem(
+      'urdf-studio-ui',
+      JSON.stringify({
+        state: seedState,
+        version: UI_STORE_PERSIST_VERSION,
+      }),
+    );
   }
 
   const moduleUrl = new URL(`./uiStore.ts?test=${Date.now()}-${Math.random()}`, import.meta.url);
@@ -71,12 +74,14 @@ test('view options restore persisted world-origin axes and usage-guide preferenc
       showCenterOfMass: false,
       showCollision: false,
       showUsageGuide: false,
+      modelOpacity: 0.42,
     },
   });
 
   const state = useUIStore.getState();
   assert.equal(state.viewOptions.showAxes, false);
   assert.equal(state.viewOptions.showUsageGuide, false);
+  assert.equal(state.viewOptions.modelOpacity, 0.42);
 
   dom.window.close();
 });
@@ -87,6 +92,7 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
   const state = useUIStore.getState();
   state.setViewOption('showAxes', false);
   state.setViewOption('showUsageGuide', false);
+  state.setViewOption('modelOpacity', 0.42);
 
   const raw = dom.window.localStorage.getItem('urdf-studio-ui');
   assert.ok(raw, 'persisted ui store payload should be written');
@@ -96,12 +102,37 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
       viewOptions?: {
         showAxes?: boolean;
         showUsageGuide?: boolean;
+        modelOpacity?: number;
       };
     };
   };
 
   assert.equal(persisted.state?.viewOptions?.showAxes, false);
   assert.equal(persisted.state?.viewOptions?.showUsageGuide, false);
+  assert.equal(persisted.state?.viewOptions?.modelOpacity, 0.42);
+
+  dom.window.close();
+});
+
+test('source code auto-apply restores from persisted settings and writes updates back', async () => {
+  const { dom, useUIStore } = await loadUIStore({
+    sourceCodeAutoApply: false,
+  });
+
+  assert.equal(useUIStore.getState().sourceCodeAutoApply, false);
+
+  useUIStore.getState().setSourceCodeAutoApply(true);
+
+  const raw = dom.window.localStorage.getItem('urdf-studio-ui');
+  assert.ok(raw, 'persisted ui store payload should be written');
+
+  const persisted = JSON.parse(raw) as {
+    state?: {
+      sourceCodeAutoApply?: boolean;
+    };
+  };
+
+  assert.equal(persisted.state?.sourceCodeAutoApply, true);
 
   dom.window.close();
 });

@@ -26,6 +26,9 @@ export type RenderRobotMetadataSnapshot = {
   stageSourcePath: string | null;
   generatedAtMs: number;
   source: string;
+  stale?: boolean;
+  errorFlags?: string[];
+  truthLoadError?: string | null;
   linkParentPairs: Array<[string, string | null]>;
   jointCatalogEntries: RenderRobotJointCatalogEntry[];
   linkDynamicsEntries: RenderRobotLinkDynamicsEntry[];
@@ -41,6 +44,9 @@ export function normalizeRenderRobotMetadataSnapshot(raw: any): RenderRobotMetad
 export function getRenderRobotMetadataSnapshot(
   renderInterface: any,
   stageSourcePath?: string | null,
+  options?: {
+    strictErrors?: boolean;
+  },
 ): RenderRobotMetadataSnapshot | null;
 
 export function warmupRenderRobotMetadataSnapshot(

@@ -48,16 +48,16 @@ function createFakeUsdRuntime(options: { disableRootLayerExport?: boolean } = {}
             GetRootLayer: options.disableRootLayerExport
               ? undefined
               : () => ({
-                Export: (...args: unknown[]) => {
-                  rootLayerExportCalls.push(args);
-                  const [targetPath] = args as [string];
-                  const nextData = new Uint8Array(sourceData.length + 12);
-                  nextData.set(new TextEncoder().encode('PXR-USDCROOT'));
-                  nextData.set(sourceData, 12);
-                  files.set(targetPath, nextData);
-                  return true;
-                },
-              }),
+                  Export: (...args: unknown[]) => {
+                    rootLayerExportCalls.push(args);
+                    const [targetPath] = args as [string];
+                    const nextData = new Uint8Array(sourceData.length + 12);
+                    nextData.set(new TextEncoder().encode('PXR-USDCROOT'));
+                    nextData.set(sourceData, 12);
+                    files.set(targetPath, nextData);
+                    return true;
+                  },
+                }),
             delete: () => {},
           };
         },
@@ -74,7 +74,8 @@ function createFakeUsdRuntime(options: { disableRootLayerExport?: boolean } = {}
 
 test('convertUsdArchiveFilesToBinary prefers root layer crate export and leaves non-USD assets untouched', async () => {
   const previousDocument = globalThis.document;
-  (globalThis as typeof globalThis & { document?: object }).document = {};
+  (globalThis as typeof globalThis & { document?: Document & object }).document =
+    {} as unknown as Document & object;
 
   try {
     const usdLayer = new Blob(['#usda 1.0\n'], { type: 'text/plain;charset=utf-8' });
@@ -86,13 +87,13 @@ test('convertUsdArchiveFilesToBinary prefers root layer crate export and leaves 
     const progress: string[] = [];
     const { runtime, rootLayerExportCalls, stageExportCalls } = createFakeUsdRuntime();
 
-    const converted = await (convertUsdArchiveFilesToBinary as typeof convertUsdArchiveFilesToBinary & ((...args: any[]) => Promise<Map<string, Blob>>))(
-      archiveFiles,
-      {
-        onProgress: ({ filePath }) => progress.push(filePath),
-        loadRuntime: async () => runtime,
-      } as any,
-    );
+    const converted = await (
+      convertUsdArchiveFilesToBinary as typeof convertUsdArchiveFilesToBinary &
+        ((...args: any[]) => Promise<Map<string, Blob>>)
+    )(archiveFiles, {
+      onProgress: ({ filePath }) => progress.push(filePath),
+      loadRuntime: async () => runtime,
+    } as any);
 
     assert.deepEqual(progress, ['robot/usd/robot.usd']);
     assert.equal(await converted.get('robot/usd/robot.usd')?.text(), 'PXR-USDCROOT#usda 1.0\n');
@@ -113,23 +114,22 @@ test('convertUsdArchiveFilesToBinary prefers root layer crate export and leaves 
 
 test('convertUsdArchiveFilesToBinary falls back to stage export when root layer export is unavailable', async () => {
   const previousDocument = globalThis.document;
-  (globalThis as typeof globalThis & { document?: object }).document = {};
+  (globalThis as typeof globalThis & { document?: Document & object }).document =
+    {} as unknown as Document & object;
 
   try {
     const usdLayer = new Blob(['#usda 1.0\n'], { type: 'text/plain;charset=utf-8' });
-    const archiveFiles = new Map<string, Blob>([
-      ['robot/usd/robot.usd', usdLayer],
-    ]);
+    const archiveFiles = new Map<string, Blob>([['robot/usd/robot.usd', usdLayer]]);
     const { runtime, rootLayerExportCalls, stageExportCalls } = createFakeUsdRuntime({
       disableRootLayerExport: true,
     });
 
-    const converted = await (convertUsdArchiveFilesToBinary as typeof convertUsdArchiveFilesToBinary & ((...args: any[]) => Promise<Map<string, Blob>>))(
-      archiveFiles,
-      {
-        loadRuntime: async () => runtime,
-      } as any,
-    );
+    const converted = await (
+      convertUsdArchiveFilesToBinary as typeof convertUsdArchiveFilesToBinary &
+        ((...args: any[]) => Promise<Map<string, Blob>>)
+    )(archiveFiles, {
+      loadRuntime: async () => runtime,
+    } as any);
 
     assert.equal(await converted.get('robot/usd/robot.usd')?.text(), 'PXR-USDCFLAT#usda 1.0\n');
     assert.equal(rootLayerExportCalls.length, 0);

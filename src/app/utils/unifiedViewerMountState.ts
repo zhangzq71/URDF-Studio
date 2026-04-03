@@ -1,4 +1,8 @@
-export type UnifiedViewerMode = 'skeleton' | 'detail' | 'hardware';
+import { normalizeMergedAppMode } from '@/shared/utils/appMode';
+import type { AppMode } from '@/types';
+import { resolveUnifiedViewerSceneMode } from './unifiedViewerSceneMode';
+
+export type UnifiedViewerMode = AppMode;
 
 export interface UnifiedViewerMountState {
   viewerMounted: boolean;
@@ -8,13 +12,42 @@ export interface UnifiedViewerMountState {
 export interface UnifiedViewerMountStateInput {
   mode: UnifiedViewerMode;
   isPreviewing: boolean;
+  forceViewerSession?: boolean;
+}
+
+export interface UnifiedViewerSessionState<TPreview> {
+  activePreview: TPreview | undefined;
+  isPreviewing: boolean;
+  isViewerMode: boolean;
+  viewerSceneMode: 'editor';
 }
 
 export function isUnifiedViewerMode({
   mode,
   isPreviewing,
+  forceViewerSession = false,
 }: UnifiedViewerMountStateInput): boolean {
-  return isPreviewing || mode === 'detail' || mode === 'hardware';
+  return forceViewerSession || isPreviewing || normalizeMergedAppMode(mode) === 'editor';
+}
+
+export function resolveUnifiedViewerSessionState<TPreview>({
+  mode,
+  filePreview,
+  forceViewerSession = false,
+}: {
+  mode: UnifiedViewerMode;
+  filePreview?: TPreview;
+  forceViewerSession?: boolean;
+}): UnifiedViewerSessionState<TPreview> {
+  const activePreview = filePreview;
+  const isPreviewing = Boolean(activePreview);
+
+  return {
+    activePreview,
+    isPreviewing,
+    isViewerMode: isUnifiedViewerMode({ mode, isPreviewing, forceViewerSession }),
+    viewerSceneMode: resolveUnifiedViewerSceneMode(mode),
+  };
 }
 
 export function createInitialUnifiedViewerMountState(

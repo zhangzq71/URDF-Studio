@@ -1,24 +1,37 @@
 /**
  * @typedef {import('./types').HeaderViewConfig} HeaderViewConfig
- * @typedef {'showToolbar' | 'showOptionsPanel' | 'showSkeletonOptionsPanel' | 'showJointPanel'} ViewConfigKey
+ * @typedef {'showToolbar' | 'showOptionsPanel' | 'showVisualizerOptionsPanel' | 'showJointPanel'} ViewConfigKey
  */
 
 /**
- * View menu entries are treated as "show/open" actions.
- * Floating panels can still be closed from their own close buttons, which avoids
- * the current UX trap where clicking an already-checked label immediately hides it.
+ * Toggle visibility of a view panel.
  *
  * @param {HeaderViewConfig} current
  * @param {ViewConfigKey} key
  * @returns {HeaderViewConfig}
  */
-export function ensureViewPanelVisible(current, key) {
-  if (current[key]) {
-    return current;
-  }
+export function toggleViewPanel(current, key) {
+  return {
+    ...current,
+    [key]: !current[key],
+  };
+}
+
+/**
+ * In the merged-mode workspace, view options are no longer scene-specific.
+ * Toggling the options entry should update both the viewer and visualizer
+ * option panels so the user never needs to think about which runtime owns
+ * the current canvas.
+ *
+ * @param {HeaderViewConfig} current
+ * @returns {HeaderViewConfig}
+ */
+export function toggleOptionsPanels(current) {
+  const nextVisible = !(current.showOptionsPanel || current.showVisualizerOptionsPanel);
 
   return {
     ...current,
-    [key]: true,
+    showOptionsPanel: nextVisible,
+    showVisualizerOptionsPanel: nextVisible,
   };
 }

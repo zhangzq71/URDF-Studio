@@ -29,20 +29,50 @@ test('usdStageOpenPreparation transfer serialization preserves preload blobs acr
 
   const serialized = await serializePreparedUsdStageOpenDataForWorker(payload);
 
+  assert.equal(serialized.payload.preloadFiles[0]?.blob, null);
   assert.equal(serialized.payload.preloadFiles[0]?.bytes, null);
   assert.equal(serialized.payload.preloadFiles[1]?.mimeType, 'application/octet-stream');
-  assert.equal(serialized.transferables.length, 1);
+  assert.equal(serialized.payload.preloadFiles[1]?.blob instanceof Blob, true);
+  assert.equal(serialized.payload.preloadFiles[1]?.bytes, null);
+  assert.equal(serialized.transferables.length, 0);
 
   const hydrated = hydratePreparedUsdStageOpenDataFromWorker(serialized.payload);
 
   assert.equal(hydrated.preloadFiles[0]?.blob, null);
   assert.equal(hydrated.preloadFiles[0]?.bytes, null);
   assert.equal(hydrated.preloadFiles[0]?.error, 'missing-texture');
+  assert.equal(hydrated.preloadFiles[1]?.blob instanceof Blob, true);
+  assert.equal(hydrated.preloadFiles[1]?.bytes, null);
   assert.deepEqual(
-    Array.from(new Uint8Array(hydrated.preloadFiles[1]!.bytes!)),
+    Array.from(new Uint8Array(await hydrated.preloadFiles[1]!.blob!.arrayBuffer())),
     [80, 88, 82, 45],
   );
-  assert.equal(hydrated.preloadFiles[1]?.blob, null);
   assert.deepEqual(hydrated.criticalDependencyPaths, payload.criticalDependencyPaths);
   assert.equal(hydrated.stageSourcePath, payload.stageSourcePath);
+});
+
+test('usdStageOpenPreparation transfer serialization keeps existing binary payloads transferable', async () => {
+  const payload: PreparedUsdStageOpenData = {
+    stageSourcePath: '/robots/go2/usd/go2.usd',
+    criticalDependencyPaths: [],
+    preloadFiles: [{
+      path: '/robots/go2/usd/go2.usd',
+      blob: null,
+      bytes: new Uint8Array([80, 88, 82, 45]),
+      mimeType: 'application/octet-stream',
+      error: null,
+    }],
+  };
+
+  const serialized = await serializePreparedUsdStageOpenDataForWorker(payload);
+
+  assert.equal(serialized.payload.preloadFiles[0]?.blob, null);
+  assert.equal(serialized.transferables.length, 1);
+
+  const hydrated = hydratePreparedUsdStageOpenDataFromWorker(serialized.payload);
+  assert.equal(hydrated.preloadFiles[0]?.blob, null);
+  assert.deepEqual(
+    Array.from(new Uint8Array(hydrated.preloadFiles[0]!.bytes!)),
+    [80, 88, 82, 45],
+  );
 });

@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { Color, FrontSide, LinearSRGBColorSpace, MeshPhysicalMaterial, RGBAFormat, RepeatWrapping, SRGBColorSpace, Vector2 } from 'three';
 import * as Shared from './shared.js';
+import { disposeTexturesFromMaterial } from '../../../../../shared/utils/three/dispose.ts';
 import { getDefaultMaterial, setDefaultMaterial } from './default-material-state.js';
 import { applyUnifiedHydraMaterialDefaults, createUnifiedHydraPhysicalMaterial } from './material-defaults.js';
 const { buildProtoPrimPathCandidates, clamp01, createMatrixFromXformOp, debugInstancer, debugMaterials, debugMeshes, debugPrims, debugTextures, defaultGrayComponent, disableMaterials, disableTextures, extractPrimPathFromMaterialBindingWarning, extractReferencePrimTargets, extractScopeBodyText, extractUsdAssetReferencesFromLayerText, getActiveMaterialBindingWarningOwner, getAngleInRadians, getCollisionGeometryTypeFromUrdfElement, getExpectedPrimTypesForCollisionProto, getExpectedPrimTypesForProtoType, getMatrixMaxElementDelta, getPathBasename, getPathWithoutRoot, getRawConsoleMethod, getRootPathFromPrimPath, getSafePrimTypeName, hasNonZeroTranslation, hydraCallbackErrorCounts, installMaterialBindingApiWarningInterceptor, isIdentityQuaternion, isLikelyDefaultGrayMaterial, isLikelyInverseTransform, isMaterialBindingApiWarningMessage, isMatrixApproximatelyIdentity, isNonZero, isPotentiallyLargeBaseAssetPath, logHydraCallbackError, materialBindingRepairMaxLayerTextLength, materialBindingWarningHandlers, maxHydraCallbackErrorLogsPerMethod, nearlyEqual, normalizeHydraPath, normalizeUsdPathToken, parseGuideCollisionReferencesFromLayerText, parseProtoMeshIdentifier, parseUrdfTruthFromText, parseVector3Text, parseXformOpFallbacksFromLayerText, rawConsoleError, rawConsoleWarn, registerMaterialBindingApiWarningHandler, remapRootPathIfNeeded, resolveUrdfTruthFileNameForStagePath, resolveUsdAssetPath, setActiveMaterialBindingWarningOwner, shouldAllowLargeBaseAssetScan, stringifyConsoleArgs, toArrayLike, toColorArray, toFiniteNumber, toFiniteQuaternionWxyzTuple, toFiniteVector2Tuple, toFiniteVector3Tuple, toMatrixFromUrdfOrigin, toQuaternionWxyzFromRpy, transformEpsilon, wrapHydraCallbackObject } = Shared;
@@ -53,6 +54,7 @@ class HydraMaterial {
         this._id = id;
         this._nodes = {};
         this._interface = hydraInterface;
+        this._ownedMaterial = null;
         if (!getDefaultMaterial()) {
             setDefaultMaterial(applyUnifiedHydraMaterialDefaults(new MeshPhysicalMaterial({
                 side: FrontSide,
@@ -68,6 +70,25 @@ class HydraMaterial {
         }
         /** @type {MeshPhysicalMaterial} */
         this._material = getDefaultMaterial();
+    }
+    prepareOwnedMaterial(name) {
+        if (this._ownedMaterial instanceof MeshPhysicalMaterial) {
+            disposeTexturesFromMaterial(this._ownedMaterial);
+            const resetTemplate = createUnifiedHydraPhysicalMaterial({
+                name,
+            });
+            this._ownedMaterial.copy(resetTemplate);
+            this._ownedMaterial.name = name;
+            this._ownedMaterial.needsUpdate = true;
+            resetTemplate.dispose();
+        }
+        else {
+            this._ownedMaterial = createUnifiedHydraPhysicalMaterial({
+                name,
+            });
+        }
+        this._material = this._ownedMaterial;
+        return this._material;
     }
     static getNodePreviewSurfaceScore(node) {
         if (!node || typeof node !== 'object')
@@ -322,10 +343,20 @@ class HydraMaterial {
         if ((typeof HTMLImageElement !== 'undefined' && image instanceof HTMLImageElement) ||
             (typeof HTMLCanvasElement !== 'undefined' && image instanceof HTMLCanvasElement) ||
             (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap)) {
-            const canvas = document.createElementNS('http://www.w3.org/1999/xhtml', 'canvas');
+            const canvas = typeof document !== 'undefined'
+                ? document.createElementNS('http://www.w3.org/1999/xhtml', 'canvas')
+                : (typeof OffscreenCanvas !== 'undefined'
+                    ? new OffscreenCanvas(image.width, image.height)
+                    : null);
+            if (!canvas) {
+                return image;
+            }
             canvas.width = image.width;
             canvas.height = image.height;
             const context = canvas.getContext('2d');
+            if (!context) {
+                return image;
+            }
             context.drawImage(image, 0, 0, image.width, image.height);
             const imageData = context.getImageData(0, 0, image.width, image.height);
             const data = imageData.data;
@@ -482,13 +513,12 @@ class HydraMaterial {
         // TODO: Ideally, we don't recreate the material on every update.
         // Creating a new one requires to also update any meshes that reference it. So we're relying on the C++ side to
         // call this before also calling `setMaterial` on the affected meshes.
-        this._material = createUnifiedHydraPhysicalMaterial();
         // split _id
         let _name = this._id;
         let lastSlash = _name.lastIndexOf('/');
         if (lastSlash >= 0)
             _name = _name.substring(lastSlash + 1);
-        this._material.name = _name;
+        this.prepareOwnedMaterial(_name);
         // Assign textures
         const hasTextureInput = (candidateKeys) => candidateKeys.some((key) => !!(mainMaterialNode[key] && mainMaterialNode[key].nodeIn));
         const haveRoughnessMap = hasTextureInput(['roughness', 'reflection_roughness']);

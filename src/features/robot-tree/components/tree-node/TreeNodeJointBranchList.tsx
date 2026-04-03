@@ -23,7 +23,6 @@ interface TreeNodeJointBranchListProps {
   renameInputRef: RefObject<HTMLInputElement | null>;
   jointRowRefs: RefObject<Record<string, HTMLDivElement | null>>;
   jointRowIndentPx: number;
-  isSkeleton: boolean;
   t: TranslationKeys;
   readOnly: boolean;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
@@ -48,7 +47,6 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
   renameInputRef,
   jointRowRefs,
   jointRowIndentPx,
-  isSkeleton,
   t,
   readOnly,
   onSelect,
@@ -65,9 +63,11 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
   return (
     <>
       {childJoints.map((joint) => {
+        const isLinkedChildHovered = hoveredSelection.type === 'link' && hoveredSelection.id === joint.childLinkId;
+        const isLinkedChildAttention = attentionSelection.type === 'link' && attentionSelection.id === joint.childLinkId;
         const isJointSelected = robotSelection.type === 'joint' && robotSelection.id === joint.id;
-        const isJointHovered = matchesSelection(hoveredSelection, { type: 'joint', id: joint.id });
-        const isJointAttentionHighlighted = matchesSelection(attentionSelection, { type: 'joint', id: joint.id });
+        const isJointHovered = matchesSelection(hoveredSelection, { type: 'joint', id: joint.id }) || isLinkedChildHovered;
+        const isJointAttentionHighlighted = matchesSelection(attentionSelection, { type: 'joint', id: joint.id }) || isLinkedChildAttention;
         const isEditingJoint = editingTarget?.type === 'joint' && editingTarget.id === joint.id;
         const jointTypeLabel = getJointTypeLabel(joint.type, t);
         const JointTypeIcon = getJointTypeIcon(joint.type);
@@ -147,7 +147,7 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
                 </div>
               )}
 
-              {isSkeleton && !readOnly && (
+              {!readOnly && (
                 <div
                   className={`flex items-center gap-0.5 ml-1 ${
                     isJointSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'

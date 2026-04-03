@@ -1,4 +1,5 @@
 let classicScriptLoadState = new WeakMap<Document, Map<string, Promise<void>>>();
+let workerClassicScriptLoadState = new Map<string, Promise<void>>();
 
 function resolveDocument(targetDocument?: Document): Document {
   const resolvedDocument = targetDocument ?? globalThis.document;
@@ -7,6 +8,36 @@ function resolveDocument(targetDocument?: Document): Document {
   }
 
   return resolvedDocument;
+}
+
+function resolveGlobalScriptUrl(src: string): string {
+  const baseHref = String(globalThis.location?.href || 'http://localhost/');
+  return new URL(src, baseHref).href;
+}
+
+async function ensureClassicScriptLoadedInWorker(src: string): Promise<void> {
+  const resolvedSrc = resolveGlobalScriptUrl(src);
+  const existingPromise = workerClassicScriptLoadState.get(resolvedSrc);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const loadPromise = (async () => {
+    const response = await fetch(resolvedSrc);
+    if (!response.ok) {
+      throw new Error(`Failed to load USD bindings script: ${resolvedSrc}`);
+    }
+
+    const scriptSource = await response.text();
+    const globalEval = globalThis.eval.bind(globalThis) as (code: string) => unknown;
+    globalEval(`${scriptSource}\n//# sourceURL=${resolvedSrc}`);
+  })().catch((error) => {
+    workerClassicScriptLoadState.delete(resolvedSrc);
+    throw error;
+  });
+
+  workerClassicScriptLoadState.set(resolvedSrc, loadPromise);
+  return loadPromise;
 }
 
 function getDocumentLoadState(targetDocument: Document): Map<string, Promise<void>> {
@@ -48,6 +79,10 @@ export function buildUsdBindingsScriptUrl(cacheKey: string): string {
 }
 
 export function ensureClassicScriptLoaded(src: string, targetDocument?: Document): Promise<void> {
+  if (!targetDocument && typeof globalThis.document === 'undefined') {
+    return ensureClassicScriptLoadedInWorker(src);
+  }
+
   const resolvedDocument = resolveDocument(targetDocument);
   const documentLoadState = getDocumentLoadState(resolvedDocument);
   const existingPromise = documentLoadState.get(src);
@@ -65,7 +100,8 @@ export function ensureClassicScriptLoaded(src: string, targetDocument?: Document
   const scriptElement = existingScript ?? resolvedDocument.createElement('script');
   if (!existingScript) {
     scriptElement.src = src;
-    const appendTarget = resolvedDocument.head ?? resolvedDocument.documentElement ?? resolvedDocument.body;
+    const appendTarget =
+      resolvedDocument.head ?? resolvedDocument.documentElement ?? resolvedDocument.body;
     appendTarget?.appendChild(scriptElement);
   }
 
@@ -98,4 +134,5 @@ export function ensureClassicScriptLoaded(src: string, targetDocument?: Document
 
 export function resetClassicScriptLoaderForTests(): void {
   classicScriptLoadState = new WeakMap<Document, Map<string, Promise<void>>>();
+  workerClassicScriptLoadState = new Map<string, Promise<void>>();
 }

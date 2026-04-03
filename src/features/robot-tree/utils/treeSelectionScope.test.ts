@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Selection } from '@/store/selectionStore';
+import { DEFAULT_JOINT, JointType, type UrdfJoint } from '@/types';
 
 import {
   EMPTY_TREE_SELECTION,
@@ -10,20 +11,24 @@ import {
   resolveDirectChildBranchLinkId,
 } from './treeSelectionScope.ts';
 
-const joints = {
+const joints: Record<string, UrdfJoint> = {
   elbow: {
+    ...DEFAULT_JOINT,
     id: 'elbow',
     name: 'elbow',
+    type: JointType.REVOLUTE,
     parentLinkId: 'shoulder',
     childLinkId: 'forearm',
   },
   wrist: {
+    ...DEFAULT_JOINT,
     id: 'wrist',
     name: 'wrist',
+    type: JointType.REVOLUTE,
     parentLinkId: 'forearm',
     childLinkId: 'gripper',
   },
-} as const;
+};
 
 const parentLinkByChild = buildParentLinkByChild(joints);
 

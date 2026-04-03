@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const INTERACTION_RECOVERY_DELAY_MS = 180;
 export const RESTING_DPR_CAP = 1.75;
+// Keep the interaction DPR aligned with the resting cap so helper primitives
+// like the ground grid do not visibly change thickness when orbiting stops.
+// Callers can still opt into a lower interaction cap explicitly.
 export const INTERACTION_DPR_CAP = RESTING_DPR_CAP;
+
+const WorkspaceCanvasInteractionStateContext = React.createContext(false);
 
 interface ResolveCanvasDprOptions {
   devicePixelRatio: number;
@@ -17,18 +22,15 @@ export function resolveCanvasDpr({
   restingCap = RESTING_DPR_CAP,
   interactionCap = INTERACTION_DPR_CAP,
 }: ResolveCanvasDprOptions) {
-  const safeDevicePixelRatio = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
-    ? devicePixelRatio
-    : 1;
+  const safeDevicePixelRatio =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const safeRestingCap = restingCap > 0 ? restingCap : RESTING_DPR_CAP;
   const safeInteractionCap = interactionCap > 0 ? interactionCap : INTERACTION_DPR_CAP;
   const activeCap = isInteracting ? Math.min(safeRestingCap, safeInteractionCap) : safeRestingCap;
   return Math.min(safeDevicePixelRatio, activeCap);
 }
 
-export function useAdaptiveInteractionQuality(
-  recoveryDelayMs = INTERACTION_RECOVERY_DELAY_MS,
-) {
+export function useAdaptiveInteractionQuality(recoveryDelayMs = INTERACTION_RECOVERY_DELAY_MS) {
   const [isInteracting, setIsInteracting] = useState(false);
   const interactionTimeoutRef = useRef<number | null>(null);
 
@@ -90,4 +92,22 @@ export function useAdaptiveInteractionQuality(
     endInteraction,
     pulseInteraction,
   };
+}
+
+export function WorkspaceCanvasInteractionStateProvider({
+  children,
+  isInteracting,
+}: {
+  children: React.ReactNode;
+  isInteracting: boolean;
+}) {
+  return React.createElement(
+    WorkspaceCanvasInteractionStateContext.Provider,
+    { value: isInteracting },
+    children,
+  );
+}
+
+export function useWorkspaceCanvasInteractionState(): boolean {
+  return React.useContext(WorkspaceCanvasInteractionStateContext);
 }

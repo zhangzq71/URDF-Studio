@@ -1,6 +1,15 @@
-import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  FileCode,
+  Plus,
+  Shapes,
+  Shield,
+} from 'lucide-react';
 import { translations } from '@/shared/i18n';
-import type { AppMode, AssemblyState, RobotData, RobotState } from '@/types';
+import type { AppMode, AssemblyState, RobotState } from '@/types';
 import { AssemblyTreeView } from '../AssemblyTreeView';
 import { TreeNode } from '../TreeNode';
 
@@ -15,22 +24,27 @@ interface TreeEditorStructureSectionProps {
   currentFileName?: string;
   mode: AppMode;
   assemblyState?: AssemblyState | null;
-  robot: RobotData;
+  robot: RobotState;
   treeRootLinkIds: string[];
   childJointsByParent: Record<string, RobotState['joints'][string][]>;
-  parentLinkByChild: Record<string, string>;
+  selectionBranchLinkIds: Set<string>;
   t: TreeEditorTranslations;
   onToggleOpen: () => void;
   onToggleGeometryDetails: () => void;
   onAddChildFromSelection: () => void;
   onToggleVisuals: () => void;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
-  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+  ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
   onDelete: (id: string) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onRenameAssembly?: (name: string) => void;
   onRemoveComponent?: (id: string) => void;
   onRemoveBridge?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
@@ -51,7 +65,7 @@ export function TreeEditorStructureSection({
   robot,
   treeRootLinkIds,
   childJointsByParent,
-  parentLinkByChild,
+  selectionBranchLinkIds,
   t,
   onToggleOpen,
   onToggleGeometryDetails,
@@ -64,6 +78,7 @@ export function TreeEditorStructureSection({
   onAddCollisionBody,
   onDelete,
   onUpdate,
+  onRenameAssembly,
   onRemoveComponent,
   onRemoveBridge,
   onRenameComponent,
@@ -71,8 +86,13 @@ export function TreeEditorStructureSection({
   onToggleComponentVisibility,
   isReadOnly = false,
 }: TreeEditorStructureSectionProps) {
+  const useStoreDrivenTree = !isAssemblyView && !isReadOnly;
+
   return (
-    <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
+    <div
+      className="flex flex-col min-h-0 transition-all flex-1"
+      style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}
+    >
       <div
         className="flex items-center justify-between px-2.5 py-1.5 bg-element-bg dark:bg-element-bg cursor-pointer select-none"
         onClick={onToggleOpen}
@@ -83,7 +103,7 @@ export function TreeEditorStructureSection({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="shrink-0 text-[11px] leading-none font-semibold text-text-secondary uppercase tracking-[0.14em]">
+          <span className="shrink-0 text-[11px] leading-none font-semibold text-text-secondary tracking-[0.02em]">
             {isAssemblyView ? t.assemblyTree : t.structureTree}
           </span>
           {isReadOnly && (
@@ -105,7 +125,7 @@ export function TreeEditorStructureSection({
                 value={currentFileName ?? ''}
                 aria-label={currentFileName ?? ''}
                 spellCheck={false}
-                className="min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
+                className="allow-text-selection min-w-0 flex-1 bg-transparent text-[9px] leading-none font-medium text-text-secondary outline-none dark:text-text-tertiary cursor-text"
                 onFocus={(event) => event.currentTarget.select()}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -130,13 +150,15 @@ export function TreeEditorStructureSection({
               onToggleGeometryDetails();
             }}
             title={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
-            aria-label={structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails}
+            aria-label={
+              structureTreeShowGeometryDetails ? t.hideGeometryDetails : t.showGeometryDetails
+            }
           >
             <Shapes size={11} />
             <Shield size={11} />
           </button>
 
-          {mode === 'skeleton' && !isAssemblyView && !isReadOnly && (
+          {!isAssemblyView && !isReadOnly && (
             <button
               className="p-0.5 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
               onClick={(event) => {
@@ -179,6 +201,7 @@ export function TreeEditorStructureSection({
                   onAddCollisionBody={onAddCollisionBody}
                   onDelete={onDelete}
                   onUpdate={onUpdate}
+                  onRenameAssembly={onRenameAssembly}
                   onRemoveComponent={onRemoveComponent}
                   onRemoveBridge={onRemoveBridge}
                   onRenameComponent={onRenameComponent}
@@ -195,10 +218,12 @@ export function TreeEditorStructureSection({
                   >
                     <TreeNode
                       linkId={treeRootLinkId}
-                      robot={robot}
+                      robot={useStoreDrivenTree ? undefined : robot}
                       showGeometryDetailsByDefault={structureTreeShowGeometryDetails}
-                      childJointsByParent={childJointsByParent}
-                      parentLinkByChild={parentLinkByChild}
+                      childJointsByParent={useStoreDrivenTree ? undefined : childJointsByParent}
+                      selectionBranchLinkIds={
+                        useStoreDrivenTree ? undefined : selectionBranchLinkIds
+                      }
                       onSelect={onSelect}
                       onSelectGeometry={onSelectGeometry}
                       onFocus={onFocus}
@@ -209,6 +234,7 @@ export function TreeEditorStructureSection({
                       mode={mode}
                       t={t}
                       readOnly={isReadOnly}
+                      storeDriven={useStoreDrivenTree}
                     />
                   </div>
                 ))

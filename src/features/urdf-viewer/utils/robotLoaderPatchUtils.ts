@@ -37,7 +37,7 @@ export function clearGroupChildren(group: THREE.Object3D): void {
   }
 }
 
-function disposeReplacedMaterials(
+export function disposeReplacedMaterials(
   material: THREE.Material | THREE.Material[] | undefined,
   disposedMaterials: Set<THREE.Material>,
   disposeTextures: boolean,

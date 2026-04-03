@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createMatteMaterial } from '@/shared/utils/materialFactory';
+import { parseThreeColorWithOpacity } from '@/core/utils/color';
 
 /**
  * Material Cache - Prevents shader recompilation on every render
@@ -8,7 +9,6 @@ import { createMatteMaterial } from '@/shared/utils/materialFactory';
 const MAX_MATERIAL_CACHE_SIZE = 512;
 
 interface MaterialOptions {
-  isSkeleton: boolean;
   finalColor: string;
   matOpacity: number;
   matWireframe: boolean;
@@ -25,7 +25,6 @@ interface MaterialCacheEntry {
 const materialCache = new Map<string, MaterialCacheEntry>();
 
 export function buildMaterialCacheKey({
-  isSkeleton,
   finalColor,
   matOpacity,
   matWireframe,
@@ -33,7 +32,7 @@ export function buildMaterialCacheKey({
   emissiveColor,
   emissiveIntensity,
 }: MaterialOptions): string {
-  return `${isSkeleton}-${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
+  return `${finalColor}-${matOpacity}-${matWireframe}-${isCollision}-${emissiveColor}-${emissiveIntensity}`;
 }
 
 function touchMaterialCacheEntry(cacheKey: string, entry: MaterialCacheEntry): void {
@@ -61,7 +60,6 @@ function disposeUnusedCachedMaterials(): void {
 }
 
 function createCachedMaterial({
-  isSkeleton,
   finalColor,
   matOpacity,
   matWireframe,
@@ -69,25 +67,18 @@ function createCachedMaterial({
   emissiveColor,
   emissiveIntensity,
 }: MaterialOptions): THREE.Material {
-  if (isSkeleton) {
-    return new THREE.MeshBasicMaterial({
-      color: finalColor,
-      transparent: true,
-      opacity: matOpacity,
-      wireframe: matWireframe,
-      side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
-      polygonOffset: isCollision,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-      toneMapped: false,
-    });
-  }
+  const parsedColor = parseThreeColorWithOpacity(finalColor);
+  const resolvedColor = parsedColor?.color ?? new THREE.Color(finalColor);
+  const authoredOpacity = parsedColor?.opacity ?? 1;
+  const resolvedOpacity = Math.max(0, Math.min(1, authoredOpacity * matOpacity));
 
   const matteMaterial = createMatteMaterial({
-    color: finalColor,
-    opacity: matOpacity,
-    transparent: isCollision || matOpacity < 1,
-    side: isCollision ? THREE.FrontSide : THREE.DoubleSide,
+    color: resolvedColor,
+    opacity: resolvedOpacity,
+    transparent: isCollision || resolvedOpacity < 1,
+    // Collision overlays must stay raycastable even when imported mesh winding is
+    // inconsistent, which is common in ROS/STL assets such as Unitree G1.
+    side: THREE.DoubleSide,
     preserveExactColor: true,
   });
   matteMaterial.wireframe = matWireframe;

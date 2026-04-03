@@ -19,4 +19,6 @@ test('file-io utils barrel exposes key runtime helpers', async () => {
   assert.equal(typeof moduleUnderTest.createImportPathCollisionMap, 'function');
   assert.equal(typeof moduleUnderTest.remapImportedPath, 'function');
   assert.equal(typeof moduleUnderTest.exportRobotToUsd, 'function');
+  assert.equal(typeof moduleUnderTest.exportRobotToUsdWithWorker, 'function');
+  assert.equal(typeof moduleUnderTest.getUsdExportWorkerUnsupportedMeshPaths, 'function');
 });

@@ -26,6 +26,7 @@ import {
   getUsdDescriptorSemanticChildLinkName,
   resolveUsdDescriptorTargetLinkPath,
 } from './usdDescriptorLinkResolution';
+import { shouldUseUsdCollisionVisualProxy } from './usdCollisionVisualProxy';
 import { resolveUsdPrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry';
 
 type MeshPrimitiveCounts = Record<string, number | undefined>;
@@ -57,7 +58,10 @@ export type UsdViewerRobotDataResolution = ViewerRobotDataResolution;
 export type UsdViewerRobotSceneSnapshot = RobotSceneSnapshot;
 
 function normalizeUsdPath(path: string | null | undefined): string {
-  const normalized = String(path || '').trim().replace(/[<>]/g, '').replace(/\\/g, '/');
+  const normalized = String(path || '')
+    .trim()
+    .replace(/[<>]/g, '')
+    .replace(/\\/g, '/');
   if (!normalized) return '';
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
@@ -70,7 +74,9 @@ function getPathBasename(path: string | null | undefined): string {
 }
 
 function normalizeDescriptorSectionName(sectionName: string | null | undefined): string {
-  const normalized = String(sectionName || '').trim().toLowerCase();
+  const normalized = String(sectionName || '')
+    .trim()
+    .toLowerCase();
   if (normalized === 'visual') return 'visuals';
   if (normalized === 'collision' || normalized === 'collider' || normalized === 'colliders') {
     return 'collisions';
@@ -79,11 +85,7 @@ function normalizeDescriptorSectionName(sectionName: string | null | undefined):
 }
 
 function getDescriptorMaterialId(descriptor: MeshDescriptor): string {
-  return normalizeUsdPath(
-    descriptor.materialId
-    || descriptor.geometry?.materialId
-    || '',
-  );
+  return normalizeUsdPath(descriptor.materialId || descriptor.geometry?.materialId || '');
 }
 
 function colorArrayToHex(
@@ -92,7 +94,9 @@ function colorArrayToHex(
 ): string | null {
   const source = Array.isArray(value)
     ? value
-    : (value && typeof value.length === 'number' ? Array.from(value) : null);
+    : value && typeof value.length === 'number'
+      ? Array.from(value)
+      : null;
   if (!source || source.length < 3) {
     return null;
   }
@@ -104,30 +108,24 @@ function colorArrayToHex(
     return null;
   }
 
-  const to255 = (channel: number) => (
-    Math.abs(channel) <= 1
-      ? channel * 255
-      : channel
-  );
-  const toHex = (channel: number) => Math.max(0, Math.min(255, Math.round(channel)))
-    .toString(16)
-    .padStart(2, '0');
-  const linearColor = Math.abs(r) <= 1 && Math.abs(g) <= 1 && Math.abs(b) <= 1
-    ? new THREE.Color(
-      Math.max(0, Math.min(1, r)),
-      Math.max(0, Math.min(1, g)),
-      Math.max(0, Math.min(1, b)),
-    )
-    : null;
+  const to255 = (channel: number) => (Math.abs(channel) <= 1 ? channel * 255 : channel);
+  const toHex = (channel: number) =>
+    Math.max(0, Math.min(255, Math.round(channel)))
+      .toString(16)
+      .padStart(2, '0');
+  const linearColor =
+    Math.abs(r) <= 1 && Math.abs(g) <= 1 && Math.abs(b) <= 1
+      ? new THREE.Color(
+          Math.max(0, Math.min(1, r)),
+          Math.max(0, Math.min(1, g)),
+          Math.max(0, Math.min(1, b)),
+        )
+      : null;
 
   const a = opacityOverride ?? (source.length >= 4 ? Number(source[3]) : null);
   const rgb = linearColor
     ? [linearColor.getHexString()]
-    : [
-        toHex(to255(r)),
-        toHex(to255(g)),
-        toHex(to255(b)),
-      ];
+    : [toHex(to255(r)), toHex(to255(g)), toHex(to255(b))];
 
   if (a !== null && Number.isFinite(a) && a < 0.999) {
     rgb.push(toHex(to255(Number(a))));
@@ -158,14 +156,18 @@ function hasMaterialRecordContent(material: MaterialRecord | null | undefined): 
   });
 }
 
-function resolveSnapshotMaterialColorHex(material: MaterialRecord | null | undefined): string | null {
+function resolveSnapshotMaterialColorHex(
+  material: MaterialRecord | null | undefined,
+): string | null {
   const authoredColor = colorArrayToHex(material?.color, material?.opacity);
   if (authoredColor) {
     return authoredColor;
   }
 
   const opacity = Number(material?.opacity);
-  const hasPrimaryTexture = Boolean(String(material?.mapPath || material?.alphaMapPath || '').trim());
+  const hasPrimaryTexture = Boolean(
+    String(material?.mapPath || material?.alphaMapPath || '').trim(),
+  );
   if (hasPrimaryTexture && Number.isFinite(opacity) && opacity < 0.999) {
     return colorArrayToHex([1, 1, 1], opacity);
   }
@@ -194,11 +196,15 @@ function getSnapshotMaterialLookup(snapshot: RobotSceneSnapshot): Map<string, Ma
 }
 
 function isGenericDescriptorName(value: string | null | undefined): boolean {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
   if (!raw) return true;
-  return /^mesh(?:[_-]?\d+)?$/.test(raw)
-    || /^geom(?:[_-]?\d+)?$/.test(raw)
-    || /^proto(?:[_-].*)?$/.test(raw);
+  return (
+    /^mesh(?:[_-]?\d+)?$/.test(raw) ||
+    /^geom(?:[_-]?\d+)?$/.test(raw) ||
+    /^proto(?:[_-].*)?$/.test(raw)
+  );
 }
 
 function getDescriptorSemanticName(descriptor: MeshDescriptor): string {
@@ -267,9 +273,10 @@ function createUniqueId(base: string, used: Set<string>, fallbackPath: string): 
     return normalizedBase;
   }
 
-  const sanitizedPath = String(fallbackPath || '')
-    .replace(/[^\w]+/g, '_')
-    .replace(/^_+|_+$/g, '') || normalizedBase;
+  const sanitizedPath =
+    String(fallbackPath || '')
+      .replace(/[^\w]+/g, '_')
+      .replace(/^_+|_+$/g, '') || normalizedBase;
   if (!used.has(sanitizedPath)) {
     used.add(sanitizedPath);
     return sanitizedPath;
@@ -284,7 +291,10 @@ function createUniqueId(base: string, used: Set<string>, fallbackPath: string): 
   return candidate;
 }
 
-function toVector3(value: ArrayLike<number> | null | undefined, fallback: Vector3 = { x: 0, y: 0, z: 0 }): Vector3 {
+function toVector3(
+  value: ArrayLike<number> | null | undefined,
+  fallback: Vector3 = { x: 0, y: 0, z: 0 },
+): Vector3 {
   return {
     x: Number.isFinite(Number(value?.[0])) ? Number(value?.[0]) : fallback.x,
     y: Number.isFinite(Number(value?.[1])) ? Number(value?.[1]) : fallback.y,
@@ -330,7 +340,12 @@ function resolveUsdMeshApproximationFromBuffers(
   const offset = Math.max(0, Number(range.offset ?? 0));
   const count = Math.max(0, Number(range.count ?? 0));
   const stride = Math.max(3, Number(range.stride ?? 3));
-  if (!Number.isFinite(offset) || !Number.isFinite(count) || !Number.isFinite(stride) || count < 3) {
+  if (
+    !Number.isFinite(offset) ||
+    !Number.isFinite(count) ||
+    !Number.isFinite(stride) ||
+    count < 3
+  ) {
     return null;
   }
 
@@ -359,12 +374,12 @@ function resolveUsdMeshApproximationFromBuffers(
   }
 
   if (
-    !Number.isFinite(minX)
-    || !Number.isFinite(minY)
-    || !Number.isFinite(minZ)
-    || !Number.isFinite(maxX)
-    || !Number.isFinite(maxY)
-    || !Number.isFinite(maxZ)
+    !Number.isFinite(minX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(minZ) ||
+    !Number.isFinite(maxX) ||
+    !Number.isFinite(maxY) ||
+    !Number.isFinite(maxZ)
   ) {
     return null;
   }
@@ -436,11 +451,13 @@ function quaternionComponentsToEuler(
   };
 }
 
-function getDynamicsOriginRotation(
-  dynamicsEntry?: LinkDynamicsEntry | null,
-): Euler {
+function getDynamicsOriginRotation(dynamicsEntry?: LinkDynamicsEntry | null): Euler {
   const principalAxesLocal = dynamicsEntry?.principalAxesLocal;
-  if (principalAxesLocal && typeof principalAxesLocal.length === 'number' && principalAxesLocal.length >= 4) {
+  if (
+    principalAxesLocal &&
+    typeof principalAxesLocal.length === 'number' &&
+    principalAxesLocal.length >= 4
+  ) {
     return quaternionComponentsToEuler(
       principalAxesLocal[0],
       principalAxesLocal[1],
@@ -450,7 +467,11 @@ function getDynamicsOriginRotation(
   }
 
   const principalAxesLocalWxyz = dynamicsEntry?.principalAxesLocalWxyz;
-  if (principalAxesLocalWxyz && typeof principalAxesLocalWxyz.length === 'number' && principalAxesLocalWxyz.length >= 4) {
+  if (
+    principalAxesLocalWxyz &&
+    typeof principalAxesLocalWxyz.length === 'number' &&
+    principalAxesLocalWxyz.length >= 4
+  ) {
     return quaternionComponentsToEuler(
       principalAxesLocalWxyz[1],
       principalAxesLocalWxyz[2],
@@ -467,7 +488,9 @@ function degreesToRadians(value: number | null | undefined): number | undefined 
 }
 
 function jointTypeFromViewerValue(value: string | null | undefined): JointType {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
   if (!normalized) {
     return JointType.REVOLUTE;
   }
@@ -492,7 +515,9 @@ function jointTypeFromViewerValue(value: string | null | undefined): JointType {
 }
 
 function axisFromToken(token: string | null | undefined): Vector3 {
-  const normalized = String(token || '').trim().toUpperCase();
+  const normalized = String(token || '')
+    .trim()
+    .toUpperCase();
   switch (normalized) {
     case 'Y':
       return { x: 0, y: 1, z: 0 };
@@ -515,7 +540,9 @@ function axisFromViewerEntry(entry: JointCatalogEntry): Vector3 {
   return axisFromToken(entry.axisToken);
 }
 
-function geometryTypeFromCollisionPrimitive(counts: MeshPrimitiveCounts | null | undefined): GeometryType {
+function geometryTypeFromCollisionPrimitive(
+  counts: MeshPrimitiveCounts | null | undefined,
+): GeometryType {
   if (!counts || typeof counts !== 'object') {
     return GeometryType.MESH;
   }
@@ -552,6 +579,18 @@ function createPlaceholderVisual(type: GeometryType, color: string, meshPath?: s
   };
 }
 
+function getCollisionGeometryVisualProxy(link: UrdfLink): UrdfVisual | null {
+  const candidates = [link.collision, ...(link.collisionBodies || [])];
+
+  for (const candidate of candidates) {
+    if (candidate && candidate.type !== GeometryType.NONE) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function cloneMeshCountsEntry(entry: MeshCountsEntry | null | undefined): MeshCountsEntry {
   return {
     visualMeshCount: Number(entry?.visualMeshCount || 0),
@@ -572,10 +611,13 @@ function deriveMeshCountsByLinkPath(
     return existing || {};
   }
 
-  const derivedGroupsByLinkPath = new Map<string, {
-    visualGroups: Set<string>;
-    collisionGroupPrimitiveTypes: Map<string, string>;
-  }>();
+  const derivedGroupsByLinkPath = new Map<
+    string,
+    {
+      visualGroups: Set<string>;
+      collisionGroupPrimitiveTypes: Map<string, string>;
+    }
+  >();
   const normalizedKnownLinkPaths = buildNormalizedUsdPathSet(knownLinkPaths);
 
   const ensureEntry = (linkPath: string) => {
@@ -602,7 +644,10 @@ function deriveMeshCountsByLinkPath(
     const groupKey = getUsdDescriptorAttachmentGroupKey(descriptor);
     if (sectionName === 'collisions') {
       if (!entry.collisionGroupPrimitiveTypes.has(groupKey)) {
-        const primitiveType = String(descriptor.primType || '').trim().toLowerCase() || 'mesh';
+        const primitiveType =
+          String(descriptor.primType || '')
+            .trim()
+            .toLowerCase() || 'mesh';
         entry.collisionGroupPrimitiveTypes.set(groupKey, primitiveType);
       }
       continue;
@@ -615,14 +660,18 @@ function deriveMeshCountsByLinkPath(
     Array.from(derivedGroupsByLinkPath.entries()).map(([linkPath, entry]) => {
       const collisionPrimitiveCounts: Record<string, number> = {};
       entry.collisionGroupPrimitiveTypes.forEach((primitiveType) => {
-        collisionPrimitiveCounts[primitiveType] = Number(collisionPrimitiveCounts[primitiveType] || 0) + 1;
+        collisionPrimitiveCounts[primitiveType] =
+          Number(collisionPrimitiveCounts[primitiveType] || 0) + 1;
       });
 
-      return [linkPath, {
-        visualMeshCount: entry.visualGroups.size,
-        collisionMeshCount: entry.collisionGroupPrimitiveTypes.size,
-        collisionPrimitiveCounts,
-      } satisfies MeshCountsEntry];
+      return [
+        linkPath,
+        {
+          visualMeshCount: entry.visualGroups.size,
+          collisionMeshCount: entry.collisionGroupPrimitiveTypes.size,
+          collisionPrimitiveCounts,
+        } satisfies MeshCountsEntry,
+      ];
     }),
   ) as Record<string, MeshCountsEntry>;
 
@@ -631,24 +680,24 @@ function deriveMeshCountsByLinkPath(
   }
 
   const result: Record<string, MeshCountsEntry> = {};
-  const allLinkPaths = new Set([
-    ...Object.keys(existing),
-    ...Object.keys(derived),
-  ]);
+  const allLinkPaths = new Set([...Object.keys(existing), ...Object.keys(derived)]);
 
   allLinkPaths.forEach((linkPath) => {
     const existingEntry = cloneMeshCountsEntry(existing[linkPath]);
     const derivedEntry = cloneMeshCountsEntry(derived[linkPath]);
     const mergedEntry: MeshCountsEntry = {
-      visualMeshCount: derivedEntry.visualMeshCount > 0
-        ? derivedEntry.visualMeshCount
-        : existingEntry.visualMeshCount,
-      collisionMeshCount: derivedEntry.collisionMeshCount > 0
-        ? derivedEntry.collisionMeshCount
-        : existingEntry.collisionMeshCount,
-      collisionPrimitiveCounts: Object.keys(derivedEntry.collisionPrimitiveCounts || {}).length > 0
-        ? derivedEntry.collisionPrimitiveCounts
-        : existingEntry.collisionPrimitiveCounts,
+      visualMeshCount:
+        derivedEntry.visualMeshCount > 0
+          ? derivedEntry.visualMeshCount
+          : existingEntry.visualMeshCount,
+      collisionMeshCount:
+        derivedEntry.collisionMeshCount > 0
+          ? derivedEntry.collisionMeshCount
+          : existingEntry.collisionMeshCount,
+      collisionPrimitiveCounts:
+        Object.keys(derivedEntry.collisionPrimitiveCounts || {}).length > 0
+          ? derivedEntry.collisionPrimitiveCounts
+          : existingEntry.collisionPrimitiveCounts,
     };
 
     if (mergedEntry.visualMeshCount > 0 || mergedEntry.collisionMeshCount > 0) {
@@ -659,52 +708,60 @@ function deriveMeshCountsByLinkPath(
   return result;
 }
 
-function createLinkFromViewerMetadata(linkPath: string, meshCounts: MeshCountsEntry, dynamicsEntry?: LinkDynamicsEntry | null): UrdfLink {
+function createLinkFromViewerMetadata(
+  linkPath: string,
+  meshCounts: MeshCountsEntry,
+  dynamicsEntry?: LinkDynamicsEntry | null,
+): UrdfLink {
   const visualCount = Number(meshCounts.visualMeshCount || 0);
   const collisionCount = Number(meshCounts.collisionMeshCount || 0);
-  const collisionType = collisionCount > 0
-    ? geometryTypeFromCollisionPrimitive(meshCounts.collisionPrimitiveCounts)
-    : GeometryType.NONE;
+  const collisionType =
+    collisionCount > 0
+      ? geometryTypeFromCollisionPrimitive(meshCounts.collisionPrimitiveCounts)
+      : GeometryType.NONE;
 
   return {
     ...DEFAULT_LINK,
     id: '',
     name: getPathBasename(linkPath) || 'link',
-    visual: visualCount > 0
-      // USD scene snapshots only tell us that a link has authored visual geometry.
-      // The link path itself is not a loadable mesh asset, so keep meshPath empty to
-      // avoid invalid mesh-analysis lookups such as "/go2_description/base".
-      ? createPlaceholderVisual(GeometryType.MESH, DEFAULT_LINK.visual.color)
-      : createPlaceholderVisual(GeometryType.NONE, DEFAULT_LINK.visual.color),
-    collision: collisionCount > 0
-      ? createPlaceholderVisual(
-          collisionType,
-          DEFAULT_LINK.collision.color,
-        )
-      : createPlaceholderVisual(GeometryType.NONE, DEFAULT_LINK.collision.color),
-    collisionBodies: collisionCount > 1
-      ? Array.from({ length: collisionCount - 1 }, () => createPlaceholderVisual(
-          collisionType,
-          DEFAULT_LINK.collision.color,
-        ))
-      : [],
+    visual:
+      visualCount > 0
+        ? // USD scene snapshots only tell us that a link has authored visual geometry.
+          // The link path itself is not a loadable mesh asset, so keep meshPath empty to
+          // avoid invalid mesh-analysis lookups such as "/go2_description/base".
+          createPlaceholderVisual(GeometryType.MESH, DEFAULT_LINK.visual.color)
+        : createPlaceholderVisual(GeometryType.NONE, DEFAULT_LINK.visual.color),
+    collision:
+      collisionCount > 0
+        ? createPlaceholderVisual(collisionType, DEFAULT_LINK.collision.color)
+        : createPlaceholderVisual(GeometryType.NONE, DEFAULT_LINK.collision.color),
+    collisionBodies:
+      collisionCount > 1
+        ? Array.from({ length: collisionCount - 1 }, () =>
+            createPlaceholderVisual(collisionType, DEFAULT_LINK.collision.color),
+          )
+        : [],
     inertial: {
       ...DEFAULT_LINK.inertial,
-      mass: Number.isFinite(Number(dynamicsEntry?.mass)) ? Number(dynamicsEntry?.mass) : DEFAULT_LINK.inertial.mass,
+      mass: Number.isFinite(Number(dynamicsEntry?.mass))
+        ? Number(dynamicsEntry?.mass)
+        : DEFAULT_LINK.inertial.mass,
       origin: {
         xyz: toVector3(dynamicsEntry?.centerOfMassLocal, DEFAULT_LINK.inertial.origin?.xyz),
         rpy: getDynamicsOriginRotation(dynamicsEntry),
       },
-      inertia: Array.isArray(dynamicsEntry?.diagonalInertia) || (dynamicsEntry?.diagonalInertia && typeof dynamicsEntry.diagonalInertia.length === 'number')
-        ? {
-            ixx: Number(dynamicsEntry?.diagonalInertia?.[0]) || 0,
-            ixy: 0,
-            ixz: 0,
-            iyy: Number(dynamicsEntry?.diagonalInertia?.[1]) || 0,
-            iyz: 0,
-            izz: Number(dynamicsEntry?.diagonalInertia?.[2]) || 0,
-          }
-        : { ...DEFAULT_LINK.inertial.inertia },
+      inertia:
+        Array.isArray(dynamicsEntry?.diagonalInertia) ||
+        (dynamicsEntry?.diagonalInertia && typeof dynamicsEntry.diagonalInertia.length === 'number')
+          ? {
+              ixx: Number(dynamicsEntry?.diagonalInertia?.[0]) || 0,
+              ixy: 0,
+              ixz: 0,
+              iyy: Number(dynamicsEntry?.diagonalInertia?.[1]) || 0,
+              iyz: 0,
+              izz: Number(dynamicsEntry?.diagonalInertia?.[2]) || 0,
+            }
+          : { ...DEFAULT_LINK.inertial.inertia },
     },
   };
 }
@@ -722,17 +779,21 @@ function createJointFromViewerEntry(
   const parentLinkId = linkIdByPath.get(parentPath);
   if (!childLinkId || !parentLinkId) return null;
 
-  const jointName = String(entry.jointName || getPathBasename(entry.jointPath) || `${getPathBasename(childPath)}_joint`).trim();
+  const jointName = String(
+    entry.jointName || getPathBasename(entry.jointPath) || `${getPathBasename(childPath)}_joint`,
+  ).trim();
   const jointId = createUniqueId(jointName || 'joint', usedJointIds, `${parentPath}_${childPath}`);
   const jointType = jointTypeFromViewerValue(entry.jointTypeName || entry.jointType);
   const lower = degreesToRadians(entry.lowerLimitDeg);
   const upper = degreesToRadians(entry.upperLimitDeg);
-  const originXyz = entry.originXyz && typeof entry.originXyz.length === 'number'
-    ? toVector3(entry.originXyz)
-    : toVector3(entry.localPivotInLink);
-  const originQuatWxyz = entry.originQuatWxyz && typeof entry.originQuatWxyz.length === 'number'
-    ? Array.from(entry.originQuatWxyz).slice(0, 4)
-    : null;
+  const originXyz =
+    entry.originXyz && typeof entry.originXyz.length === 'number'
+      ? toVector3(entry.originXyz)
+      : toVector3(entry.localPivotInLink);
+  const originQuatWxyz =
+    entry.originQuatWxyz && typeof entry.originQuatWxyz.length === 'number'
+      ? Array.from(entry.originQuatWxyz).slice(0, 4)
+      : null;
 
   return {
     ...DEFAULT_JOINT,
@@ -770,9 +831,15 @@ export function adaptUsdViewerSnapshotToRobotData(
   }
 
   const metadata = snapshot.robotMetadataSnapshot || {};
-  const linkParentPairs = Array.from(metadata.linkParentPairs || snapshot.robotTree?.linkParentPairs || []);
-  const jointCatalogEntries = Array.from(metadata.jointCatalogEntries || snapshot.robotTree?.jointCatalogEntries || []);
-  const linkDynamicsEntries = Array.from(metadata.linkDynamicsEntries || snapshot.physics?.linkDynamicsEntries || []);
+  const linkParentPairs = Array.from(
+    metadata.linkParentPairs || snapshot.robotTree?.linkParentPairs || [],
+  );
+  const jointCatalogEntries = Array.from(
+    metadata.jointCatalogEntries || snapshot.robotTree?.jointCatalogEntries || [],
+  );
+  const linkDynamicsEntries = Array.from(
+    metadata.linkDynamicsEntries || snapshot.physics?.linkDynamicsEntries || [],
+  );
   const rootLinkPaths = Array.from(snapshot.robotTree?.rootLinkPaths || []);
 
   const linkPaths = new Set<string>();
@@ -797,7 +864,9 @@ export function adaptUsdViewerSnapshotToRobotData(
   const meshCountsByLinkPath = deriveMeshCountsByLinkPath(snapshot, linkPaths);
   Object.keys(meshCountsByLinkPath).forEach((path) => addLinkPath(path));
 
-  const normalizedStageSourcePath = normalizeUsdPath(snapshot.stageSourcePath || metadata.stageSourcePath);
+  const normalizedStageSourcePath = normalizeUsdPath(
+    snapshot.stageSourcePath || metadata.stageSourcePath,
+  );
   if (linkPaths.size === 0) {
     return null;
   }
@@ -868,7 +937,11 @@ export function adaptUsdViewerSnapshotToRobotData(
     const parentLinkId = linkIdByPath.get(parentPath);
     if (!childLinkId || !parentLinkId) continue;
 
-    const jointId = createUniqueId(`${getPathBasename(childPath) || childLinkId}_fixed`, usedJointIds, `${parentPath}_${childPath}_fixed`);
+    const jointId = createUniqueId(
+      `${getPathBasename(childPath) || childLinkId}_fixed`,
+      usedJointIds,
+      `${parentPath}_${childPath}_fixed`,
+    );
     joints[jointId] = {
       ...DEFAULT_JOINT,
       id: jointId,
@@ -888,18 +961,25 @@ export function adaptUsdViewerSnapshotToRobotData(
 
   const childLinkIds = new Set(Object.values(joints).map((joint) => joint.childLinkId));
   const preferredRootPath = normalizeUsdPath(rootLinkPaths[0]);
-  const rootLinkId = (preferredRootPath ? linkIdByPath.get(preferredRootPath) : null)
-    || Object.keys(links).find((linkId) => !childLinkIds.has(linkId))
-    || Object.keys(links)[0];
+  const rootLinkId =
+    (preferredRootPath ? linkIdByPath.get(preferredRootPath) : null) ||
+    Object.keys(links).find((linkId) => !childLinkIds.has(linkId)) ||
+    Object.keys(links)[0];
 
   if (!rootLinkId) {
     return null;
   }
 
-  const robotName = getPathBasename(snapshot.stage?.defaultPrimPath)
-    || (options.fileName ? options.fileName.split('/').pop()?.replace(/\.[^/.]+$/, '') : '')
-    || getPathBasename(normalizedStageSourcePath)
-    || 'usd_scene';
+  const robotName =
+    getPathBasename(snapshot.stage?.defaultPrimPath) ||
+    (options.fileName
+      ? options.fileName
+          .split('/')
+          .pop()
+          ?.replace(/\.[^/.]+$/, '')
+      : '') ||
+    getPathBasename(normalizedStageSourcePath) ||
+    'usd_scene';
 
   const materials: NonNullable<RobotData['materials']> = {};
   const materialLookup = getSnapshotMaterialLookup(snapshot);
@@ -908,9 +988,8 @@ export function adaptUsdViewerSnapshotToRobotData(
   const collisionDescriptorsByLinkPath = new Map<string, DescriptorEntry[]>();
   const visualDescriptorTargetLinkIds = new Map<string, string>();
 
-  const getDescriptorEntryKey = (descriptor: MeshDescriptor, ordinal: number) => (
-    `${normalizeDescriptorSectionName(descriptor.sectionName)}|${normalizeUsdPath(descriptor.meshId)}|${normalizeUsdPath(descriptor.resolvedPrimPath)}|${ordinal}`
-  );
+  const getDescriptorEntryKey = (descriptor: MeshDescriptor, ordinal: number) =>
+    `${normalizeDescriptorSectionName(descriptor.sectionName)}|${normalizeUsdPath(descriptor.meshId)}|${normalizeUsdPath(descriptor.resolvedPrimPath)}|${ordinal}`;
 
   descriptors.forEach((descriptor) => {
     const linkPath = resolveUsdDescriptorTargetLinkPath({
@@ -922,9 +1001,8 @@ export function adaptUsdViewerSnapshotToRobotData(
     }
 
     const sectionName = normalizeDescriptorSectionName(descriptor.sectionName);
-    const targetMap = sectionName === 'collisions'
-      ? collisionDescriptorsByLinkPath
-      : visualDescriptorsByLinkPath;
+    const targetMap =
+      sectionName === 'collisions' ? collisionDescriptorsByLinkPath : visualDescriptorsByLinkPath;
     const entries = targetMap.get(linkPath) || [];
     entries.push({
       descriptor,
@@ -993,10 +1071,7 @@ export function adaptUsdViewerSnapshotToRobotData(
     const groupedEntries = groupDescriptorEntries(entries);
     const primaryGroup = groupedEntries[0];
     primaryGroup?.entries.forEach(({ descriptor, ordinal }) => {
-      visualDescriptorTargetLinkIds.set(
-        getDescriptorEntryKey(descriptor, ordinal),
-        parentLinkId,
-      );
+      visualDescriptorTargetLinkIds.set(getDescriptorEntryKey(descriptor, ordinal), parentLinkId);
     });
 
     groupedEntries.slice(1).forEach((group, index) => {
@@ -1064,8 +1139,14 @@ export function adaptUsdViewerSnapshotToRobotData(
   const visualGeometryAssignedLinkIds = new Set<string>();
   visualDescriptorsByLinkPath.forEach((entries) => {
     entries.forEach(({ descriptor, ordinal }) => {
-      const targetLinkId = visualDescriptorTargetLinkIds.get(getDescriptorEntryKey(descriptor, ordinal));
-      if (!targetLinkId || !links[targetLinkId] || visualGeometryAssignedLinkIds.has(targetLinkId)) {
+      const targetLinkId = visualDescriptorTargetLinkIds.get(
+        getDescriptorEntryKey(descriptor, ordinal),
+      );
+      if (
+        !targetLinkId ||
+        !links[targetLinkId] ||
+        visualGeometryAssignedLinkIds.has(targetLinkId)
+      ) {
         return;
       }
 
@@ -1099,11 +1180,10 @@ export function adaptUsdViewerSnapshotToRobotData(
         return;
       }
 
-      const currentCollision = index === 0
-        ? link.collision
-        : link.collisionBodies?.[index - 1];
-      const nextGeometry: ResolvedUsdGeometry | null = resolveUsdPrimitiveGeometryFromDescriptor(descriptor, currentCollision)
-        ?? resolveUsdMeshApproximationGeometry(snapshot, descriptor);
+      const currentCollision = index === 0 ? link.collision : link.collisionBodies?.[index - 1];
+      const nextGeometry: ResolvedUsdGeometry | null =
+        resolveUsdPrimitiveGeometryFromDescriptor(descriptor, currentCollision) ??
+        resolveUsdMeshApproximationGeometry(snapshot, descriptor);
       if (!nextGeometry) {
         return;
       }
@@ -1113,9 +1193,8 @@ export function adaptUsdViewerSnapshotToRobotData(
         ...(currentCollision || {}),
         ...nextGeometry,
         meshPath: undefined,
-        origin: nextGeometry.origin
-          ?? currentCollision?.origin
-          ?? { ...DEFAULT_LINK.collision.origin },
+        origin: nextGeometry.origin ??
+          currentCollision?.origin ?? { ...DEFAULT_LINK.collision.origin },
       };
 
       if (index === 0) {
@@ -1128,6 +1207,34 @@ export function adaptUsdViewerSnapshotToRobotData(
       link.collisionBodies = collisionBodies;
     });
   });
+
+  if (shouldUseUsdCollisionVisualProxy(snapshot)) {
+    Object.values(links).forEach((link) => {
+      if (link.visual.type !== GeometryType.NONE) {
+        return;
+      }
+
+      const proxyGeometry = getCollisionGeometryVisualProxy(link);
+      if (!proxyGeometry) {
+        return;
+      }
+
+      link.visual = {
+        ...link.visual,
+        type: proxyGeometry.type,
+        dimensions: proxyGeometry.dimensions
+          ? { ...proxyGeometry.dimensions }
+          : link.visual.dimensions,
+        origin: proxyGeometry.origin
+          ? {
+              xyz: { ...proxyGeometry.origin.xyz },
+              rpy: { ...proxyGeometry.origin.rpy },
+            }
+          : link.visual.origin,
+        meshPath: undefined,
+      };
+    });
+  }
 
   return {
     stageSourcePath: normalizedStageSourcePath || null,

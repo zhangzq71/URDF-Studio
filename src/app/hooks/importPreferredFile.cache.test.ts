@@ -124,3 +124,80 @@ test('pickPreferredMjcfImportFile stops resolving once the best-ranked parseable
   assert.equal(resolveCounts.get('demo_description/xml/scene.xml'), undefined);
   assert.equal(resolveCounts.get('demo_description/xml/fallback.xml'), undefined);
 });
+
+test('pickPreferredImportFile skips resolving lower-priority accessory URDF variants once a canonical tier succeeds', () => {
+  const canonicalUrdf = createRobotFile(
+    'g1_description/g1_29dof.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const revisionUrdf = createRobotFile(
+    'g1_description/g1_29dof_rev_1_0.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const handUrdf = createRobotFile(
+    'g1_description/g1_29dof_with_hand.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const ftpHandUrdf = createRobotFile(
+    'g1_description/g1_29dof_rev_1_0_with_inspire_hand_FTP.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="g1_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://g1_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const meshFile = createRobotFile('g1_description/meshes/base_link.stl', 'mesh');
+  const filePool = [canonicalUrdf, revisionUrdf, handUrdf, ftpHandUrdf, meshFile];
+  const resolveCounts = new Map<string, number>();
+
+  const preferredFile = pickPreferredImportFile(
+    filePool,
+    filePool,
+    (file) => {
+      resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
+      return resolveRobotFileData(file, { availableFiles: filePool });
+    },
+  );
+
+  assert.match(preferredFile?.name ?? '', /g1_description\/g1_29dof(?:_rev_1_0)?\.urdf$/);
+  assert.equal(resolveCounts.get('g1_description/g1_29dof.urdf'), 1);
+  assert.equal(resolveCounts.get('g1_description/g1_29dof_rev_1_0.urdf'), 1);
+  assert.equal(resolveCounts.get('g1_description/g1_29dof_with_hand.urdf'), undefined);
+  assert.equal(resolveCounts.get('g1_description/g1_29dof_rev_1_0_with_inspire_hand_FTP.urdf'), undefined);
+});

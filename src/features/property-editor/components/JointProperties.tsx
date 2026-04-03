@@ -1,9 +1,7 @@
 /**
- * JointProperties - Property editing panel for Joint elements.
- * Renders different content based on the current editor mode:
- * - Detail: Name only
- * - Skeleton: Type, Kinematics (origin, axis)
- * - Hardware: Motor config, Limits, Dynamics
+ * JointProperties - Unified property editing panel for Joint elements.
+ * Focused on structural/dynamics/hardware attributes only.
+ * Runtime motion control stays in the dedicated Joint Controls panel.
  */
 import React from 'react';
 import {
@@ -122,6 +120,7 @@ interface JointPropertiesProps {
 export const JointProperties: React.FC<JointPropertiesProps> = ({
   data, mode, selection, onUpdate, motorLibrary, t, lang
 }) => {
+  void mode;
   const jointType = (data.type as JointType | undefined) || JointType.REVOLUTE;
   const origin = data.origin ?? DEFAULT_ORIGIN;
   const supportsAxis = AXIS_BASED_TYPES.has(jointType);
@@ -193,249 +192,230 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
   return (
     <>
-      {/* Detail Mode: Name Only */}
-      {mode === 'detail' && (
-        <>
-          <InlineInputGroup label={t.name} labelWidthClassName="w-11">
-            <input
-              type="text"
-              value={data.name}
-              onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
-              className={PROPERTY_EDITOR_INPUT_CLASS}
+      <InlineInputGroup label={t.name} labelWidthClassName="w-11">
+        <input
+          type="text"
+          value={data.name}
+          onChange={(e) => onUpdate('joint', selection.id!, { ...data, name: e.target.value })}
+          className={PROPERTY_EDITOR_INPUT_CLASS}
+        />
+      </InlineInputGroup>
+
+      {renderJointTypeField()}
+
+      <CollapsibleSection title={t.kinematics} storageKey="kinematics">
+        <InputGroup label={t.originRelativeParent}>
+          <TransformFields
+            lang={lang}
+            positionValue={origin.xyz}
+            rotationValue={origin.rpy}
+            onPositionChange={(v) => updateJoint({
+              origin: { ...origin, xyz: toXYZ(v, origin.xyz) },
+            })}
+            onRotationChange={(rpy) => updateJoint({
+              origin: { ...origin, rpy: toRPY(rpy, origin.rpy) },
+            })}
+          />
+        </InputGroup>
+
+        {supportsAxis && (
+          <InputGroup label={t.axisRotation}>
+            <Vec3Input
+              value={data.axis || DEFAULT_AXIS}
+              onChange={(v) => updateJoint({ axis: toXYZ(v, data.axis || DEFAULT_AXIS) })}
+              labels={['X', 'Y', 'Z']}
+              step={TRANSFORM_STEP}
+              precision={MAX_TRANSFORM_DECIMALS}
             />
-          </InlineInputGroup>
-          {renderJointTypeField()}
-        </>
-      )}
+          </InputGroup>
+        )}
+      </CollapsibleSection>
 
-      {/* Skeleton Mode: Kinematics Only */}
-      {mode === 'skeleton' && (
-        <>
-          {renderJointTypeField()}
-
-          <CollapsibleSection title={t.kinematics} storageKey="kinematics">
-            <InputGroup label={t.originRelativeParent}>
-              <TransformFields
-                lang={lang}
-                positionValue={origin.xyz}
-                rotationValue={origin.rpy}
-                onPositionChange={(v) => updateJoint({
-                  origin: { ...origin, xyz: toXYZ(v, origin.xyz) },
-                })}
-                onRotationChange={(rpy) => updateJoint({
-                  origin: { ...origin, rpy: toRPY(rpy, origin.rpy) },
-                })}
-              />
+      <div className="space-y-2.5">
+        {supportsMotorSection && (
+          <CollapsibleSection title={t.hardwareConfig} storageKey="hardware_config">
+            <InputGroup label={t.motorSource}>
+              <select
+                value={motorSource}
+                onChange={(e) => handleSourceChange(e.target.value)}
+                className={PROPERTY_EDITOR_SELECT_CLASS}
+              >
+                <option value="None">{t.none}</option>
+                <option value="Library">{t.library}</option>
+                <option value="Custom">{t.custom}</option>
+              </select>
             </InputGroup>
 
-            {supportsAxis && (
-              <InputGroup label={t.axisRotation}>
-                <Vec3Input
-                  value={data.axis || DEFAULT_AXIS}
-                  onChange={(v) => updateJoint({ axis: toXYZ(v, data.axis || DEFAULT_AXIS) })}
-                  labels={['X', 'Y', 'Z']}
-                  step={TRANSFORM_STEP}
-                  precision={MAX_TRANSFORM_DECIMALS}
+            {motorSource === 'Library' && (
+              <div className="space-y-2.5 pl-2 border-l-2 border-border-black mb-2.5">
+                <InputGroup label={t.brand}>
+                  <select
+                    value={motorBrand}
+                    onChange={(e) => handleBrandChange(e.target.value)}
+                    className={PROPERTY_EDITOR_SELECT_CLASS}
+                  >
+                    {Object.keys(motorLibrary).map(brand => (
+                      <option key={brand} value={brand}>{brand}</option>
+                    ))}
+                  </select>
+                </InputGroup>
+                <InputGroup label={t.model}>
+                  <select
+                    value={currentMotorType}
+                    onChange={(e) => handleLibraryMotorChange(e.target.value)}
+                    className={PROPERTY_EDITOR_SELECT_CLASS}
+                  >
+                    {motorLibrary[motorBrand]?.map(m => (
+                      <option key={m.name} value={m.name}>{m.name}</option>
+                    ))}
+                  </select>
+                </InputGroup>
+
+                {currentLibMotor && currentLibMotor.url && (
+                  <div className="mt-2">
+                    <a
+                      href={currentLibMotor.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={PROPERTY_EDITOR_LINK_CLASS}
+                    >
+                      {t.viewMotor}
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {motorSource === 'Custom' && (
+              <InputGroup label={t.customType}>
+                <input
+                  type="text"
+                  placeholder={t.enterMotorType}
+                  value={currentMotorType}
+                  onChange={(e) => updateJoint({
+                    hardware: { ...data.hardware, motorType: e.target.value }
+                  })}
+                  className={PROPERTY_EDITOR_INPUT_CLASS}
                 />
               </InputGroup>
             )}
-          </CollapsibleSection>
-        </>
-      )}
 
-      {/* Hardware Mode: Limits, Dynamics, Motor */}
-      {mode === 'hardware' && (
-        <div className="space-y-2.5">
-          {renderJointTypeField()}
-
-          {/* 1. Hardware Section */}
-          {supportsMotorSection && (
-            <CollapsibleSection title={t.hardwareConfig} storageKey="hardware_config">
-              <InputGroup label={t.motorSource}>
-                <select
-                  value={motorSource}
-                  onChange={(e) => handleSourceChange(e.target.value)}
-                  className={PROPERTY_EDITOR_SELECT_CLASS}
-                >
-                  <option value="None">{t.none}</option>
-                  <option value="Library">{t.library}</option>
-                  <option value="Custom">{t.custom}</option>
-                </select>
-              </InputGroup>
-
-              {motorSource === 'Library' && (
-                <div className="space-y-2.5 pl-2 border-l-2 border-border-black mb-2.5">
-                  <InputGroup label={t.brand}>
+            {motorSource !== 'None' && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <InputGroup label={t.motorId}>
+                    <input
+                      type="text"
+                      value={data.hardware?.motorId || ''}
+                      onChange={(e) => updateJoint({
+                        hardware: { ...data.hardware, motorId: e.target.value }
+                      })}
+                      className={PROPERTY_EDITOR_INPUT_CLASS}
+                    />
+                  </InputGroup>
+                  <InputGroup label={t.direction}>
                     <select
-                      value={motorBrand}
-                      onChange={(e) => handleBrandChange(e.target.value)}
+                      value={data.hardware?.motorDirection || 1}
+                      onChange={(e) => updateJoint({
+                        hardware: { ...data.hardware, motorDirection: parseInt(e.target.value, 10) }
+                      })}
                       className={PROPERTY_EDITOR_SELECT_CLASS}
                     >
-                      {Object.keys(motorLibrary).map(brand => (
-                        <option key={brand} value={brand}>{brand}</option>
-                      ))}
+                      <option value={1}>1 ({t.normal})</option>
+                      <option value={-1}>-1 ({t.inverted})</option>
                     </select>
                   </InputGroup>
-                  <InputGroup label={t.model}>
-                    <select
-                      value={currentMotorType}
-                      onChange={(e) => handleLibraryMotorChange(e.target.value)}
-                      className={PROPERTY_EDITOR_SELECT_CLASS}
-                    >
-                      {motorLibrary[motorBrand]?.map(m => (
-                        <option key={m.name} value={m.name}>{m.name}</option>
-                      ))}
-                    </select>
-                  </InputGroup>
-
-                  {currentLibMotor && currentLibMotor.url && (
-                    <div className="mt-2">
-                      <a
-                        href={currentLibMotor.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={PROPERTY_EDITOR_LINK_CLASS}
-                      >
-                        {t.viewMotor}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  )}
                 </div>
-              )}
 
-              {motorSource === 'Custom' && (
-                <InputGroup label={t.customType}>
-                  <input
-                    type="text"
-                    placeholder={t.enterMotorType}
-                    value={currentMotorType}
-                    onChange={(e) => updateJoint({
-                      hardware: { ...data.hardware, motorType: e.target.value }
+                <InputGroup label={t.armature}>
+                  <NumberInput
+                    value={data.hardware?.armature || 0}
+                    min={0}
+                    onChange={(v: number) => updateJoint({
+                      hardware: { ...data.hardware, armature: v }
                     })}
-                    className={PROPERTY_EDITOR_INPUT_CLASS}
                   />
                 </InputGroup>
-              )}
+              </>
+            )}
+          </CollapsibleSection>
+        )}
 
-              {motorSource !== 'None' && (
+        {(supportsFullLimit || supportsEffortVelocityLimit) && (
+          <CollapsibleSection title={t.limits} storageKey="limits">
+            <div className="grid grid-cols-2 gap-2">
+              {supportsFullLimit && (
                 <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <InputGroup label={t.motorId}>
-                      <input
-                        type="text"
-                        value={data.hardware?.motorId || ''}
-                        onChange={(e) => updateJoint({
-                          hardware: { ...data.hardware, motorId: e.target.value }
-                        })}
-                        className={PROPERTY_EDITOR_INPUT_CLASS}
-                      />
-                    </InputGroup>
-                    <InputGroup label={t.direction}>
-                      <select
-                        value={data.hardware?.motorDirection || 1}
-                        onChange={(e) => updateJoint({
-                          hardware: { ...data.hardware, motorDirection: parseInt(e.target.value, 10) }
-                        })}
-                        className={PROPERTY_EDITOR_SELECT_CLASS}
-                      >
-                        <option value={1}>1 ({t.normal})</option>
-                        <option value={-1}>-1 ({t.inverted})</option>
-                      </select>
-                    </InputGroup>
-                  </div>
-
-                  <InputGroup label={t.armature}>
+                  <InputGroup label={t.lower}>
                     <NumberInput
-                      value={data.hardware?.armature || 0}
-                      min={0}
+                      value={data.limit?.lower ?? defaultLimit.lower}
                       onChange={(v: number) => updateJoint({
-                        hardware: { ...data.hardware, armature: v }
+                        limit: { ...defaultLimit, ...data.limit, lower: v }
                       })}
+                      suffix={limitUnit}
+                    />
+                  </InputGroup>
+                  <InputGroup label={t.upper}>
+                    <NumberInput
+                      value={data.limit?.upper ?? defaultLimit.upper}
+                      onChange={(v: number) => updateJoint({
+                        limit: { ...defaultLimit, ...data.limit, upper: v }
+                      })}
+                      suffix={limitUnit}
                     />
                   </InputGroup>
                 </>
               )}
-            </CollapsibleSection>
-          )}
+              <InputGroup label={t.velocity}>
+                <NumberInput
+                  value={data.limit?.velocity ?? defaultLimit.velocity}
+                  min={0}
+                  onChange={(v: number) => updateJoint({
+                    limit: { ...defaultLimit, ...data.limit, velocity: v }
+                  })}
+                  suffix={velocityUnit}
+                />
+              </InputGroup>
+              <InputGroup label={t.effort}>
+                <NumberInput
+                  value={data.limit?.effort ?? defaultLimit.effort}
+                  min={0}
+                  onChange={(v: number) => updateJoint({
+                    limit: { ...defaultLimit, ...data.limit, effort: v }
+                  })}
+                  suffix={effortUnit}
+                />
+              </InputGroup>
+            </div>
+          </CollapsibleSection>
+        )}
 
-          {/* 2. Limits */}
-          {(supportsFullLimit || supportsEffortVelocityLimit) && (
-            <CollapsibleSection title={t.limits} storageKey="limits">
-              <div className="grid grid-cols-2 gap-2">
-                {supportsFullLimit && (
-                  <>
-                    <InputGroup label={t.lower}>
-                      <NumberInput
-                        value={data.limit?.lower ?? defaultLimit.lower}
-                        onChange={(v: number) => updateJoint({
-                          limit: { ...defaultLimit, ...data.limit, lower: v }
-                        })}
-                        suffix={limitUnit}
-                      />
-                    </InputGroup>
-                    <InputGroup label={t.upper}>
-                      <NumberInput
-                        value={data.limit?.upper ?? defaultLimit.upper}
-                        onChange={(v: number) => updateJoint({
-                          limit: { ...defaultLimit, ...data.limit, upper: v }
-                        })}
-                        suffix={limitUnit}
-                      />
-                    </InputGroup>
-                  </>
-                )}
-                <InputGroup label={t.velocity}>
-                  <NumberInput
-                    value={data.limit?.velocity ?? defaultLimit.velocity}
-                    min={0}
-                    onChange={(v: number) => updateJoint({
-                      limit: { ...defaultLimit, ...data.limit, velocity: v }
-                    })}
-                    suffix={velocityUnit}
-                  />
-                </InputGroup>
-                <InputGroup label={t.effort}>
-                  <NumberInput
-                    value={data.limit?.effort ?? defaultLimit.effort}
-                    min={0}
-                    onChange={(v: number) => updateJoint({
-                      limit: { ...defaultLimit, ...data.limit, effort: v }
-                    })}
-                    suffix={effortUnit}
-                  />
-                </InputGroup>
-              </div>
-            </CollapsibleSection>
-          )}
-
-          {/* 3. Dynamics */}
-          {supportsMotorSection && (
-            <CollapsibleSection title={t.dynamics} defaultOpen={false} storageKey="dynamics">
-              <div className="grid grid-cols-2 gap-2">
-                <InputGroup label={t.friction}>
-                  <NumberInput
-                    value={data.dynamics?.friction || 0}
-                    min={0}
-                    onChange={(v: number) => updateJoint({
-                      dynamics: { ...data.dynamics, friction: v }
-                    })}
-                  />
-                </InputGroup>
-                <InputGroup label={t.damping}>
-                  <NumberInput
-                    value={data.dynamics?.damping || 0}
-                    min={0}
-                    onChange={(v: number) => updateJoint({
-                      dynamics: { ...data.dynamics, damping: v }
-                    })}
-                  />
-                </InputGroup>
-              </div>
-            </CollapsibleSection>
-          )}
-        </div>
-      )}
+        {supportsMotorSection && (
+          <CollapsibleSection title={t.dynamics} defaultOpen={false} storageKey="dynamics">
+            <div className="grid grid-cols-2 gap-2">
+              <InputGroup label={t.friction}>
+                <NumberInput
+                  value={data.dynamics?.friction || 0}
+                  min={0}
+                  onChange={(v: number) => updateJoint({
+                    dynamics: { ...data.dynamics, friction: v }
+                  })}
+                />
+              </InputGroup>
+              <InputGroup label={t.damping}>
+                <NumberInput
+                  value={data.dynamics?.damping || 0}
+                  min={0}
+                  onChange={(v: number) => updateJoint({
+                    dynamics: { ...data.dynamics, damping: v }
+                  })}
+                />
+              </InputGroup>
+            </div>
+          </CollapsibleSection>
+        )}
+      </div>
     </>
   );
 };

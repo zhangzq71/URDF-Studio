@@ -5,12 +5,16 @@ import type { RobotFile } from '@/types';
 import { createUsdSelectionPrewarmHandler } from './usdSelectionPrewarm.ts';
 
 test('USD selection prewarm is a no-op for non-USD files', () => {
-  let runtimePrewarmCalls = 0;
+  let mainThreadRuntimePrewarmCalls = 0;
+  let offscreenRuntimePrewarmCalls = 0;
   let stageOpenPrewarmCalls = 0;
 
   const prewarm = createUsdSelectionPrewarmHandler({
-    prewarmRuntime: () => {
-      runtimePrewarmCalls += 1;
+    prewarmMainThreadRuntime: () => {
+      mainThreadRuntimePrewarmCalls += 1;
+    },
+    prewarmOffscreenRuntime: () => {
+      offscreenRuntimePrewarmCalls += 1;
     },
     prewarmStageOpen: () => {
       stageOpenPrewarmCalls += 1;
@@ -27,12 +31,14 @@ test('USD selection prewarm is a no-op for non-USD files', () => {
     {},
   );
 
-  assert.equal(runtimePrewarmCalls, 0);
+  assert.equal(mainThreadRuntimePrewarmCalls, 0);
+  assert.equal(offscreenRuntimePrewarmCalls, 0);
   assert.equal(stageOpenPrewarmCalls, 0);
 });
 
 test('USD selection prewarm warms runtime and stage-open data together', () => {
-  let runtimePrewarmCalls = 0;
+  let mainThreadRuntimePrewarmCalls = 0;
+  let offscreenRuntimePrewarmCalls = 0;
   const stageOpenCalls: Array<{
     file: Pick<RobotFile, 'name' | 'format'>;
     availableFiles: number;
@@ -40,8 +46,11 @@ test('USD selection prewarm warms runtime and stage-open data together', () => {
   }> = [];
 
   const prewarm = createUsdSelectionPrewarmHandler({
-    prewarmRuntime: () => {
-      runtimePrewarmCalls += 1;
+    prewarmMainThreadRuntime: () => {
+      mainThreadRuntimePrewarmCalls += 1;
+    },
+    prewarmOffscreenRuntime: () => {
+      offscreenRuntimePrewarmCalls += 1;
     },
     prewarmStageOpen: (file, availableFiles, assets) => {
       stageOpenCalls.push({
@@ -59,24 +68,75 @@ test('USD selection prewarm warms runtime and stage-open data together', () => {
       content: '#usda 1.0',
       blobUrl: 'blob:go2-root',
     },
-    [{
-      name: 'robots/go2/usd/go2.usd',
-      format: 'usd',
-      content: '#usda 1.0',
-      blobUrl: 'blob:go2-root',
-    }],
+    [
+      {
+        name: 'robots/go2/usd/go2.usd',
+        format: 'usd',
+        content: '#usda 1.0',
+        blobUrl: 'blob:go2-root',
+      },
+    ],
     {
       'robots/go2/textures/body.png': 'blob:body',
     },
   );
 
-  assert.equal(runtimePrewarmCalls, 1);
-  assert.deepEqual(stageOpenCalls, [{
-    file: {
-      name: 'robots/go2/usd/go2.usd',
-      format: 'usd',
+  assert.equal(mainThreadRuntimePrewarmCalls, 1);
+  assert.equal(offscreenRuntimePrewarmCalls, 1);
+  assert.deepEqual(stageOpenCalls, [
+    {
+      file: {
+        name: 'robots/go2/usd/go2.usd',
+        format: 'usd',
+      },
+      availableFiles: 1,
+      assetKeys: ['robots/go2/textures/body.png'],
     },
-    availableFiles: 1,
-    assetKeys: ['robots/go2/textures/body.png'],
-  }]);
+  ]);
+});
+
+test('USD selection prewarm skips worker stage-open prewarm for blob-backed large USDA bundles', () => {
+  let mainThreadRuntimePrewarmCalls = 0;
+  let offscreenRuntimePrewarmCalls = 0;
+  let stageOpenPrewarmCalls = 0;
+
+  const prewarm = createUsdSelectionPrewarmHandler({
+    prewarmMainThreadRuntime: () => {
+      mainThreadRuntimePrewarmCalls += 1;
+    },
+    prewarmOffscreenRuntime: () => {
+      offscreenRuntimePrewarmCalls += 1;
+    },
+    prewarmStageOpen: () => {
+      stageOpenPrewarmCalls += 1;
+    },
+  });
+
+  prewarm(
+    {
+      name: 'g1_description/g1_23dof.usda',
+      format: 'usd',
+      content: '#usda 1.0\n(\n  subLayers = [@./configuration/g1_23dof_physics.usda@]\n)\n',
+      blobUrl: 'blob:g1-root',
+    },
+    [
+      {
+        name: 'g1_description/configuration/g1_23dof_physics.usda',
+        format: 'usd',
+        content: '#usda 1.0\n(\n  subLayers = [@g1_23dof_base.usda@]\n)\n',
+        blobUrl: 'blob:g1-physics',
+      },
+      {
+        name: 'g1_description/configuration/g1_23dof_base.usda',
+        format: 'usd',
+        content: '',
+        blobUrl: 'blob:g1-base',
+      },
+    ],
+    {},
+  );
+
+  assert.equal(mainThreadRuntimePrewarmCalls, 1);
+  assert.equal(offscreenRuntimePrewarmCalls, 1);
+  assert.equal(stageOpenPrewarmCalls, 0);
 });

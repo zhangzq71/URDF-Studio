@@ -79,9 +79,10 @@ test('USD stage open preparation worker client resolves successful worker respon
 
   const result = await resultPromise;
   assert.equal(result.stageSourcePath, '/robots/go2/usd/go2.usd');
-  assert.equal(result.preloadFiles[0]?.blob, null);
+  assert.equal(result.preloadFiles[0]?.bytes, null);
+  assert.equal(result.preloadFiles[0]?.blob instanceof Blob, true);
   assert.deepEqual(
-    Array.from(new Uint8Array(result.preloadFiles[0]!.bytes!)),
+    Array.from(new Uint8Array(await result.preloadFiles[0]!.blob!.arrayBuffer())),
     Array.from(new TextEncoder().encode('go2-root')),
   );
 });
@@ -95,13 +96,13 @@ test('USD stage open preparation worker client syncs pruned context once and reu
 
   const sourceFile = {
     name: 'robots/go2/usd/go2.usd',
-    content: '#usda 1.0',
+    content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
     blobUrl: undefined,
   };
   const availableFiles = [
     {
       name: 'robots/go2/usd/go2.usd',
-      content: '#usda 1.0',
+      content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usd@]\n)\n',
       blobUrl: undefined,
       format: 'usd' as const,
     },
@@ -160,7 +161,6 @@ test('USD stage open preparation worker client syncs pruned context once and reu
     ],
   );
   assert.deepEqual(syncContextRequest.context.assets, {
-    'robots/go2/textures/body.png': 'blob:go2-texture',
   });
   assert.equal(typeof firstPrepareRequest.contextId, 'string');
   assert.equal(firstPrepareRequest.availableFiles, undefined);
@@ -198,4 +198,64 @@ test('USD stage open preparation worker client syncs pruned context once and reu
   const secondResult = await secondPromise;
   assert.equal(firstResult.stageSourcePath, '/robots/go2/usd/go2.usd');
   assert.equal(secondResult.stageSourcePath, '/robots/go2/usd/go2.usd');
+});
+
+test('USD stage open preparation worker client strips blob-backed large USDA text payloads before syncing worker context', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createUsdStageOpenPreparationWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+  });
+
+  const hugeText = 'x'.repeat(1024 * 1024 + 32);
+  const resultPromise = client.prepare(
+    {
+      name: 'robots/go2/usd/go2_description.usda',
+      content: '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usda@]\n)\n',
+      blobUrl: 'blob:go2-root',
+    },
+    [
+      {
+        name: 'robots/go2/usd/configuration/go2_description_base.usda',
+        content: hugeText,
+        blobUrl: 'blob:go2-base',
+        format: 'usd',
+      },
+    ],
+    {},
+  );
+
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  const syncContextRequest = fakeWorker.postedMessages[0] as {
+    type: string;
+    context: {
+      availableFiles?: Array<{ name: string; content: string; blobUrl?: string }>;
+    };
+  };
+  const prepareRequest = fakeWorker.postedMessages[1] as {
+    requestId: number;
+    sourceFile: { name: string; content: string; blobUrl?: string };
+  };
+
+  assert.equal(syncContextRequest.type, 'sync-context');
+  assert.equal(syncContextRequest.context.availableFiles?.[0]?.content, '');
+  assert.equal(syncContextRequest.context.availableFiles?.[0]?.blobUrl, 'blob:go2-base');
+  assert.equal(
+    prepareRequest.sourceFile.content,
+    '#usda 1.0\n(\n  subLayers = [@./configuration/go2_description_base.usda@]\n)\n',
+  );
+  assert.equal(prepareRequest.sourceFile.blobUrl, 'blob:go2-root');
+
+  fakeWorker.emitMessage({
+    type: 'prepare-usd-stage-open-result',
+    requestId: prepareRequest.requestId,
+    result: {
+      stageSourcePath: '/robots/go2/usd/go2_description.usda',
+      criticalDependencyPaths: [],
+      preloadFiles: [],
+    },
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.stageSourcePath, '/robots/go2/usd/go2_description.usda');
 });

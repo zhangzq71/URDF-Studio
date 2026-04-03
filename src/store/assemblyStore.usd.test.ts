@@ -146,7 +146,7 @@ test('assembly export preserves colors stored in component materials after prefi
   );
   expectSerializedHexColor(
     mjcf,
-    /<material name="[^"]+" rgba="([^"]+)"(?: texture="[^"]+")? \/>/,
+    /<material name="[^"]+" rgba="([^"]+)"(?: [^/>]+="[^"]+")* \/>/,
     [0.07058824, 0.67058824, 0.20392157, 1],
   );
   assert.match(mjcf, /<geom[^>]*material="[^"]+"[^>]*type="mesh"/);
@@ -210,4 +210,46 @@ test('updateComponentRobot keeps namespaced component materials in sync with edi
   const stored = useAssemblyStore.getState().assemblyState?.components[component!.id];
   assert.equal(stored?.robot.links[linkId].visual.color, '#ff6600');
   assert.equal(stored?.robot.materials?.[linkId]?.color, '#ff6600');
+});
+
+test('addComponent rewrites USD prepared mesh paths into source-relative library paths', () => {
+  resetAssemblyStore();
+
+  useAssemblyStore.getState().initAssembly('usd-mesh-path-rewrite');
+
+  const usdFile: RobotFile = {
+    name: 'robots/go2/usd/go2.usd',
+    content: '',
+    format: 'usd',
+  };
+
+  const preResolvedRobotData: RobotData = {
+    name: 'usd_robot',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          meshPath: 'base_link_visual_0.obj',
+        },
+      },
+    },
+    joints: {},
+  };
+
+  const component = useAssemblyStore.getState().addComponent(usdFile, {
+    availableFiles: [],
+    assets: {},
+    preResolvedRobotData,
+  });
+
+  assert.ok(component, 'USD component creation should not return null');
+
+  const rewrittenMeshPath = component?.robot.links.comp_go2_base_link.visual.meshPath;
+  assert.equal(rewrittenMeshPath, 'robots/go2/usd/base_link_visual_0.obj');
 });

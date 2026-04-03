@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { isSyntheticWorldRoot, resolveLinkKey, updateCollisionGeometryByObjectIndex } from '@/core/robot';
-import type { RobotState } from '@/types';
+import {
+  isSyntheticWorldRoot,
+  resolveLinkKey,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
+import type { AppMode, RobotState } from '@/types';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useUIStore } from '@/store';
 import { alignObjectLowestPointToZ } from '@/shared/utils';
@@ -12,11 +16,14 @@ import { useJointPivots } from './useJointPivots';
 import { useTransformControls } from './useTransformControls';
 import { useVisualizerState } from './useVisualizerState';
 import { clearMaterialCache } from '../utils';
+import { resetSyntheticRootGroundOffset } from '../utils/groundAlignment';
+import { shouldEnableMergedVisualizerJointTransformControls } from '../utils/mergedVisualizerSceneMode';
 
 interface UseVisualizerControllerProps {
   robot: RobotState;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
-  mode: 'skeleton' | 'detail' | 'hardware';
+  mode: AppMode;
+  assemblyWorkspaceActive?: boolean;
   propShowVisual?: boolean;
   propSetShowVisual?: (show: boolean) => void;
 }
@@ -25,6 +32,7 @@ export const useVisualizerController = ({
   robot,
   onUpdate,
   mode,
+  assemblyWorkspaceActive = false,
   propShowVisual,
   propSetShowVisual,
 }: UseVisualizerControllerProps) => {
@@ -46,10 +54,7 @@ export const useVisualizerController = ({
     handleRegisterJointMotion,
     selectedJointPivot,
     selectedJointMotion,
-  } = useJointPivots(
-    robot.selection.type,
-    robot.selection.id ?? undefined
-  );
+  } = useJointPivots(robot.selection.type, robot.selection.id ?? undefined);
   const { handleRegisterCollisionRef, selectedCollisionRef } = useCollisionRefs(
     robot.selection.type,
     robot.selection.id ?? undefined,
@@ -62,19 +67,20 @@ export const useVisualizerController = ({
     jointPivots,
     jointMotions,
   });
+  const jointTransformControlsEnabled = shouldEnableMergedVisualizerJointTransformControls(mode, {
+    assemblyWorkspaceActive,
+  });
 
   const transformControlsState = useTransformControls(
     selectedJointPivot,
-    mode === 'skeleton' ? 'universal' : state.transformMode,
+    jointTransformControlsEnabled ? 'universal' : state.transformMode,
     robot,
     onUpdate,
     mode,
     {
       onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
-      onPreviewRotateChange: closedLoopDragSync.previewConstraintMotionCompensation,
       onResetPreview: closedLoopDragSync.resetConstraintPreview,
-      selectedRotateObject: selectedJointMotion,
-    }
+    },
   );
 
   const handleAutoFitGround = useCallback(() => {
@@ -121,7 +127,6 @@ export const useVisualizerController = ({
   }, [onUpdate, robot, selectedCollisionRef]);
 
   const requestGroundRealignment = useCallback(() => {
-    if (mode !== 'skeleton') return;
     if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
 
     if (typeof window === 'undefined') {
@@ -137,20 +142,27 @@ export const useVisualizerController = ({
       pendingGroundAlignmentRef.current = null;
       handleAutoFitGround();
     }, 48);
-  }, [handleAutoFitGround, mode, robot]);
+  }, [handleAutoFitGround, robot]);
 
   useEffect(() => {
-    if (mode !== 'skeleton') return;
+    if (!isSyntheticWorldRoot(robot, robot.rootLinkId)) {
+      return;
+    }
+
+    // Workspace synthetic roots own grounding through component transforms.
+    // Clear any legacy single-robot auto-fit offset so it does not leak into assembly mode.
+    resetSyntheticRootGroundOffset(robotRootRef.current);
+  }, [robot.rootLinkId]);
+
+  useEffect(() => {
     if (isSyntheticWorldRoot(robot, robot.rootLinkId)) return;
 
-    const timers = [0, 80, 220].map((delay) =>
-      window.setTimeout(handleAutoFitGround, delay)
-    );
+    const timers = [0, 80, 220].map((delay) => window.setTimeout(handleAutoFitGround, delay));
 
     return () => {
       timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [groundPlaneOffset, handleAutoFitGround, mode, robot.joints, robot.links]);
+  }, [groundPlaneOffset, handleAutoFitGround, robot.joints, robot.links]);
 
   useEffect(() => {
     return () => {
@@ -179,6 +191,7 @@ export const useVisualizerController = ({
     robotRootRef,
     state,
     panel,
+    jointPivots,
     selectedJointPivot,
     selectedJointMotion,
     selectedCollisionRef,

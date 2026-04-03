@@ -4,23 +4,55 @@ import { JSDOM } from 'jsdom';
 
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import { disposeRobotImportWorker } from '@/app/hooks/robotImportWorkerBridge';
+import { mergeAssembly, prepareAssemblyRobotData } from '@/core/robot';
 import { DEFAULT_LINK } from '@/types/constants';
-import { GeometryType, JointType, type RobotFile, type RobotState } from '@/types';
 import {
+  GeometryType,
+  JointType,
+  type AssemblyState,
+  type RobotData,
+  type RobotFile,
+  type RobotState,
+} from '@/types';
+import {
+  buildLightweightWorkspaceViewerReloadContent,
+  buildWorkspaceAssemblyViewerState,
+  buildWorkspaceAssemblyViewerDisplayRobotData,
+  buildGeneratedWorkspaceUrdfFileName,
+  buildPreviewSceneSourceFromImportResult,
+  createGeneratedWorkspaceUrdfFile,
+  buildWorkspaceViewerRobotData,
+  canUseLightweightWorkspaceViewerReloadContent,
   createPreviewRobotState,
   createPreviewRobotStateFromImportResult,
   createRobotSourceSnapshot,
   createRobotSourceSnapshotFromUrdfContent,
+  getViewerSourceFile,
   getPreferredMjcfContent,
+  getPreferredSdfContent,
   getPreferredUrdfContent,
   getPreferredXacroContent,
+  getWorkspaceAssemblyViewerRobotData,
+  getSingleComponentWorkspaceMjcfViewerSource,
+  getWorkspaceAssemblyRenderFailureReason,
+  isGeneratedWorkspaceUrdfFileName,
+  normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource,
+  shouldKeepPristineSingleComponentWorkspaceOnSourceViewer,
+  shouldReseedSingleComponentAssemblyFromActiveFile,
+  shouldReuseSourceViewerForSingleComponentAssembly,
+  shouldUseGeneratedWorkspaceViewerReloadContent,
   shouldUseEmptyRobotForUsdHydration,
+  WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX,
 } from './workspaceSourceSyncUtils.ts';
 
 const { window } = new JSDOM();
 
 if (!globalThis.DOMParser) {
   globalThis.DOMParser = window.DOMParser;
+}
+
+if (!globalThis.XMLSerializer) {
+  globalThis.XMLSerializer = window.XMLSerializer;
 }
 
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
@@ -195,6 +227,109 @@ function createXacroFile(name = 'robots/demo/demo.urdf.xacro'): RobotFile {
   };
 }
 
+function createMjcfFile(name = 'robots/demo/demo.xml'): RobotFile {
+  return {
+    name,
+    format: 'mjcf',
+    content: `
+      <mujoco model="demo">
+        <worldbody>
+          <body name="base_link" />
+        </worldbody>
+      </mujoco>
+    `,
+  };
+}
+
+function createAssemblyState(sourceFile = 'robots/demo/demo.xml'): AssemblyState {
+  return {
+    name: 'demo_project',
+    components: {
+      comp_demo: {
+        id: 'comp_demo',
+        name: 'demo',
+        sourceFile,
+        robot: {
+          name: 'demo',
+          rootLinkId: 'base_link',
+          links: {
+            base_link: {
+              ...DEFAULT_LINK,
+              id: 'base_link',
+              name: 'base_link',
+            },
+          },
+          joints: {},
+        },
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+}
+
+function assertNearlyEqual(actual: number, expected: number, message: string) {
+  assert.ok(
+    Math.abs(actual - expected) <= 1e-9,
+    `${message}: expected ${expected}, received ${actual}`,
+  );
+}
+
+function createSeededSingleComponentAssemblyState(
+  sourceFile = 'robots/demo/demo.urdf',
+): AssemblyState {
+  const sourceRobot = createRobotState();
+
+  return {
+    name: 'demo_project',
+    components: {
+      comp_demo: {
+        id: 'comp_demo',
+        name: 'demo',
+        sourceFile,
+        robot: {
+          name: sourceRobot.name,
+          rootLinkId: 'comp_demo_base_link',
+          links: {
+            comp_demo_base_link: {
+              ...sourceRobot.links.base_link,
+              id: 'comp_demo_base_link',
+              name: 'demo',
+            },
+            comp_demo_tool_link: {
+              ...sourceRobot.links.tool_link,
+              id: 'comp_demo_tool_link',
+              name: 'demo_tool_link',
+            },
+          },
+          joints: {
+            comp_demo_joint_a: {
+              ...sourceRobot.joints.joint_a,
+              id: 'comp_demo_joint_a',
+              name: 'demo_joint_a',
+              parentLinkId: 'comp_demo_base_link',
+              childLinkId: 'comp_demo_tool_link',
+            },
+          },
+          materials: {
+            blue: { color: '#0088ff' },
+          },
+          closedLoopConstraints: [
+            {
+              ...sourceRobot.closedLoopConstraints![0],
+              id: 'comp_demo_loop-1',
+              linkAId: 'comp_demo_base_link',
+              linkBId: 'comp_demo_tool_link',
+            },
+          ],
+        },
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+}
+
 test('createRobotSourceSnapshot ignores transient selection state', () => {
   const left = createRobotState();
   const right = createRobotState();
@@ -220,11 +355,116 @@ test('createRobotSourceSnapshot is stable across key insertion order', () => {
   assert.equal(createRobotSourceSnapshot(left), createRobotSourceSnapshot(right));
 });
 
+test('canUseLightweightWorkspaceViewerReloadContent returns true when links already carry authored material truth', () => {
+  const robot = createRobotState();
+  robot.links.base_link = {
+    ...robot.links.base_link,
+    visual: {
+      ...robot.links.base_link.visual,
+      authoredMaterials: [{ name: 'body_blue', color: '#0088ff' }],
+    },
+  };
+
+  assert.equal(canUseLightweightWorkspaceViewerReloadContent(robot.links), true);
+});
+
+test('canUseLightweightWorkspaceViewerReloadContent returns false when authored materials must still be inferred from XML', () => {
+  assert.equal(canUseLightweightWorkspaceViewerReloadContent(createRobotState().links), false);
+});
+
+test('shouldUseGeneratedWorkspaceViewerReloadContent keeps real workspace geometry when a transform target is active', () => {
+  const robot = createRobotState();
+  robot.links.base_link = {
+    ...robot.links.base_link,
+    visual: {
+      ...robot.links.base_link.visual,
+      authoredMaterials: [{ name: 'body_blue', color: '#0088ff' }],
+    },
+  };
+
+  assert.equal(
+    shouldUseGeneratedWorkspaceViewerReloadContent({
+      robotLinks: robot.links,
+      hasActiveTransformTarget: true,
+    }),
+    true,
+  );
+});
+
+test('shouldUseGeneratedWorkspaceViewerReloadContent keeps the lightweight reload path for passive workspace views with authored materials', () => {
+  const robot = createRobotState();
+  robot.links.base_link = {
+    ...robot.links.base_link,
+    visual: {
+      ...robot.links.base_link.visual,
+      authoredMaterials: [{ name: 'body_blue', color: '#0088ff' }],
+    },
+  };
+
+  assert.equal(
+    shouldUseGeneratedWorkspaceViewerReloadContent({
+      robotLinks: robot.links,
+      hasActiveTransformTarget: false,
+    }),
+    false,
+  );
+});
+
+test('buildLightweightWorkspaceViewerReloadContent produces a tiny deterministic URDF stub', () => {
+  assert.equal(
+    buildLightweightWorkspaceViewerReloadContent(42),
+    '<robot name="workspace_viewer_42" />',
+  );
+});
+
+test('buildGeneratedWorkspaceUrdfFileName reserves the generated folder and increments collisions', () => {
+  const availableFiles: RobotFile[] = [
+    createUrdfFile('robots/demo/demo.urdf'),
+    createUrdfFile('generated/demo_workspace.generated.urdf'),
+  ];
+
+  assert.equal(
+    buildGeneratedWorkspaceUrdfFileName({
+      assemblyName: 'demo workspace',
+      availableFiles,
+    }),
+    'generated/demo_workspace_2.generated.urdf',
+  );
+
+  assert.equal(isGeneratedWorkspaceUrdfFileName('generated/demo_workspace.generated.urdf'), true);
+  assert.equal(isGeneratedWorkspaceUrdfFileName('robots/demo/demo.urdf'), false);
+});
+
+test('createGeneratedWorkspaceUrdfFile creates a deterministic URDF projection for simple mode', () => {
+  const baseRobot = createRobotState();
+  const mergedRobotData: RobotData = {
+    name: baseRobot.name,
+    rootLinkId: baseRobot.rootLinkId,
+    links: baseRobot.links,
+    joints: baseRobot.joints,
+    materials: baseRobot.materials,
+    closedLoopConstraints: baseRobot.closedLoopConstraints,
+    inspectionContext: baseRobot.inspectionContext,
+  };
+
+  const generated = createGeneratedWorkspaceUrdfFile({
+    assemblyName: 'demo workspace',
+    mergedRobotData,
+    availableFiles: [],
+  });
+
+  assert.equal(generated.file.name, 'generated/demo_workspace.generated.urdf');
+  assert.equal(generated.file.format, 'urdf');
+  assert.match(generated.file.content, /<robot name="demo">/);
+  assert.equal(generated.snapshot, createRobotSourceSnapshot(generated.robot));
+});
+
 test('createRobotSourceSnapshotFromUrdfContent normalizes mesh paths relative to the source file', async () => {
   const workerMock = installEditableRobotSourceWorkerMock();
 
   try {
-    const snapshot = await createRobotSourceSnapshotFromUrdfContent(`
+    const snapshot = await createRobotSourceSnapshotFromUrdfContent(
+      `
       <robot name="demo">
         <link name="base_link">
           <visual>
@@ -234,9 +474,11 @@ test('createRobotSourceSnapshotFromUrdfContent normalizes mesh paths relative to
           </visual>
         </link>
       </robot>
-    `, {
-      sourcePath: 'robots/demo/demo.urdf',
-    });
+    `,
+      {
+        sourcePath: 'robots/demo/demo.urdf',
+      },
+    );
 
     assert.ok(snapshot);
     assert.match(snapshot ?? '', /robots\/demo\/meshes\/base\.stl/);
@@ -249,13 +491,16 @@ test('createRobotSourceSnapshotFromUrdfContent uses the editable source worker w
   const workerMock = installEditableRobotSourceWorkerMock();
 
   try {
-    const snapshot = await createRobotSourceSnapshotFromUrdfContent(`
+    const snapshot = await createRobotSourceSnapshotFromUrdfContent(
+      `
       <robot name="demo">
         <link name="base_link" />
       </robot>
-    `, {
-      sourcePath: 'robots/demo/demo.urdf',
-    });
+    `,
+      {
+        sourcePath: 'robots/demo/demo.urdf',
+      },
+    );
 
     assert.equal(workerMock.parseRequestCount, 1);
     assert.ok(snapshot);
@@ -325,6 +570,1375 @@ test('shouldUseEmptyRobotForUsdHydration does not affect non-USD files', () => {
   );
 });
 
+test('getViewerSourceFile clears the source file while rendering an assembly view', () => {
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile: createMjcfFile(),
+      shouldRenderAssembly: true,
+    }),
+    null,
+  );
+});
+
+test('getViewerSourceFile keeps the selected file outside assembly rendering', () => {
+  const selectedFile = createMjcfFile();
+
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile,
+      shouldRenderAssembly: false,
+    }),
+    selectedFile,
+  );
+});
+
+test('getViewerSourceFile keeps an explicit workspace source file while rendering an assembly view', () => {
+  const workspaceSourceFile = createMjcfFile('robots/demo/workspace.xml');
+
+  assert.equal(
+    getViewerSourceFile({
+      selectedFile: createMjcfFile('robots/demo/selected.xml'),
+      shouldRenderAssembly: true,
+      workspaceSourceFile,
+    }),
+    workspaceSourceFile,
+  );
+});
+
+test('getWorkspaceAssemblyRenderFailureReason reports no failure when assembly rendering is disabled', () => {
+  assert.equal(
+    getWorkspaceAssemblyRenderFailureReason({
+      shouldRenderAssembly: false,
+      mergedRobotData: null,
+      viewerMergedRobotData: null,
+    }),
+    null,
+  );
+});
+
+test('getWorkspaceAssemblyRenderFailureReason surfaces missing merged workspace robot data', () => {
+  assert.equal(
+    getWorkspaceAssemblyRenderFailureReason({
+      shouldRenderAssembly: true,
+      mergedRobotData: null,
+      viewerMergedRobotData: null,
+    }),
+    'missing-merged-robot-data',
+  );
+});
+
+test('getWorkspaceAssemblyRenderFailureReason surfaces missing viewer merged robot data', () => {
+  const mergedRobotData = mergeAssembly(createAssemblyState('robots/demo/workspace.xml'));
+  assert.ok(mergedRobotData);
+
+  assert.equal(
+    getWorkspaceAssemblyRenderFailureReason({
+      shouldRenderAssembly: true,
+      mergedRobotData,
+      viewerMergedRobotData: null,
+    }),
+    'missing-viewer-merged-robot-data',
+  );
+});
+
+test('getSingleComponentWorkspaceMjcfViewerSource returns the lone visible MJCF component source', () => {
+  const sourceFile = createMjcfFile('robots/demo/workspace.xml');
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: createAssemblyState(sourceFile.name),
+      availableFiles: [sourceFile],
+    }),
+    sourceFile,
+  );
+});
+
+test('getSingleComponentWorkspaceMjcfViewerSource ignores assemblies that need the merged workspace viewer path', () => {
+  const sourceFile = createMjcfFile('robots/demo/workspace.xml');
+  const secondSourceFile = createMjcfFile('robots/demo/other.xml');
+  const multiComponentAssembly = createAssemblyState(sourceFile.name);
+  multiComponentAssembly.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: secondSourceFile.name,
+    robot: {
+      name: 'other',
+      rootLinkId: 'other_root',
+      links: {
+        other_root: {
+          ...DEFAULT_LINK,
+          id: 'other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: multiComponentAssembly,
+      availableFiles: [sourceFile, secondSourceFile],
+    }),
+    null,
+  );
+
+  const bridgedAssembly = createAssemblyState(sourceFile.name);
+  bridgedAssembly.bridges.bridge_1 = {
+    id: 'bridge_1',
+    name: 'bridge_1',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_demo',
+    childLinkId: 'base_link',
+    joint: {
+      id: 'bridge_joint',
+      name: 'bridge_joint',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      axis: { x: 0, y: 0, z: 1 },
+      limit: { lower: 0, upper: 0, effort: 0, velocity: 0 },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: bridgedAssembly,
+      availableFiles: [sourceFile],
+    }),
+    null,
+  );
+
+  const urdfSourceFile = createUrdfFile('robots/demo/workspace.urdf');
+
+  assert.equal(
+    getSingleComponentWorkspaceMjcfViewerSource({
+      assemblyState: createAssemblyState(urdfSourceFile.name),
+      availableFiles: [urdfSourceFile],
+    }),
+    null,
+  );
+});
+
+test('getWorkspaceAssemblyViewerRobotData injects a transient bridge preview without mutating persisted bridges', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'comp_demo_base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'comp_other_other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'comp_demo_base_link',
+        childLinkId: 'comp_other_other_root',
+        origin: { xyz: { x: 0.1, y: -0.2, z: 0.3 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  assert.ok(previewRobot);
+  assert.equal(previewRobot?.joints.__bridge_preview__?.parentLinkId, 'comp_demo_base_link');
+  assert.equal(previewRobot?.joints.__bridge_preview__?.childLinkId, 'comp_other_other_root');
+  assert.equal(previewRobot?.joints.__bridge_preview__?.origin.xyz.x, 0.1);
+  assert.equal(Object.keys(assemblyState.bridges).length, 0);
+});
+
+test('workspace viewer preview state realigns the child component before bridge creation is confirmed', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 4, y: 0.5, z: -0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const previewBridge = {
+    id: '__bridge_preview__',
+    name: '__bridge_preview__',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'comp_demo_base_link',
+    childComponentId: 'comp_other',
+    childLinkId: 'comp_other_other_root',
+    joint: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      type: JointType.FIXED,
+      parentLinkId: 'comp_demo_base_link',
+      childLinkId: 'comp_other_other_root',
+      origin: { xyz: { x: 0.1, y: -0.2, z: 0.3 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  } as const;
+
+  const viewerAssemblyState = buildWorkspaceAssemblyViewerState({
+    assemblyState,
+    bridgePreview: previewBridge,
+  });
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState: viewerAssemblyState,
+  });
+  const previewDisplayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState: viewerAssemblyState,
+    mergedRobotData: previewRobot,
+  });
+
+  assert.ok(viewerAssemblyState, 'viewer assembly state should exist');
+  assert.notEqual(viewerAssemblyState, assemblyState, 'preview should use a cloned assembly state');
+  assert.equal(assemblyState.components.comp_other.transform?.position.x, 4);
+  assert.equal(Object.keys(assemblyState.bridges).length, 0);
+
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.x ?? 0,
+    0.1,
+    'preview child transform should align to bridge origin on x',
+  );
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.y ?? 0,
+    -0.2,
+    'preview child transform should align to bridge origin on y',
+  );
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.z ?? 0,
+    0.3,
+    'preview child transform should align to bridge origin on z',
+  );
+
+  const previewRootJoint =
+    previewDisplayRobot?.joints[`${WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX}comp_other`];
+  assert.ok(
+    previewRootJoint,
+    'workspace viewer should keep a synthetic root joint for the child component',
+  );
+  assertNearlyEqual(
+    previewRootJoint.origin.xyz.x,
+    0.1,
+    'child preview root joint should move on x',
+  );
+  assertNearlyEqual(
+    previewRootJoint.origin.xyz.y,
+    -0.2,
+    'child preview root joint should move on y',
+  );
+  assertNearlyEqual(
+    previewRootJoint.origin.xyz.z,
+    0.3,
+    'child preview root joint should move on z',
+  );
+});
+
+test('getWorkspaceAssemblyViewerRobotData skips transient previews for hidden components', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: false,
+  };
+
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'comp_demo_base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'comp_other_other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'comp_demo_base_link',
+        childLinkId: 'comp_other_other_root',
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  assert.ok(previewRobot);
+  assert.equal(previewRobot?.joints.__bridge_preview__, undefined);
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData moves child components with stable world-root joints', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  const previewRobot = getWorkspaceAssemblyViewerRobotData({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'comp_demo_base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'comp_other_other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'comp_demo_base_link',
+        childLinkId: 'comp_other_other_root',
+        origin: { xyz: { x: 0.1, y: -0.2, z: 0.3 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: previewRobot,
+  });
+
+  assert.ok(displayRobot);
+  assert.equal(displayRobot?.rootLinkId, '__workspace_world__');
+  assert.equal(displayRobot?.joints.__bridge_preview__, undefined);
+  assert.equal(
+    displayRobot?.joints['__workspace_world__::component::comp_other']?.parentLinkId,
+    '__workspace_world__',
+  );
+  assert.equal(
+    displayRobot?.joints['__workspace_world__::component::comp_other']?.origin.xyz.x,
+    0.1,
+  );
+  assert.equal(
+    displayRobot?.joints['__workspace_world__::component::comp_other']?.origin.xyz.y,
+    -0.2,
+  );
+  assert.equal(
+    displayRobot?.joints['__workspace_world__::component::comp_other']?.origin.xyz.z,
+    0.55,
+  );
+
+  const normalizedDisplayRobot = normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource(
+    displayRobot!,
+  );
+  assert.equal(
+    normalizedDisplayRobot.joints['__workspace_world__::component::comp_other']?.origin.xyz.x,
+    0,
+  );
+});
+
+test('normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource keeps bridge-motion-only previews source-stable', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  const buildNormalizedSnapshot = (bridgeOriginX: number) => {
+    const previewRobot = getWorkspaceAssemblyViewerRobotData({
+      assemblyState,
+      bridgePreview: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        parentComponentId: 'comp_demo',
+        parentLinkId: 'comp_demo_base_link',
+        childComponentId: 'comp_other',
+        childLinkId: 'comp_other_other_root',
+        joint: {
+          id: '__bridge_preview__',
+          name: '__bridge_preview__',
+          type: JointType.FIXED,
+          parentLinkId: 'comp_demo_base_link',
+          childLinkId: 'comp_other_other_root',
+          origin: { xyz: { x: bridgeOriginX, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+        },
+      },
+    });
+    const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+      assemblyState,
+      mergedRobotData: previewRobot,
+    });
+    const normalizedDisplayRobot = normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource(
+      displayRobot!,
+    );
+
+    return {
+      displaySnapshot: createRobotSourceSnapshot({
+        ...displayRobot!,
+        selection: { type: null, id: null },
+      }),
+      normalizedSnapshot: createRobotSourceSnapshot({
+        ...normalizedDisplayRobot,
+        selection: { type: null, id: null },
+      }),
+    };
+  };
+
+  const initial = buildNormalizedSnapshot(0.1);
+  const moved = buildNormalizedSnapshot(0.65);
+
+  assert.notEqual(initial.displaySnapshot, moved.displaySnapshot);
+  assert.equal(initial.normalizedSnapshot, moved.normalizedSnapshot);
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData applies isolated component transforms to synthetic root joints', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.transform = {
+    position: { x: 0.5, y: -0.25, z: 0.75 },
+    rotation: { r: 0.1, p: -0.2, y: 0.3 },
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: assemblyState.components.comp_demo.robot,
+  });
+
+  assert.ok(displayRobot);
+  assert.equal(displayRobot?.rootLinkId, '__workspace_world__');
+
+  const syntheticRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  assert.ok(syntheticRootJoint, 'expected a synthetic root joint for the isolated component');
+  assertNearlyEqual(
+    syntheticRootJoint.origin.xyz.x,
+    0.5,
+    'synthetic root joint x translation should match component transform',
+  );
+  assertNearlyEqual(
+    syntheticRootJoint.origin.xyz.y,
+    -0.25,
+    'synthetic root joint y translation should match component transform',
+  );
+  assertNearlyEqual(
+    syntheticRootJoint.origin.xyz.z,
+    0.75,
+    'synthetic root joint z translation should match component transform',
+  );
+  assertNearlyEqual(
+    syntheticRootJoint.origin.rpy.r,
+    0.1,
+    'synthetic root joint roll should match component transform',
+  );
+  assertNearlyEqual(
+    syntheticRootJoint.origin.rpy.p,
+    -0.2,
+    'synthetic root joint pitch should match component transform',
+  );
+  assertNearlyEqual(
+    syntheticRootJoint.origin.rpy.y,
+    0.3,
+    'synthetic root joint yaw should match component transform',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData packs isolated components using footprint-aware offsets', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+    comp_demo_tool_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_tool_link',
+      name: 'tool_link',
+    },
+  };
+  assemblyState.components.comp_demo.robot.joints = {
+    comp_demo_fixed_joint: {
+      id: 'comp_demo_fixed_joint',
+      name: 'comp_demo_fixed_joint',
+      type: JointType.FIXED,
+      parentLinkId: 'comp_demo_base_link',
+      childLinkId: 'comp_demo_tool_link',
+      origin: { xyz: { x: 1.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    visible: true,
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const leftRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  const rightRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+
+  assert.ok(leftRootJoint, 'expected synthetic root joint for the left component');
+  assert.ok(rightRootJoint, 'expected synthetic root joint for the right component');
+  assert.ok((leftRootJoint?.origin.xyz.x ?? 0) < 0);
+  assert.ok((rightRootJoint?.origin.xyz.x ?? 0) > 0);
+  assert.ok(
+    (rightRootJoint?.origin.xyz.x ?? 0) < 1,
+    `expected compact default placement for the second component, got ${rightRootJoint?.origin.xyz.x ?? 0}`,
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData preserves the anchor component when another component has an explicit placement', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 0.22, y: 0, z: 0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  const placedRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the anchor component');
+  assert.ok(placedRootJoint, 'expected a synthetic root joint for the placed component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.x,
+    0,
+    'anchor component x should remain at the authored origin',
+  );
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.y,
+    0,
+    'anchor component y should remain at the authored origin',
+  );
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.z,
+    0.25,
+    'identity anchor should receive the viewer ground lift from its default geometry',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.x,
+    0.22,
+    'explicit component x placement should pass through unchanged',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.y,
+    0,
+    'explicit component y placement should pass through unchanged',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.z,
+    0.25,
+    'explicit component z placement should pass through unchanged',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData adds display-only ground lift for identity root components in multi-component mode', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.links.base_link = {
+    ...assemblyState.components.comp_demo.robot.links.base_link,
+    visual: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.visual,
+      type: GeometryType.BOX,
+      dimensions: { x: 0.4, y: 0.3, z: 0.5 },
+      origin: {
+        xyz: { x: 0, y: 0, z: -0.35 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 0.22, y: 0, z: 0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  const placedRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the identity anchor component');
+  assert.ok(placedRootJoint, 'expected a synthetic root joint for the explicitly placed component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.x,
+    0,
+    'identity anchor x should remain at the authored origin',
+  );
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.y,
+    0,
+    'identity anchor y should remain at the authored origin',
+  );
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.z,
+    0.6,
+    'identity anchor should receive a viewer-only ground lift',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.z,
+    0.25,
+    'explicit component z placement should remain unchanged',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData uses component renderable bounds for mesh ground lift', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.links.base_link = {
+    ...assemblyState.components.comp_demo.robot.links.base_link,
+    visual: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.visual,
+      type: GeometryType.MESH,
+      dimensions: { x: 1, y: 1, z: 1 },
+      meshPath: 'robots/demo/h1.stl',
+    },
+    collision: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.collision,
+      type: GeometryType.NONE,
+      dimensions: { x: 0, y: 0, z: 0 },
+    },
+  };
+  (assemblyState.components.comp_demo as any).renderableBounds = {
+    min: { x: -0.35, y: -0.2, z: -1.15 },
+    max: { x: 0.35, y: 0.2, z: 0.45 },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 0.22, y: 0, z: 0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the mesh anchor component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.z,
+    1.15,
+    'mesh anchor should use the provided renderable bounds instead of placeholder mesh extents',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData ignores placeholder mesh bounds when real renderable bounds are unavailable', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.links.base_link = {
+    ...assemblyState.components.comp_demo.robot.links.base_link,
+    visual: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.visual,
+      type: GeometryType.MESH,
+      dimensions: { x: 1, y: 1, z: 1 },
+      meshPath: 'robots/demo/h1.stl',
+    },
+    collision: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.collision,
+      type: GeometryType.NONE,
+      dimensions: { x: 0, y: 0, z: 0 },
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 0.22, y: 0, z: 0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the mesh anchor component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.z,
+    0,
+    'mesh anchor should preserve its authored height until real renderable bounds are available',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData uses component transforms for bridged components without a root-link bridge', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+        comp_other_tool_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_tool_link',
+          name: 'other_tool_link',
+        },
+      },
+      joints: {
+        comp_other_tool_mount: {
+          id: 'comp_other_tool_mount',
+          name: 'comp_other_tool_mount',
+          type: JointType.FIXED,
+          parentLinkId: 'comp_other_base_link',
+          childLinkId: 'comp_other_tool_link',
+          origin: { xyz: { x: 1.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+        },
+      },
+    },
+    transform: {
+      position: { x: -1.2, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+  assemblyState.bridges.bridge_demo = {
+    id: 'bridge_demo',
+    name: 'bridge_demo',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_other',
+    childLinkId: 'comp_other_tool_link',
+    joint: {
+      id: 'bridge_demo',
+      name: 'bridge_demo',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'comp_other_tool_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  const bridgedRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the parent component');
+  assert.ok(bridgedRootJoint, 'expected a synthetic root joint for the bridged child component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.x,
+    0,
+    'parent component should stay anchored at the origin',
+  );
+  assertNearlyEqual(
+    bridgedRootJoint.origin.xyz.x,
+    -1.2,
+    'child component root should be shifted so its selected link aligns to the parent',
+  );
+  assertNearlyEqual(bridgedRootJoint.origin.xyz.y, 0, 'child component y should stay aligned');
+  assertNearlyEqual(bridgedRootJoint.origin.xyz.z, 0, 'child component z should stay aligned');
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData reuses component link and joint references for viewer display', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.joints = {
+    comp_demo_joint: {
+      id: 'comp_demo_joint',
+      name: 'comp_demo_joint',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'tool_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      axis: { x: 0, y: 0, z: 1 },
+      limit: { lower: 0, upper: 0, effort: 0, velocity: 0 },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: assemblyState.components.comp_demo.robot,
+  });
+
+  assert.ok(displayRobot);
+  assert.equal(
+    displayRobot?.links.base_link,
+    assemblyState.components.comp_demo.robot.links.base_link,
+  );
+  assert.equal(
+    displayRobot?.joints.comp_demo_joint,
+    assemblyState.components.comp_demo.robot.joints.comp_demo_joint,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile detects a stale single-component assembly seed', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/left_hand.xml'),
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    true,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile seeds initial and empty assemblies', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: null,
+      activeFile: createMjcfFile('robots/demo/left_hand.xml'),
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: {
+        name: 'demo_project',
+        components: {},
+        bridges: {},
+      },
+      activeFile: createMjcfFile('robots/demo/left_hand.xml'),
+    }),
+    true,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile ignores matching sources and non-editable files', () => {
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/scene_left.xml'),
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState: createAssemblyState('robots/demo/scene_left.xml'),
+      activeFile: {
+        name: 'robots/demo/hand_mesh.obj',
+        format: 'mesh',
+        content: '',
+      },
+    }),
+    false,
+  );
+});
+
+test('shouldReseedSingleComponentAssemblyFromActiveFile preserves real assemblies', () => {
+  const assemblyState = createAssemblyState('robots/demo/left_hand.xml');
+  assemblyState.bridges.bridge_1 = {
+    id: 'bridge_1',
+    name: 'bridge_1',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_demo',
+    childLinkId: 'base_link',
+    joint: {
+      id: 'joint_1',
+      name: 'joint_1',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  assert.equal(
+    shouldReseedSingleComponentAssemblyFromActiveFile({
+      assemblyState,
+      activeFile: createMjcfFile('robots/demo/scene_left.xml'),
+    }),
+    false,
+  );
+});
+
+test('shouldReuseSourceViewerForSingleComponentAssembly keeps pristine single-component seeds on the current file scene', () => {
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState: createSeededSingleComponentAssemblyState('robots/demo/demo.urdf'),
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    true,
+  );
+});
+
+test('shouldReuseSourceViewerForSingleComponentAssembly reuses pristine USD seeds that require assembly preparation normalization', () => {
+  const sourceRobot = createRobotState();
+  sourceRobot.links.base_link = {
+    ...sourceRobot.links.base_link,
+    visual: {
+      ...sourceRobot.links.base_link.visual,
+      type: GeometryType.MESH,
+      meshPath: 'meshes/demo_part.usd',
+      dimensions: { x: 1, y: 1, z: 1 },
+    },
+  };
+
+  const assemblyState: AssemblyState = {
+    name: 'demo_project',
+    components: {
+      comp_demo: {
+        id: 'comp_demo',
+        name: 'demo',
+        sourceFile: 'robots/demo/demo.usd',
+        robot: prepareAssemblyRobotData(sourceRobot, {
+          componentId: 'comp_demo',
+          rootName: 'demo',
+          sourceFilePath: 'robots/demo/demo.usd',
+          sourceFormat: 'usd',
+        }),
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState,
+      activeFile: createUsdFile('robots/demo/demo.usd'),
+      sourceSnapshot: createRobotSourceSnapshot(sourceRobot),
+    }),
+    true,
+  );
+});
+
+test('shouldReuseSourceViewerForSingleComponentAssembly prefers prepared USD robot data when the live source snapshot differs', () => {
+  const liveSourceRobot = createRobotState();
+  const preparedSourceRobot = createRobotState();
+
+  preparedSourceRobot.links.base_link = {
+    ...preparedSourceRobot.links.base_link,
+    visual: {
+      ...preparedSourceRobot.links.base_link.visual,
+      type: GeometryType.MESH,
+      meshPath: 'meshes/demo_part.usd',
+      dimensions: { x: 1, y: 1, z: 1 },
+    },
+  };
+
+  const assemblyState: AssemblyState = {
+    name: 'demo_project',
+    components: {
+      comp_demo: {
+        id: 'comp_demo',
+        name: 'demo',
+        sourceFile: 'robots/demo/demo.usd',
+        robot: prepareAssemblyRobotData(preparedSourceRobot, {
+          componentId: 'comp_demo',
+          rootName: 'demo',
+          sourceFilePath: 'robots/demo/demo.usd',
+          sourceFormat: 'usd',
+        }),
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState,
+      activeFile: createUsdFile('robots/demo/demo.usd'),
+      sourceSnapshot: createRobotSourceSnapshot(liveSourceRobot),
+      sourceRobotData: preparedSourceRobot,
+    }),
+    true,
+  );
+});
+
+test('shouldReuseSourceViewerForSingleComponentAssembly stops reusing the current file scene once the single-component source diverges structurally', () => {
+  const renamedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  renamedAssembly.components.comp_demo.name = 'demo_variant';
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState: renamedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    false,
+  );
+
+  const mutatedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  mutatedAssembly.components.comp_demo.robot.joints.comp_demo_joint_a.origin.xyz.x = 0.25;
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState: mutatedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    false,
+  );
+
+  const translatedAssembly = createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  translatedAssembly.transform = {
+    position: { x: 1, y: 0, z: 0 },
+    rotation: { r: 0, p: 0, y: 0 },
+  };
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState: translatedAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    false,
+  );
+});
+
+test('shouldReuseSourceViewerForSingleComponentAssembly keeps the current file scene for isolated single-component transforms', () => {
+  const rotatedComponentAssembly =
+    createSeededSingleComponentAssemblyState('robots/demo/demo.urdf');
+  rotatedComponentAssembly.components.comp_demo.transform = {
+    position: { x: 0.15, y: -0.05, z: 0.25 },
+    rotation: { r: 0, p: 0, y: 0.35 },
+  };
+
+  assert.equal(
+    shouldReuseSourceViewerForSingleComponentAssembly({
+      assemblyState: rotatedComponentAssembly,
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+    }),
+    true,
+  );
+});
+
+test('shouldKeepPristineSingleComponentWorkspaceOnSourceViewer keeps the current file scene while assembly-level transforms stay inactive', () => {
+  assert.equal(
+    shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({
+      assemblyState: createSeededSingleComponentAssemblyState('robots/demo/demo.urdf'),
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      assemblySelectionType: null,
+    }),
+    true,
+  );
+});
+
+test('shouldKeepPristineSingleComponentWorkspaceOnSourceViewer keeps component selections on the current file scene', () => {
+  assert.equal(
+    shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({
+      assemblyState: createSeededSingleComponentAssemblyState('robots/demo/demo.urdf'),
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      assemblySelectionType: 'component',
+    }),
+    true,
+  );
+});
+
+test('shouldKeepPristineSingleComponentWorkspaceOnSourceViewer still hands assembly-level transforms to the workspace viewer', () => {
+  assert.equal(
+    shouldKeepPristineSingleComponentWorkspaceOnSourceViewer({
+      assemblyState: createSeededSingleComponentAssemblyState('robots/demo/demo.urdf'),
+      activeFile: createUrdfFile('robots/demo/demo.urdf'),
+      sourceSnapshot: createRobotSourceSnapshot(createRobotState()),
+      assemblySelectionType: 'assembly',
+    }),
+    false,
+  );
+});
+
+test('buildWorkspaceViewerRobotData keeps single-root robots unchanged', () => {
+  const robot: RobotData = {
+    name: 'single-root',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+    },
+    joints: {},
+  };
+
+  assert.equal(buildWorkspaceViewerRobotData(robot), robot);
+});
+
+test('buildWorkspaceViewerRobotData adds a synthetic world root for disconnected models', () => {
+  const robot: RobotData = {
+    name: 'merged',
+    rootLinkId: 'left_base',
+    links: {
+      left_base: {
+        ...DEFAULT_LINK,
+        id: 'left_base',
+        name: 'left_base',
+      },
+      left_tool: {
+        ...DEFAULT_LINK,
+        id: 'left_tool',
+        name: 'left_tool',
+      },
+      right_base: {
+        ...DEFAULT_LINK,
+        id: 'right_base',
+        name: 'right_base',
+      },
+    },
+    joints: {
+      left_fixed: {
+        id: 'left_fixed',
+        name: 'left_fixed',
+        type: JointType.FIXED,
+        parentLinkId: 'left_base',
+        childLinkId: 'left_tool',
+        origin: { xyz: { x: 0.25, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  };
+
+  const viewerRobot = buildWorkspaceViewerRobotData(robot);
+
+  assert.equal(viewerRobot.rootLinkId, '__workspace_world__');
+  assert.equal(viewerRobot.links.__workspace_world__?.name, 'world');
+  assert.equal(viewerRobot.links.__workspace_world__?.visual.type, GeometryType.NONE);
+  assert.equal(viewerRobot.links.__workspace_world__?.collision.type, GeometryType.NONE);
+
+  const syntheticJoints = Object.values(viewerRobot.joints).filter(
+    (joint) => joint.parentLinkId === '__workspace_world__',
+  );
+
+  assert.equal(syntheticJoints.length, 2);
+  assert.deepEqual(syntheticJoints.map((joint) => joint.childLinkId).sort(), [
+    'left_base',
+    'right_base',
+  ]);
+
+  const rootOffsets = syntheticJoints
+    .map((joint) => joint.origin.xyz.x)
+    .sort((left, right) => left - right);
+
+  assert.ok(rootOffsets[0] < 0);
+  assert.ok(rootOffsets[1] > 0);
+  assert.ok(rootOffsets[0] > -0.8 && rootOffsets[0] < -0.45);
+  assert.ok(rootOffsets[1] > 0.35 && rootOffsets[1] < 0.65);
+  assert.ok(rootOffsets[1] - rootOffsets[0] < 1.25);
+});
+
 test('createPreviewRobotState resolves editable files into a selection-free preview robot', () => {
   const previewRobot = createPreviewRobotState(createUrdfFile(), {
     availableFiles: [],
@@ -386,6 +2000,70 @@ test('createPreviewRobotStateFromImportResult converts ready worker results into
   assert.equal(previewRobot?.name, 'demo');
 });
 
+test('buildPreviewSceneSourceFromImportResult keeps MJCF source only after a successful import result', () => {
+  const mjcfFile = createMjcfFile();
+  const previewSource = buildPreviewSceneSourceFromImportResult(mjcfFile, {
+    availableFiles: [mjcfFile],
+    previewRobot: null,
+    importResult: {
+      status: 'ready',
+      format: 'mjcf',
+      robotData: {
+        name: 'demo',
+        rootLinkId: 'base_link',
+        links: {
+          base_link: {
+            ...DEFAULT_LINK,
+            id: 'base_link',
+            name: 'base_link',
+          },
+        },
+        joints: {},
+      },
+      resolvedUrdfContent: null,
+      resolvedUrdfSourceFilePath: null,
+    },
+  });
+
+  assert.ok(previewSource);
+  assert.match(previewSource, /<mujoco model="demo">/);
+  assert.match(previewSource, /<body name="base_link"\s*\/>/);
+});
+
+test('buildPreviewSceneSourceFromImportResult returns an empty preview for MJCF parse failures', () => {
+  const mjcfFile = createMjcfFile();
+
+  assert.equal(
+    buildPreviewSceneSourceFromImportResult(mjcfFile, {
+      availableFiles: [mjcfFile],
+      previewRobot: null,
+      importResult: {
+        status: 'error',
+        format: 'mjcf',
+        reason: 'parse_failed',
+      },
+    }),
+    '',
+  );
+});
+
+test('buildPreviewSceneSourceFromImportResult suppresses viewer preview for source-only MJCF fragments', () => {
+  const mjcfFile = createMjcfFile('robots/demo/keyframes.xml');
+
+  assert.equal(
+    buildPreviewSceneSourceFromImportResult(mjcfFile, {
+      availableFiles: [mjcfFile],
+      previewRobot: null,
+      importResult: {
+        status: 'error',
+        format: 'mjcf',
+        reason: 'source_only_fragment',
+      },
+    }),
+    null,
+  );
+});
+
 test('getPreferredMjcfContent keeps the imported MJCF before viewer edits', () => {
   assert.equal(
     getPreferredMjcfContent({
@@ -397,14 +2075,36 @@ test('getPreferredMjcfContent keeps the imported MJCF before viewer edits', () =
   );
 });
 
-test('getPreferredMjcfContent switches to generated MJCF after viewer edits', () => {
+test('getPreferredMjcfContent keeps the imported MJCF after viewer edits when source is available', () => {
   assert.equal(
     getPreferredMjcfContent({
       sourceContent: '<mujoco model="cassie-source"/>',
       generatedContent: '<mujoco model="cassie-generated"/>',
       hasViewerEdits: true,
     }),
-    '<mujoco model="cassie-generated"/>',
+    '<mujoco model="cassie-source"/>',
+  );
+});
+
+test('getPreferredSdfContent keeps the imported SDF before store edits', () => {
+  assert.equal(
+    getPreferredSdfContent({
+      fileContent: '<sdf version="1.7"><model name="source"/></sdf>',
+      generatedContent: '<sdf version="1.7"><model name="generated"/></sdf>',
+      hasStoreEdits: false,
+    }),
+    '<sdf version="1.7"><model name="source"/></sdf>',
+  );
+});
+
+test('getPreferredSdfContent switches to generated SDF after store edits', () => {
+  assert.equal(
+    getPreferredSdfContent({
+      fileContent: '<sdf version="1.7"><model name="source"/></sdf>',
+      generatedContent: '<sdf version="1.7"><model name="generated"/></sdf>',
+      hasStoreEdits: true,
+    }),
+    '<sdf version="1.7"><model name="generated"/></sdf>',
   );
 });
 

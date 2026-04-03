@@ -3,7 +3,7 @@
  * Factory functions for creating robot components with sensible defaults
  */
 
-import type { UrdfLink, UrdfJoint, RobotState } from '@/types';
+import type { UrdfLink, UrdfJoint, RobotState, UrdfOrigin } from '@/types';
 import { DEFAULT_LINK, DEFAULT_JOINT, JointType } from '@/types';
 import {
     LINK_ID_PREFIX,
@@ -28,6 +28,16 @@ export const generateLinkId = (): string => generateId(LINK_ID_PREFIX);
  * Generate a unique joint ID
  */
 export const generateJointId = (): string => generateId(JOINT_ID_PREFIX);
+
+const cloneOrigin = (origin?: UrdfOrigin): UrdfOrigin | undefined => (
+    origin
+        ? {
+            xyz: { ...origin.xyz },
+            rpy: { ...origin.rpy },
+            ...(origin.quatXyzw ? { quatXyzw: { ...origin.quatXyzw } } : {})
+        }
+        : undefined
+);
 
 /**
  * Create a new link with default values
@@ -160,13 +170,31 @@ export const cloneLink = (link: UrdfLink, newId?: string): UrdfLink => {
         ...link,
         id,
         name: `${link.name}_copy`,
-        visual: { ...link.visual },
-        visualBodies: link.visualBodies?.map((body) => ({ ...body })) || [],
-        collision: { ...link.collision },
-        collisionBodies: link.collisionBodies?.map((body) => ({ ...body })) || [],
+        visual: {
+            ...link.visual,
+            origin: cloneOrigin(link.visual.origin),
+            dimensions: { ...link.visual.dimensions },
+            authoredMaterials: link.visual.authoredMaterials?.map((material) => ({ ...material })),
+        },
+        visualBodies: link.visualBodies?.map((body) => ({
+            ...body,
+            origin: cloneOrigin(body.origin),
+            dimensions: { ...body.dimensions },
+            authoredMaterials: body.authoredMaterials?.map((material) => ({ ...material })),
+        })) || [],
+        collision: {
+            ...link.collision,
+            origin: cloneOrigin(link.collision.origin),
+            dimensions: { ...link.collision.dimensions },
+        },
+        collisionBodies: link.collisionBodies?.map((body) => ({
+            ...body,
+            origin: cloneOrigin(body.origin),
+            dimensions: { ...body.dimensions },
+        })) || [],
         inertial: link.inertial ? {
             ...link.inertial,
-            origin: link.inertial.origin ? { ...link.inertial.origin } : undefined,
+            origin: cloneOrigin(link.inertial.origin),
             inertia: { ...link.inertial.inertia }
         } : undefined
     };
@@ -188,7 +216,7 @@ export const cloneJoint = (
         name: `${joint.name}_copy`,
         parentLinkId: newParentLinkId,
         childLinkId: newChildLinkId,
-        origin: { ...joint.origin, xyz: { ...joint.origin.xyz }, rpy: { ...joint.origin.rpy } },
+        origin: cloneOrigin(joint.origin)!,
         axis: joint.axis ? { ...joint.axis } : undefined,
         limit: joint.limit ? { ...joint.limit } : undefined,
         dynamics: { ...joint.dynamics },

@@ -67,6 +67,11 @@ test('USD runtime joint preview only schedules render work and defers heavy refr
       }),
       setJointAngleForLink: (linkPath: string, angleDeg: number) => {
         jointAngleUpdates.push({ linkPath, angleDeg });
+        return {
+          angleDeg,
+          lowerLimitDeg: -90,
+          upperLimitDeg: 90,
+        };
       },
     },
     requestRender: () => {
@@ -115,6 +120,11 @@ test('USD runtime joint skips redundant work when the requested angle is unchang
       }),
       setJointAngleForLink: () => {
         setJointAngleCalls += 1;
+        return {
+          angleDeg: 0,
+          lowerLimitDeg: -90,
+          upperLimitDeg: 90,
+        };
       },
     },
     requestRender: () => {
@@ -152,7 +162,11 @@ test('USD runtime joint writes back the clamped runtime angle without re-emittin
         lowerLimitDeg: -90,
         upperLimitDeg: 90,
       }),
-      setJointAngleForLink: (linkPath: string, angleDeg: number, options?: { emitSelectionChanged?: boolean }) => {
+      setJointAngleForLink: (
+        linkPath: string,
+        angleDeg: number,
+        options?: { emitSelectionChanged?: boolean },
+      ) => {
         jointAngleUpdates.push({ linkPath, angleDeg, options });
         return {
           angleDeg: 30,
@@ -171,9 +185,11 @@ test('USD runtime joint writes back the clamped runtime angle without re-emittin
   joint.setJointValue(Math.PI / 4);
 
   assert.equal(joint.angle, Math.PI / 6);
-  assert.deepEqual(jointAngleUpdates, [{
-    linkPath: '/Robot/arm_link',
-    angleDeg: 45,
-    options: { emitSelectionChanged: false },
-  }]);
+  assert.deepEqual(jointAngleUpdates, [
+    {
+      linkPath: '/Robot/arm_link',
+      angleDeg: 45,
+      options: { emitSelectionChanged: false },
+    },
+  ]);
 });

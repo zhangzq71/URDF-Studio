@@ -9,6 +9,7 @@ interface ViewMenuItemProps {
 export function ViewMenuItem({ checked, label, onClick }: ViewMenuItemProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-element-bg dark:hover:bg-element-bg transition-colors text-text-primary dark:text-text-secondary flex items-center justify-between group"
     >

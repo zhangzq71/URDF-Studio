@@ -1,21 +1,33 @@
 // @ts-nocheck
-import { DefaultLoadingManager, TextureLoader } from 'three';
+import { DefaultLoadingManager, Texture, TextureLoader } from 'three';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { debugTextures } from './shared.js';
-const parseQueryBoolean = (value, fallback = false) => {
-    if (value === null || value === undefined)
-        return fallback;
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === '' || normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on')
-        return true;
-    if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off')
-        return false;
-    return fallback;
-};
 const nowMs = () => ((typeof performance !== 'undefined' && typeof performance.now === 'function')
     ? performance.now()
     : Date.now());
+const canLoadBitmapTextureInWorker = () => typeof document === 'undefined'
+    && typeof createImageBitmap === 'function';
+const closeTextureImageIfNeeded = (texture) => {
+    const image = texture?.image;
+    if (!image || typeof image.close !== 'function')
+        return;
+    try {
+        image.close();
+    }
+    catch {
+        return;
+    }
+    if (texture.image === image) {
+        texture.image = null;
+    }
+};
+const disposeManagedTexture = (texture) => {
+    if (!texture || typeof texture.dispose !== 'function')
+        return;
+    closeTextureImageIfNeeded(texture);
+    texture.dispose();
+};
 const ensureDefaultLoadingManagerTracker = () => {
     const manager = DefaultLoadingManager;
     if (!manager)
@@ -91,6 +103,7 @@ class TextureRegistry {
         this.config = config;
         this.allPaths = config.paths;
         this.textures = [];
+        this._disposed = false;
         this.loader = new TextureLoader();
         this.tgaLoader = new TGALoader();
         this.exrLoader = new EXRLoader();
@@ -103,22 +116,41 @@ class TextureRegistry {
             recent: [],
             maxRecent: 24,
         };
-        // HACK get URL ?file parameter again
-        let urlParams = new URLSearchParams(window.location.search);
-        this.enableTextureLoadMonitoring = parseQueryBoolean(urlParams.get('profileTextureLoads'), false)
-            || parseQueryBoolean(urlParams.get('profileHydraPhases'), false)
-            || globalThis?.__HYDRA_PROFILE_TEXTURES__ === true;
-        let fileParam = urlParams.get('file');
-        if (fileParam) {
-            let lastSlash = fileParam.lastIndexOf('/');
-            if (lastSlash >= 0)
-                fileParam = fileParam.substring(0, lastSlash);
-            this.baseUrl = fileParam;
-        }
+        this.enableTextureLoadMonitoring = globalThis?.__HYDRA_PROFILE_TEXTURES__ === true;
         if (this.enableTextureLoadMonitoring && typeof window !== 'undefined') {
             window.__HYDRA_TEXTURE_METRICS__ = {
                 getSnapshot: () => this.getTextureLoadSnapshot(),
             };
+        }
+    }
+    dispose() {
+        if (this._disposed === true)
+            return;
+        this._disposed = true;
+        const managedEntries = Array.isArray(this.textures)
+            ? Object.values(this.textures)
+            : [];
+        this.textures = [];
+        managedEntries.forEach((entry) => {
+            if (entry instanceof Texture) {
+                disposeManagedTexture(entry);
+                return;
+            }
+            if (entry && typeof entry.then === 'function') {
+                Promise.resolve(entry)
+                    .then((texture) => {
+                    if (this._disposed) {
+                        disposeManagedTexture(texture);
+                    }
+                })
+                    .catch(() => undefined);
+            }
+        });
+        if (this.enableTextureLoadMonitoring) {
+            const globalMetricsTarget = typeof window !== 'undefined' ? window : globalThis;
+            if (globalMetricsTarget?.__HYDRA_TEXTURE_METRICS__) {
+                globalMetricsTarget.__HYDRA_TEXTURE_METRICS__ = undefined;
+            }
         }
     }
     getTextureLoadSnapshot() {
@@ -134,6 +166,9 @@ class TextureRegistry {
         };
     }
     getTexture(resourcePath) {
+        if (this._disposed) {
+            return Promise.reject(new Error(`TextureRegistry has been disposed: ${resourcePath}`));
+        }
         if (this.textures[resourcePath]) {
             return this.textures[resourcePath];
         }
@@ -142,6 +177,13 @@ class TextureRegistry {
             textureResolve = resolve;
             textureReject = reject;
         });
+        this.textures[resourcePath]
+            .then((texture) => {
+            if (this._disposed) {
+                disposeManagedTexture(texture);
+            }
+        })
+            .catch(() => undefined);
         if (!resourcePath) {
             return Promise.reject(new Error('Empty resource path for file: ' + resourcePath));
         }
@@ -180,9 +222,10 @@ class TextureRegistry {
             const loadFromFile = (_loadedFile) => {
                 let url = undefined;
                 let createdBlobObjectUrl = false;
+                let createdBlob = null;
                 if (_loadedFile) {
-                    let blob = new Blob([_loadedFile.slice(0)], { type: filetype });
-                    url = URL.createObjectURL(blob);
+                    createdBlob = new Blob([_loadedFile.slice(0)], { type: filetype });
+                    url = URL.createObjectURL(createdBlob);
                     createdBlobObjectUrl = true;
                 }
                 else {
@@ -244,8 +287,35 @@ class TextureRegistry {
                         }
                     }
                 };
+                const loadBitmapTextureFromWorker = async () => {
+                    const bitmapBlob = createdBlob
+                        || await fetch(url).then((response) => {
+                            if (!response.ok) {
+                                throw new Error(`Failed to fetch texture: ${url}`);
+                            }
+                            return response.blob();
+                        });
+                    const bitmap = await createImageBitmap(bitmapBlob);
+                    const texture = new Texture(bitmap);
+                    texture.name = resourcePath;
+                    texture.needsUpdate = true;
+                    finalizeLoad('ok');
+                    releaseBlobObjectUrl();
+                    textureResolve(texture);
+                };
                 // Load the texture
                 try {
+                    if (
+                        canLoadBitmapTextureInWorker()
+                        && (filetype === 'image/png' || filetype === 'image/jpeg')
+                    ) {
+                        void loadBitmapTextureFromWorker().catch((error) => {
+                            finalizeLoad('error', error);
+                            releaseBlobObjectUrl();
+                            textureReject(error);
+                        });
+                        return;
+                    }
                     loader.load(
                     // resource URL
                     url, 

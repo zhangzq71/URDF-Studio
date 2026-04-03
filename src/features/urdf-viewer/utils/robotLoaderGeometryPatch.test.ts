@@ -76,17 +76,20 @@ async function waitForPatchedChild(group: THREE.Object3D): Promise<THREE.Object3
 
 test('applyGeometryPatchInPlace preserves b2w base_link Collada scene roots before reattaching', async () => {
   const meshPath = 'test/unitree_ros/robots/b2w_description/meshes/base_link.dae';
-  const urdfContent = fs.readFileSync('test/unitree_ros/robots/b2w_description/urdf/b2w_description.urdf', 'utf8');
-  const colladaRootNormalizationHints = buildColladaRootNormalizationHints(parseURDF(urdfContent).links);
-  const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
-  const manager = createLoadingManager(
-    {
-      [meshPath]: meshDataUrl,
-      'package://b2w_description/meshes/base_link.dae': meshDataUrl,
-      base_link: meshDataUrl,
-      'base_link.dae': meshDataUrl,
-    },
+  const urdfContent = fs.readFileSync(
+    'test/unitree_ros/robots/b2w_description/urdf/b2w_description.urdf',
+    'utf8',
   );
+  const colladaRootNormalizationHints = buildColladaRootNormalizationHints(
+    parseURDF(urdfContent).links,
+  );
+  const meshDataUrl = `data:text/xml;base64,${Buffer.from(fs.readFileSync(meshPath, 'utf8')).toString('base64')}`;
+  const manager = createLoadingManager({
+    [meshPath]: meshDataUrl,
+    'package://b2w_description/meshes/base_link.dae': meshDataUrl,
+    base_link: meshDataUrl,
+    'base_link.dae': meshDataUrl,
+  });
   const meshLoader = createMeshLoader(
     {
       [meshPath]: meshDataUrl,
@@ -190,10 +193,7 @@ test('applyGeometryPatchInPlace updates visual material colors in place for link
     color: new THREE.Color('#808080'),
     name: 'authored_base_link',
   });
-  const visualMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    authoredMaterial,
-  );
+  const visualMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), authoredMaterial);
   visualGroup.add(visualMesh);
   linkObject.add(visualGroup);
   robotModel.add(linkObject);
@@ -237,8 +237,11 @@ test('applyGeometryPatchInPlace updates visual material colors in place for link
   assert.notEqual(visualMesh.material, authoredMaterial);
   assert.equal(visualMesh.material instanceof THREE.MeshStandardMaterial, true);
   assert.equal(
-    (visualMesh.material as THREE.MeshStandardMaterial).color.getHexString(),
+    (visualMesh.material as unknown as THREE.MeshStandardMaterial).color.getHexString(),
     '12ab34',
   );
-  assert.equal((visualMesh.material as THREE.MeshStandardMaterial).userData.urdfColorApplied, true);
+  assert.equal(
+    (visualMesh.material as unknown as THREE.MeshStandardMaterial).userData.urdfColorApplied,
+    true,
+  );
 });

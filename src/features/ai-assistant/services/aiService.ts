@@ -8,6 +8,8 @@ import { translations, type Language } from '@/shared/i18n'
 import type { AIResponse } from '../types'
 import { getEasterEggResponse } from '../config/easterEggs'
 import { getGenerationSystemPrompt, getInspectionSystemPrompt } from '../config/prompts'
+import { buildInspectionPromptNotes } from '../utils/buildInspectionPromptNotes'
+import { buildInspectionRobotContext } from '../utils/buildInspectionRobotContext'
 import { normalizeAIRobotResponse } from '../utils/normalizeRobotData'
 import { processInspectionResults } from '../utils/processInspectionResults'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
@@ -63,44 +65,6 @@ const createOpenAIClient = (): OpenAI => {
  */
 const getModelName = (): string => {
   return process.env.OPENAI_MODEL || 'bce/deepseek-v3.2'
-}
-
-/**
- * Get simplified robot context for AI prompts
- */
-const serializeGeometryForInspection = (geometry: RobotState['links'][string]['visual']) => ({
-  origin: geometry.origin,
-  geometry: {
-    type: geometry.type,
-    dimensions: geometry.dimensions
-  }
-})
-
-const getContextRobot = (robot: RobotState) => {
-  return {
-    name: robot.name,
-    links: Object.values(robot.links).map(l => ({
-      id: l.id,
-      name: l.name,
-      inertial: {
-        mass: l.inertial?.mass ?? 0,
-        origin: l.inertial?.origin,
-        inertia: l.inertial?.inertia
-      },
-      visual: serializeGeometryForInspection(l.visual),
-      collision: serializeGeometryForInspection(l.collision),
-      collisionBodies: l.collisionBodies?.map(serializeGeometryForInspection)
-    })),
-    joints: Object.values(robot.joints).map(j => ({
-      id: j.id,
-      name: j.name,
-      type: j.type,
-      parent: j.parentLinkId,
-      child: j.childLinkId,
-      axis: j.axis
-    })),
-    rootId: robot.rootLinkId
-  }
 }
 
 /**
@@ -187,12 +151,18 @@ const buildInspectionCriteriaDescription = (
       .map(item => {
         const itemName = lang === 'zh' ? item.nameZh : item.name
         const itemDesc = lang === 'zh' ? item.descriptionZh : item.description
-        return `    - ${itemName} (${item.id}): ${itemDesc}`
+        const itemScoreRef =
+          lang === 'zh' ? item.scoringReferenceZh : item.scoringReference
+        const itemDetails = itemScoreRef
+          ? `${itemDesc} ${lang === 'zh' ? `得分参考：${itemScoreRef}` : `Scoring reference: ${itemScoreRef}`}`
+          : itemDesc
+        return `    - ${itemName} (${item.id}): ${itemDetails}`
       })
       .join('\n')
 
     if (itemsDesc) {
-      return `  ${category.id} (${categoryName}, weight: ${category.weight * 100}%):\n${itemsDesc}`
+      const weightLabel = lang === 'zh' ? '权重' : 'weight'
+      return `  ${category.id} (${categoryName}, ${weightLabel}: ${category.weight * 100}%):\n${itemsDesc}`
     }
     return null
   })
@@ -385,10 +355,11 @@ export const runRobotInspection = async (
 
   const openai = createOpenAIClient()
   const modelName = getModelName()
-  const contextRobot = getContextRobot(robot)
+  const contextRobot = buildInspectionRobotContext(robot)
 
   const criteriaDescription = buildInspectionCriteriaDescription(selectedItems, lang)
-  const systemPrompt = getInspectionSystemPrompt(lang, { criteriaDescription })
+  const inspectionNotes = buildInspectionPromptNotes(robot, selectedItems, lang)
+  const systemPrompt = getInspectionSystemPrompt(lang, { criteriaDescription, inspectionNotes })
 
   try {
     const response = await openai.chat.completions.create({

@@ -574,7 +574,15 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
                 options.onAssigned(nextTexture);
             }
             material.needsUpdate = true;
-        }).catch(() => { });
+        }).catch((error) => {
+            const warn = getRawConsoleMethod('warn');
+            warn('[HydraDelegate] Failed to apply stage fallback texture input.', {
+                texturePath,
+                materialProperty,
+                materialName: String(material?.name || ''),
+                error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+            });
+        });
         return true;
     }
     safeGetPrimAtPath(stage, path) {
@@ -874,8 +882,7 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
         if (this._hasRunStageTruthAlignmentDiagnostics)
             return;
         this._hasRunStageTruthAlignmentDiagnostics = true;
-        const diagnosticsEnabled = typeof window !== 'undefined'
-            && /\bdebugStageAlignment=1\b/.test(String(window.location?.search || ''));
+        const diagnosticsEnabled = globalThis?.__HYDRA_DEBUG_STAGE_ALIGNMENT__ === true;
         if (!diagnosticsEnabled)
             return;
         const linkPaths = new Set();
@@ -2951,6 +2958,11 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             if (!snapshot || typeof snapshot !== 'object') {
                 return null;
             }
+            const errorFlags = toPlainArray(snapshot.errorFlags)
+                .map((entry) => String(entry || '').trim())
+                .filter((entry) => entry.length > 0);
+            const truthLoadError = String(snapshot.truthLoadError || '').trim() || null;
+            const stale = snapshot.stale === true || errorFlags.length > 0 || !!truthLoadError;
             return {
                 stageSourcePath: String(snapshot.stageSourcePath || resolvedStageSourcePath || '').trim() || null,
                 generatedAtMs: Number(snapshot.generatedAtMs || rawSnapshot.generatedAtMs || Date.now()),
@@ -2959,6 +2971,9 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
                 jointCatalogEntries: toPlainArray(snapshot.jointCatalogEntries),
                 linkDynamicsEntries: toPlainArray(snapshot.linkDynamicsEntries),
                 meshCountsByLinkPath: toPlainObject(snapshot.meshCountsByLinkPath),
+                ...(stale ? { stale: true } : {}),
+                ...(errorFlags.length > 0 ? { errorFlags } : {}),
+                ...(truthLoadError ? { truthLoadError } : {}),
             };
         };
         const getRobotMetadataSnapshotScore = (snapshot) => {
@@ -2977,6 +2992,9 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             jointCatalogEntries: toPlainArray(robotMetadataRaw.jointCatalogEntries),
             linkDynamicsEntries: toPlainArray(robotMetadataRaw.linkDynamicsEntries),
             meshCountsByLinkPath: toPlainObject(robotMetadataRaw.meshCountsByLinkPath),
+            stale: robotMetadataRaw.stale === true,
+            errorFlags: toPlainArray(robotMetadataRaw.errorFlags),
+            truthLoadError: robotMetadataRaw.truthLoadError,
         });
         const cachedRobotMetadataSnapshot = normalizeRobotMetadataSnapshotCandidate(
             this.getCachedRobotMetadataSnapshot(resolvedStageSourcePath),
@@ -3114,9 +3132,22 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             driverSnapshotSource: 'none',
             hydratedProtoMeshAttemptedCount: 0,
             hydratedProtoMeshPendingCount: 0,
+            driverStageResolveStatus: 'idle',
+            driverStageResolveSource: 'none',
+            driverStageResolveError: null,
+            driverStageResolvePending: false,
+        };
+        const finalizeSummary = () => {
+            const driverStageResolveSummary = this.getDriverStageResolveSummary?.() || null;
+            summary.driverStageResolveStatus = String(driverStageResolveSummary?.status || 'idle');
+            summary.driverStageResolveSource = String(driverStageResolveSummary?.source || 'none');
+            summary.driverStageResolveError = String(driverStageResolveSummary?.error || '').trim() || null;
+            summary.driverStageResolvePending = driverStageResolveSummary?.pending === true;
+            this._lastRobotSceneWarmupSummary = { ...summary };
+            return summary;
         };
         if (!resolvedDriver)
-            return summary;
+            return finalizeSummary();
         const stageSourcePath = String(options?.stageSourcePath || this.getStageSourcePath() || '').trim().split('?')[0];
         const snapshotResult = this.getRobotSceneSnapshotFromDriver(resolvedDriver, {
             stageSourcePath,
@@ -3125,7 +3156,7 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
         const rawSnapshot = snapshotResult?.rawSnapshot || null;
         if (!rawSnapshot || typeof rawSnapshot !== 'object') {
             summary.source = String(summary.driverSnapshotSource || 'empty');
-            return summary;
+            return finalizeSummary();
         }
         const normalizedSnapshot = this.normalizeRobotSceneSnapshot(rawSnapshot, {
             force: forceRefresh,
@@ -3134,7 +3165,7 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
         });
         if (!normalizedSnapshot) {
             summary.source = 'normalize-failed';
-            return summary;
+            return finalizeSummary();
         }
         const cacheKey = String(normalizedSnapshot.stageSourcePath || stageSourcePath || '').trim().split('?')[0];
         if (cacheKey) {
@@ -3161,7 +3192,15 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
         summary.hydratedProtoMeshPendingCount = Number(hydrateSummary?.pendingCount || 0);
         summary.snapshotMaterialBindCount = Number(materialApplySummary?.boundCount || 0);
         summary.snapshotMaterialInheritCount = Number(materialApplySummary?.inheritedCount || 0);
-        return summary;
+        summary.snapshotMaterialSubsetFailureCount = Number(materialApplySummary?.subsetFailureCount || 0);
+        summary.snapshotMaterialInheritFailureCount = Number(materialApplySummary?.inheritFailureCount || 0);
+        summary.snapshotTextureFailureCount = Number(materialApplySummary?.textureFailureCount || 0);
+        return finalizeSummary();
+    }
+    getLastRobotSceneWarmupSummary() {
+        return this._lastRobotSceneWarmupSummary
+            ? { ...this._lastRobotSceneWarmupSummary }
+            : null;
     }
     getRobotSceneSnapshotFromDriver(driver, options = {}) {
         const resolvedDriver = driver || this.config?.driver?.();
@@ -3299,11 +3338,21 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
                 return {};
             return Object.fromEntries(Object.entries(value));
         };
+        const toErrorFlags = (value) => toPlainArray(value)
+            .map((entry) => String(entry || '').trim())
+            .filter((entry) => entry.length > 0);
+        const toErrorText = (value) => {
+            const normalized = String(value || '').trim();
+            return normalized || null;
+        };
         const resolvedStageSourcePath = String(options?.stageSourcePath
             || rawSnapshot.stageSourcePath
             || this.getStageSourcePath()
             || '').trim().split('?')[0];
         const generatedAtMs = Number(rawSnapshot.generatedAtMs);
+        const errorFlags = toErrorFlags(rawSnapshot.errorFlags);
+        const truthLoadError = toErrorText(rawSnapshot.truthLoadError);
+        const stale = rawSnapshot.stale === true || errorFlags.length > 0 || !!truthLoadError;
         const normalizedSnapshot = {
             stageSourcePath: resolvedStageSourcePath || null,
             generatedAtMs: Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now(),
@@ -3312,6 +3361,9 @@ export class ThreeRenderDelegateInterface extends ThreeRenderDelegateMaterialOps
             jointCatalogEntries: toPlainArray(rawSnapshot.jointCatalogEntries),
             linkDynamicsEntries: toPlainArray(rawSnapshot.linkDynamicsEntries),
             meshCountsByLinkPath: toPlainObject(rawSnapshot.meshCountsByLinkPath),
+            ...(stale ? { stale: true } : {}),
+            ...(errorFlags.length > 0 ? { errorFlags } : {}),
+            ...(truthLoadError ? { truthLoadError } : {}),
         };
         const jointCount = normalizedSnapshot.jointCatalogEntries.length;
         const dynamicsCount = normalizedSnapshot.linkDynamicsEntries.length;

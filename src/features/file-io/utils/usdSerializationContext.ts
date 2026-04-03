@@ -5,10 +5,7 @@ import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
 
 import { type UsdMaterialMetadata } from './usdSceneNodeFactory.ts';
 import { isUsdMeshObject } from './usdMaterialNormalization.ts';
-import {
-  normalizeUsdProgressLabel,
-  yieldPeriodically,
-} from './usdProgress.ts';
+import { normalizeUsdProgressLabel, yieldPeriodically } from './usdProgress.ts';
 
 export type UsdTextureRecord = {
   sourcePath: string;
@@ -103,7 +100,9 @@ const inferTextureExtension = (texturePath: string): string => {
   return extension && /^[a-z0-9]+$/.test(extension) ? extension : 'png';
 };
 
-export const createUsdTextureRecord = (texturePath: string | null | undefined): UsdTextureRecord | null => {
+export const createUsdTextureRecord = (
+  texturePath: string | null | undefined,
+): UsdTextureRecord | null => {
   const sourcePath = String(texturePath || '').trim();
   if (!sourcePath) return null;
 
@@ -111,9 +110,9 @@ export const createUsdTextureRecord = (texturePath: string | null | undefined): 
     const exportPath = normalizeTexturePathForExport(sourcePath);
     return exportPath
       ? {
-        sourcePath,
-        exportPath,
-      }
+          sourcePath,
+          exportPath,
+        }
       : null;
   }
 
@@ -123,7 +122,9 @@ export const createUsdTextureRecord = (texturePath: string | null | undefined): 
   };
 };
 
-const parseDisplayColor = (value: string | null | undefined): { color: THREE.Color; opacity: number } | null => {
+const parseDisplayColor = (
+  value: string | null | undefined,
+): { color: THREE.Color; opacity: number } | null => {
   const parsed = parseThreeColorWithOpacity(value);
   if (!parsed) {
     return null;
@@ -150,21 +151,19 @@ const getRenderableTextureRecord = (object: THREE.Object3D): UsdTextureRecord | 
     return null;
   }
 
-  const texture = material.map;
+  const texture = (material as THREE.Material & { map?: THREE.Texture | null }).map;
   if (!texture) {
     return null;
   }
 
-  const candidatePath = String(
-    texture.userData?.usdSourcePath
-    || texture.name
-    || '',
-  ).trim();
+  const candidatePath = String(texture.userData?.usdSourcePath || texture.name || '').trim();
 
   return createUsdTextureRecord(candidatePath);
 };
 
-export const getUsdRenderableAppearance = (object: THREE.Object3D): UsdRenderableAppearance | null => {
+export const getUsdRenderableAppearance = (
+  object: THREE.Object3D,
+): UsdRenderableAppearance | null => {
   const texture = getRenderableTextureRecord(object);
   const explicitColor = parseDisplayColor(object.userData?.usdDisplayColor);
   if (explicitColor) {
@@ -202,7 +201,9 @@ const collectUsdFaceVertexIndices = (
 ): number[] => {
   const shouldRespectGroups = Boolean(mesh.userData?.usdSerializeFilteredGroups);
   const filteredGroups = shouldRespectGroups
-    ? geometry.groups.filter((group) => Number.isFinite(group.start) && Number.isFinite(group.count) && group.count > 0)
+    ? geometry.groups.filter(
+        (group) => Number.isFinite(group.start) && Number.isFinite(group.count) && group.count > 0,
+      )
     : [];
 
   if (geometry.index) {
@@ -352,10 +353,7 @@ export const collectUsdSerializationContext = async (
   let completed = 0;
   for (let objectIndex = 0; objectIndex < objects.length; objectIndex += 1) {
     const object = objects[objectIndex];
-    const label = normalizeUsdProgressLabel(
-      object.name || object.userData.usdGeomType,
-      'object',
-    );
+    const label = normalizeUsdProgressLabel(object.name || object.userData.usdGeomType, 'object');
 
     const appearance = getUsdRenderableAppearance(object);
     if (appearance) {
@@ -371,9 +369,9 @@ export const collectUsdSerializationContext = async (
             opacity: appearance.opacity,
             texture: appearance.texture
               ? {
-                sourcePath: appearance.texture.sourcePath,
-                exportPath: appearance.texture.exportPath,
-              }
+                  sourcePath: appearance.texture.sourcePath,
+                  exportPath: appearance.texture.exportPath,
+                }
               : null,
           },
         };

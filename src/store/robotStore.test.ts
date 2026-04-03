@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { useRobotStore } from './robotStore.ts';
-import { GeometryType } from '@/types';
+import { DEFAULT_VISUAL_COLOR, GeometryType } from '@/types';
 import { updateCollisionGeometryByObjectIndex } from '@/core/robot';
 
 function resetRobotStore() {
@@ -191,4 +191,16 @@ test('updateLink persists collision body transform edits in robot state', () => 
     p: 0.5,
     y: 0.6,
   });
+});
+
+test('empty skeleton root link and newly added child links share the same default visual color', () => {
+  useRobotStore.getState().resetRobot();
+
+  const initialState = useRobotStore.getState();
+  assert.equal(initialState.links[initialState.rootLinkId]?.visual.color, DEFAULT_VISUAL_COLOR);
+
+  const { linkId } = initialState.addChild(initialState.rootLinkId);
+  const nextState = useRobotStore.getState();
+
+  assert.equal(nextState.links[linkId]?.visual.color, DEFAULT_VISUAL_COLOR);
 });

@@ -4,7 +4,12 @@ import * as THREE from 'three';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { resolveLinkKey } from '@/core/robot';
 import type { CollisionTransformControlsProps } from '../types';
+import { useCollisionTransformDragLifecycle } from '../hooks/useCollisionTransformDragLifecycle';
 import { getObjectRPY } from '../utils/collisionTransformMath';
+import {
+  canRenderCollisionTransformControls,
+  resolveActiveCollisionDraggingControls,
+} from '../utils/collisionTransformControlsShared';
 
 const COLLISION_TRANSLATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE;
 const COLLISION_ROTATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE * 0.84;
@@ -33,19 +38,11 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   const targetObjectRef = useRef<THREE.Object3D | null>(null);
   const translateProxyRef = useRef<THREE.Group | null>(null);
   const activeSelectionRef = useRef<{ id: string; objectIndex?: number } | null>(null);
-  const setIsDraggingRef = useRef(setIsDragging);
   const onTransformChangeRef = useRef(onTransformChange);
   const onTransformEndRef = useRef(onTransformEnd);
-  const onTransformPendingRef = useRef(onTransformPending);
-  const cancelDragRef = useRef<(() => void) | null>(null);
-
-  const isDraggingRef = useRef(false);
-  const activeControlsRef = useRef<any>(null);
   const proxyWorldPositionRef = useRef(new THREE.Vector3());
   const proxyLocalPositionRef = useRef(new THREE.Vector3());
   const proxyParentQuaternionRef = useRef(new THREE.Quaternion());
-  const shouldUseTranslateProxy =
-    transformMode === 'translate' || transformMode === 'universal';
 
   const resolveSelectionLinkId = useCallback((identity: string | null | undefined) => {
     if (!identity) return null;
@@ -63,20 +60,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   }, [targetObject]);
 
   useEffect(() => {
-    setIsDraggingRef.current = setIsDragging;
-  }, [setIsDragging]);
-
-  useEffect(() => {
     onTransformChangeRef.current = onTransformChange;
   }, [onTransformChange]);
 
   useEffect(() => {
     onTransformEndRef.current = onTransformEnd;
   }, [onTransformEnd]);
-
-  useEffect(() => {
-    onTransformPendingRef.current = onTransformPending;
-  }, [onTransformPending]);
 
   const syncTranslateProxy = useCallback((proxyTarget: THREE.Object3D | null, object = targetObjectRef.current) => {
     if (!proxyTarget || !object) return;
@@ -181,11 +170,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     );
   }, []);
 
-  const cancelDrag = useCallback(() => {
-    if (!isDraggingRef.current) {
-      return;
-    }
-
+  const handleCancelDrag = useCallback(() => {
     const activeTargetObject = targetObjectRef.current;
 
     if (activeTargetObject) {
@@ -194,42 +179,29 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       activeTargetObject.updateMatrixWorld(true);
       syncTranslateProxy(translateProxyRef.current, activeTargetObject);
     }
+  }, [syncTranslateProxy]);
 
-    isDraggingRef.current = false;
-    activeControlsRef.current = null;
-    setIsDraggingRef.current(false);
-    onTransformPendingRef.current?.(false);
-    invalidate();
-  }, [invalidate]);
-
-  const finishDrag = useCallback(() => {
+  const handleFinishDrag = useCallback(() => {
     const activeTargetObject = targetObjectRef.current;
-    if (!activeTargetObject || !isDraggingRef.current) {
+    if (!activeTargetObject) {
       return;
     }
-
-    isDraggingRef.current = false;
-    activeControlsRef.current = null;
-    setIsDraggingRef.current(false);
-    onTransformPendingRef.current?.(false);
 
     if (hasTransformChanged(activeTargetObject)) {
       commitTransform();
     }
 
     syncTranslateProxy(translateProxyRef.current, activeTargetObject);
+  }, [commitTransform, hasTransformChanged, syncTranslateProxy]);
 
-    invalidate();
-  }, [commitTransform, hasTransformChanged, invalidate, syncTranslateProxy]);
-
-  const beginDrag = useCallback((controls?: any) => {
+  const handleBeginDrag = useCallback(() => {
     const activeTargetObject = targetObjectRef.current;
-    if (!activeTargetObject || isDraggingRef.current) return;
+    if (!activeTargetObject) return false;
 
     let nextSelection = activeSelectionRef.current;
     if (selection?.id) {
       const resolvedSelectionId = resolveSelectionLinkId(selection.id);
-      if (!resolvedSelectionId) return;
+      if (!resolvedSelectionId) return false;
 
       nextSelection = {
         id: resolvedSelectionId,
@@ -238,42 +210,49 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     }
 
     activeSelectionRef.current = nextSelection;
-    isDraggingRef.current = true;
-    activeControlsRef.current = controls ?? activeControlsRef.current;
-    setIsDraggingRef.current(true);
-    onTransformPendingRef.current?.(true);
 
     originalPositionRef.current.copy(activeTargetObject.position);
     originalRotationRef.current.copy(activeTargetObject.rotation);
     originalQuaternionRef.current.copy(activeTargetObject.quaternion);
+    return true;
   }, [resolveSelectionLinkId, selection?.id, selection?.objectIndex]);
 
-  const handleDraggingChanged = useCallback((event: { value: boolean }) => {
-    const dragging = Boolean(event.value);
+  const {
+    activeControlsRef,
+    beginActiveDrag,
+    cancelActiveDrag,
+    controlMode,
+    finishActiveDrag,
+    handleDraggingChanged,
+    handleObjectChange,
+    isDraggingRef,
+    shouldUseTranslateProxy,
+  } = useCollisionTransformDragLifecycle({
+    transformMode,
+    transformRef,
+    rotateTransformRef,
+    invalidate,
+    setIsDragging,
+    onTransformPending,
+    onBeginDrag: handleBeginDrag,
+    onFinishDrag: handleFinishDrag,
+    onCancelDrag: handleCancelDrag,
+    onObjectChange: ({ isDragging, isTranslateDragging }) => {
+      const activeTargetObject = targetObjectRef.current;
+      if (shouldUseTranslateProxy && isTranslateDragging) {
+        applyTranslateProxyToTarget();
+      }
 
-    if (dragging) {
-      const translateControls = transformRef.current;
-      const rotateControls = rotateTransformRef.current;
-      const draggingControls = rotateControls?.dragging
-        ? rotateControls
-        : translateControls?.dragging
-          ? translateControls
-          : activeControlsRef.current ?? rotateControls ?? translateControls;
-
-      if (!draggingControls) return;
-      if (isDraggingRef.current && activeControlsRef.current !== draggingControls) return;
-      beginDrag(draggingControls);
-      return;
-    }
-
-    if (!isDraggingRef.current) return;
-    finishDrag();
-  }, [beginDrag, finishDrag]);
+      if (activeTargetObject && isDragging) {
+        emitTransformPreview(activeTargetObject);
+      }
+    },
+  });
 
   useEffect(() => {
     if (!robot || !selection?.id || selection.subType !== 'collision' || transformMode === 'select') {
       if (isDraggingRef.current) {
-        cancelDrag();
+        cancelActiveDrag();
       }
       activeControlsRef.current = null;
       setTargetObject((current) => (current === null ? current : null));
@@ -294,7 +273,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const linkObj = runtimeLinks?.[runtimeLinkKey];
     if (!linkObj) {
       if (isDraggingRef.current) {
-        cancelDrag();
+        cancelActiveDrag();
       }
       setTargetObject((current) => (current === null ? current : null));
       return;
@@ -318,7 +297,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const collisionGroup = colliders[selection.objectIndex ?? 0] || colliders[0] || null;
     if (!collisionGroup) {
       if (isDraggingRef.current) {
-        cancelDrag();
+        cancelActiveDrag();
       }
       setTargetObject((current) => (current === null ? current : null));
       return;
@@ -327,7 +306,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     const isSameTarget = targetObjectRef.current === collisionGroup;
 
     if (isDraggingRef.current && targetObjectRef.current && !isSameTarget) {
-      cancelDrag();
+      cancelActiveDrag();
     }
 
     setTargetObject((current) => (current === collisionGroup ? current : collisionGroup));
@@ -338,7 +317,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       originalRotationRef.current.copy(collisionGroup.rotation);
       originalQuaternionRef.current.copy(collisionGroup.quaternion);
     }
-  }, [cancelDrag, robot, robotLinks, robotVersion, selection, transformMode]);
+  }, [cancelActiveDrag, robot, robotLinks, robotVersion, selection, transformMode]);
 
   useEffect(() => {
     if (!isDraggingRef.current) {
@@ -346,74 +325,33 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     }
   }, [syncTranslateProxy, targetObject]);
 
-  useEffect(() => {
-    cancelDragRef.current = cancelDrag;
-  }, [cancelDrag]);
-
-  useEffect(() => {
-    return () => {
-      cancelDragRef.current?.();
-    };
-  }, []);
-
-  const handleObjectChange = useCallback(() => {
-    const translateControls = transformRef.current;
-    const rotateControls = rotateTransformRef.current;
-    const draggingControls = rotateControls?.dragging
-      ? rotateControls
-      : translateControls?.dragging
-        ? translateControls
-        : null;
-
-    if (draggingControls && !isDraggingRef.current) {
-      beginDrag(draggingControls);
-    }
-
-    const activeTargetObject = targetObjectRef.current;
-    const isTranslateDragging = Boolean(translateControls?.dragging);
-    if (shouldUseTranslateProxy && isTranslateDragging) {
-      applyTranslateProxyToTarget();
-    }
-
-    if (activeTargetObject && isDraggingRef.current) {
-      emitTransformPreview(activeTargetObject);
-    }
-
-    invalidate();
-  }, [applyTranslateProxyToTarget, beginDrag, emitTransformPreview, invalidate, shouldUseTranslateProxy]);
-
   useFrame(() => {
-    const translateControls = transformRef.current;
-    const rotateControls = rotateTransformRef.current;
-    const draggingControls = rotateControls?.dragging
-      ? rotateControls
-      : translateControls?.dragging
-        ? translateControls
-        : null;
+    const draggingControls = resolveActiveCollisionDraggingControls(
+      transformRef.current,
+      rotateTransformRef.current,
+      activeControlsRef.current,
+    );
 
     if (draggingControls) {
-      beginDrag(draggingControls);
+      beginActiveDrag(draggingControls);
       invalidate();
       return;
     }
 
     if (isDraggingRef.current) {
-      finishDrag();
+      finishActiveDrag();
     }
   }, 1000);
-
-  const getControlMode = () => {
-    if (transformMode === 'translate') return 'translate';
-    if (transformMode === 'rotate') return 'rotate';
-    if (transformMode === 'universal') return 'universal';
-    return 'translate';
-  };
 
   if (!targetObject || transformMode === 'select') {
     return null;
   }
 
-  const canRenderControls = transformMode === 'rotate' || !shouldUseTranslateProxy || Boolean(translateProxy);
+  const canRenderControls = canRenderCollisionTransformControls(
+    transformMode,
+    shouldUseTranslateProxy,
+    translateProxy,
+  );
 
   return (
     <>
@@ -425,7 +363,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
           rotateRef={rotateTransformRef}
           object={targetObject}
           translateObject={shouldUseTranslateProxy ? translateProxy ?? undefined : undefined}
-          mode={getControlMode()}
+          mode={controlMode}
           size={COLLISION_TRANSLATE_GIZMO_SIZE}
           rotateSize={COLLISION_ROTATE_GIZMO_SIZE}
           translateSpace="local"

@@ -3,7 +3,12 @@ import * as THREE from 'three';
 import type { UrdfLink } from '@/types';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 
-import { COLLISION_OVERLAY_RENDER_ORDER, collisionBaseMaterial } from './materials';
+import {
+  collisionBaseMaterial,
+  resolveCollisionRenderOrder,
+  syncCollisionBaseMaterialPriority,
+} from './materials';
+import { disposeReplacedMaterials } from './robotLoaderPatchUtils';
 
 const COLLIDER_MESH_CACHE_KEY = '__collisionMeshesCache';
 
@@ -19,15 +24,15 @@ function isCollisionGeometryVisible(
 ): boolean {
   if (!showCollision) return false;
   if (!linkData) return true;
+  if (linkData.visible === false) return false;
 
   const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
   return geometry ? geometry.visible !== false : true;
 }
 
 function getColliderIndex(collider: THREE.Object3D): number {
-  const linkObject = collider.parent && (collider.parent as any).isURDFLink
-    ? collider.parent
-    : null;
+  const linkObject =
+    collider.parent && (collider.parent as any).isURDFLink ? collider.parent : null;
   if (!linkObject) return 0;
 
   const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
@@ -39,6 +44,7 @@ export interface SyncCollisionGroupVisibilityOptions {
   collider: THREE.Object3D;
   linkData?: UrdfLink;
   showCollision: boolean;
+  showCollisionAlwaysOnTop?: boolean;
   highlightedMeshes?: ReadonlyMap<THREE.Mesh, unknown>;
 }
 
@@ -63,11 +69,23 @@ export function syncCollisionGroupVisibility({
   collider,
   linkData,
   showCollision,
+  showCollisionAlwaysOnTop = true,
   highlightedMeshes,
 }: SyncCollisionGroupVisibilityOptions): boolean {
   const colliderIndex = getColliderIndex(collider);
   const isVisible = isCollisionGeometryVisible(linkData, colliderIndex, showCollision);
   let changed = collider.visible !== isVisible;
+  const disposedMaterials = new Set<THREE.Material>();
+  const previousCollisionDepthTest = collisionBaseMaterial.depthTest;
+  const previousCollisionDepthWrite = collisionBaseMaterial.depthWrite;
+
+  syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
+  if (
+    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
+    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
+  ) {
+    changed = true;
+  }
 
   collider.visible = isVisible;
 
@@ -76,7 +94,9 @@ export function syncCollisionGroupVisibility({
   }
 
   getColliderMeshes(collider).forEach((inner) => {
-    const meshWithOriginalMaterial = inner as THREE.Mesh & { __origMaterial?: THREE.Material | THREE.Material[] };
+    const meshWithOriginalMaterial = inner as THREE.Mesh & {
+      __origMaterial?: THREE.Material | THREE.Material[];
+    };
 
     if (inner.userData.isCollisionMesh !== true) {
       changed = true;
@@ -97,19 +117,24 @@ export function syncCollisionGroupVisibility({
       return;
     }
 
-    if (meshWithOriginalMaterial.__origMaterial) {
-      meshWithOriginalMaterial.__origMaterial = collisionBaseMaterial;
-    }
-
     if (inner.material !== collisionBaseMaterial) {
       changed = true;
+      const previousMaterial = inner.material as THREE.Material | THREE.Material[] | undefined;
+      meshWithOriginalMaterial.__origMaterial ??= previousMaterial;
+      inner.material = collisionBaseMaterial;
+      disposeReplacedMaterials(previousMaterial, disposedMaterials, true);
+    } else {
+      meshWithOriginalMaterial.__origMaterial ??= inner.material as
+        | THREE.Material
+        | THREE.Material[]
+        | undefined;
     }
-    inner.material = collisionBaseMaterial;
 
-    if (inner.renderOrder !== COLLISION_OVERLAY_RENDER_ORDER) {
+    const collisionRenderOrder = resolveCollisionRenderOrder(showCollisionAlwaysOnTop);
+    if (inner.renderOrder !== collisionRenderOrder) {
       changed = true;
     }
-    inner.renderOrder = COLLISION_OVERLAY_RENDER_ORDER;
+    inner.renderOrder = collisionRenderOrder;
   });
 
   return changed;

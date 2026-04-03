@@ -1,5 +1,4 @@
 import {
-  computeMeshAnalysisFromAssets,
   type MeshAnalysis,
   type MeshAnalysisOptions,
 } from './geometryConversion';
@@ -151,35 +150,6 @@ function ensureSharedWorker(): Worker {
   return sharedWorker;
 }
 
-async function analyzeMeshBatchOnMainThread({
-  assets,
-  tasks,
-  options,
-  signal,
-}: AnalyzeMeshBatchArgs): Promise<Record<string, MeshAnalysis | null>> {
-  const results: Record<string, MeshAnalysis | null> = {};
-
-  for (let index = 0; index < tasks.length; index += 1) {
-    if (signal?.aborted) {
-      throw createAbortError();
-    }
-
-    const task = tasks[index];
-    const requestCacheKey = createRequestCacheKey(task.cacheKey, options);
-    const analysis = await computeMeshAnalysisFromAssets(
-      task.meshPath,
-      assets,
-      task.dimensions,
-      options,
-    );
-
-    setMeshAnalysisCacheEntry(requestCacheKey, analysis ?? null);
-    results[task.targetId] = analysis ?? null;
-  }
-
-  return results;
-}
-
 export async function analyzeMeshBatchWithWorker({
   assets,
   tasks,
@@ -206,13 +176,7 @@ export async function analyzeMeshBatchWithWorker({
   }
 
   if (typeof Worker === 'undefined') {
-    const fallbackResults = await analyzeMeshBatchOnMainThread({
-      assets,
-      tasks: pendingTasks,
-      options,
-      signal,
-    });
-    return { ...results, ...fallbackResults };
+    throw new Error('Web Worker is not available in this environment');
   }
 
   return await new Promise<Record<string, MeshAnalysis | null>>((resolve, reject) => {

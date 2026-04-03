@@ -8,19 +8,23 @@ import {
   resolveLinkKey,
   updateCollisionGeometryByObjectIndex,
 } from '@/core/robot';
+import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
 import { useAssemblyStore, useRobotStore } from '@/store';
 import type { PendingCollisionTransform } from '@/store/collisionTransformStore';
 import type {
   AssemblyState,
+  AssemblyTransform,
   RobotData,
   UrdfJoint,
   UrdfLink,
+  UrdfOrigin,
 } from '@/types';
 import {
   usePendingHistoryCoordinator,
   type UpdateCommitMode,
   type UpdateCommitOptions,
 } from './usePendingHistoryCoordinator';
+import type { MJCFRenameOperation } from '../utils/mjcfEditableSourcePatch';
 
 interface UseWorkspaceMutationsParams {
   sidebarTab: string;
@@ -28,7 +32,7 @@ interface UseWorkspaceMutationsParams {
   robotLinks: Record<string, UrdfLink>;
   rootLinkId: string;
   setName: (name: string) => void;
-  addChild: (parentId: string) => { jointId: string };
+  addChild: (parentId: string) => { linkId: string; jointId: string };
   deleteSubtree: (linkId: string) => void;
   updateLink: (
     id: string,
@@ -47,14 +51,53 @@ interface UseWorkspaceMutationsParams {
     name: string,
     options?: { skipHistory?: boolean; label?: string },
   ) => void;
+  updateComponentTransform: (
+    componentId: string,
+    transform: AssemblyTransform,
+    options?: { skipHistory?: boolean; label?: string },
+  ) => void;
   updateComponentRobot: (
     componentId: string,
     partialRobot: Partial<RobotData>,
     options?: { skipHistory?: boolean; label?: string },
   ) => void;
+  updateAssemblyTransform: (
+    transform: AssemblyTransform,
+    options?: { skipHistory?: boolean; label?: string },
+  ) => void;
   removeComponent: (id: string) => void;
   removeBridge: (id: string) => void;
   focusOn: (id: string) => void;
+  patchEditableSourceAddChild?: (args: {
+    sourceFileName?: string | null;
+    parentLinkName: string;
+    linkName: string;
+    joint: UrdfJoint;
+  }) => void;
+  patchEditableSourceDeleteSubtree?: (args: {
+    sourceFileName?: string | null;
+    linkName: string;
+  }) => void;
+  patchEditableSourceAddCollisionBody?: (args: {
+    sourceFileName?: string | null;
+    linkName: string;
+    geometry: UrdfLink['collision'];
+  }) => void;
+  patchEditableSourceDeleteCollisionBody?: (args: {
+    sourceFileName?: string | null;
+    linkName: string;
+    objectIndex: number;
+  }) => void;
+  patchEditableSourceUpdateCollisionBody?: (args: {
+    sourceFileName?: string | null;
+    linkName: string;
+    objectIndex: number;
+    geometry: UrdfLink['collision'];
+  }) => void;
+  patchEditableSourceRenameEntities?: (args: {
+    sourceFileName?: string | null;
+    operations: MJCFRenameOperation[];
+  }) => void;
   setSelection: (selection: {
     type: 'link' | 'joint' | null;
     id: string | null;
@@ -79,15 +122,165 @@ export function useWorkspaceMutations({
   setAllLinksVisibility,
   setJointAngle,
   updateComponentName,
+  updateComponentTransform,
   updateComponentRobot,
+  updateAssemblyTransform,
   removeComponent,
   removeBridge,
   focusOn,
+  patchEditableSourceAddChild,
+  patchEditableSourceDeleteSubtree,
+  patchEditableSourceAddCollisionBody,
+  patchEditableSourceDeleteCollisionBody,
+  patchEditableSourceUpdateCollisionBody,
+  patchEditableSourceRenameEntities,
   setSelection,
   setPendingCollisionTransform,
   clearPendingCollisionTransform,
   handleTransformPendingChange,
 }: UseWorkspaceMutationsParams) {
+  const areAssemblyTransformsEqual = useCallback((
+    left?: AssemblyTransform | null,
+    right?: AssemblyTransform | null,
+  ) => {
+    const normalizedLeft = cloneAssemblyTransform(left);
+    const normalizedRight = cloneAssemblyTransform(right);
+    return normalizedLeft.position.x === normalizedRight.position.x
+      && normalizedLeft.position.y === normalizedRight.position.y
+      && normalizedLeft.position.z === normalizedRight.position.z
+      && normalizedLeft.rotation.r === normalizedRight.rotation.r
+      && normalizedLeft.rotation.p === normalizedRight.rotation.p
+      && normalizedLeft.rotation.y === normalizedRight.rotation.y;
+  }, []);
+
+  const createCollisionGeometrySignature = useCallback((geometry: UrdfLink['collision']): string => {
+    return JSON.stringify({
+      type: geometry.type,
+      dimensions: geometry.dimensions,
+      color: geometry.color,
+      meshPath: geometry.meshPath ?? null,
+      assetRef: geometry.assetRef ?? null,
+      visible: geometry.visible ?? null,
+      origin: geometry.origin,
+      mjcfHfield: geometry.mjcfHfield
+        ? {
+          name: geometry.mjcfHfield.name ?? null,
+          file: geometry.mjcfHfield.file ?? null,
+          nrow: geometry.mjcfHfield.nrow ?? null,
+          ncol: geometry.mjcfHfield.ncol ?? null,
+        }
+        : null,
+    });
+  }, []);
+
+  const findRemovedCollisionGeometryObjectIndex = useCallback((currentLink: UrdfLink, nextLink: UrdfLink): number | null => {
+    const currentEntries = getCollisionGeometryEntries(currentLink);
+    const nextEntries = getCollisionGeometryEntries(nextLink);
+
+    if (currentEntries.length !== nextEntries.length + 1) {
+      return null;
+    }
+
+    const nextSignatures = nextEntries.map((entry) => createCollisionGeometrySignature(entry.geometry));
+    for (let removeIndex = 0; removeIndex < currentEntries.length; removeIndex += 1) {
+      const candidateSignatures = currentEntries
+        .filter((_entry, index) => index !== removeIndex)
+        .map((entry) => createCollisionGeometrySignature(entry.geometry));
+
+      if (
+        candidateSignatures.length === nextSignatures.length
+        && candidateSignatures.every((signature, index) => signature === nextSignatures[index])
+      ) {
+        return removeIndex;
+      }
+    }
+
+    return null;
+  }, [createCollisionGeometrySignature]);
+
+  const createEditableCollisionGeometrySignature = useCallback((geometry: UrdfLink['collision']): string => {
+    return JSON.stringify({
+      type: geometry.type,
+      dimensions: geometry.dimensions,
+      color: geometry.color,
+      meshPath: geometry.meshPath ?? null,
+      assetRef: geometry.assetRef ?? null,
+      origin: geometry.origin,
+      mjcfHfield: geometry.mjcfHfield
+        ? {
+          name: geometry.mjcfHfield.name ?? null,
+          file: geometry.mjcfHfield.file ?? null,
+          nrow: geometry.mjcfHfield.nrow ?? null,
+          ncol: geometry.mjcfHfield.ncol ?? null,
+        }
+        : null,
+    });
+  }, []);
+
+  const findAddedCollisionGeometryPatch = useCallback((
+    currentLink: UrdfLink,
+    nextLink: UrdfLink,
+  ): { objectIndex: number; geometry: UrdfLink['collision'] } | null => {
+    const currentEntries = getCollisionGeometryEntries(currentLink);
+    const nextEntries = getCollisionGeometryEntries(nextLink);
+
+    if (nextEntries.length !== currentEntries.length + 1) {
+      return null;
+    }
+
+    const currentSignatures = currentEntries.map((entry) => createEditableCollisionGeometrySignature(entry.geometry));
+    for (let addIndex = 0; addIndex < nextEntries.length; addIndex += 1) {
+      const candidateSignatures = nextEntries
+        .filter((_entry, index) => index !== addIndex)
+        .map((entry) => createEditableCollisionGeometrySignature(entry.geometry));
+
+      if (
+        candidateSignatures.length === currentSignatures.length
+        && candidateSignatures.every((signature, index) => signature === currentSignatures[index])
+      ) {
+        return {
+          objectIndex: nextEntries[addIndex].objectIndex,
+          geometry: nextEntries[addIndex].geometry,
+        };
+      }
+    }
+
+    return null;
+  }, [createEditableCollisionGeometrySignature]);
+
+  const findUpdatedCollisionGeometryPatch = useCallback((
+    currentLink: UrdfLink,
+    nextLink: UrdfLink,
+  ): { objectIndex: number; geometry: UrdfLink['collision'] } | null => {
+    const currentEntries = getCollisionGeometryEntries(currentLink);
+    const nextEntries = getCollisionGeometryEntries(nextLink);
+
+    if (currentEntries.length !== nextEntries.length) {
+      return null;
+    }
+
+    let changedEntry: { objectIndex: number; geometry: UrdfLink['collision'] } | null = null;
+
+    for (let index = 0; index < currentEntries.length; index += 1) {
+      const currentSignature = createEditableCollisionGeometrySignature(currentEntries[index].geometry);
+      const nextSignature = createEditableCollisionGeometrySignature(nextEntries[index].geometry);
+      if (currentSignature === nextSignature) {
+        continue;
+      }
+
+      if (changedEntry) {
+        return null;
+      }
+
+      changedEntry = {
+        objectIndex: currentEntries[index].objectIndex,
+        geometry: nextEntries[index].geometry,
+      };
+    }
+
+    return changedEntry;
+  }, [createEditableCollisionGeometrySignature]);
+
   const createRobotSnapshot = useCallback(() => {
     const state = useRobotStore.getState();
     return structuredClone({
@@ -144,30 +337,51 @@ export function useWorkspaceMutations({
 
     const oldRootName = rootLink.name;
     const oldPrefix = `${oldRootName}_`;
+    const renameOperations: MJCFRenameOperation[] = oldRootName === nextRootName
+      ? []
+      : [{ kind: 'link', currentName: oldRootName, nextName: nextRootName }];
 
     const nextLinks: Record<string, UrdfLink> = { ...component.robot.links };
     nextLinks[rootId] = { ...rootLink, name: nextRootName };
 
     Object.entries(component.robot.links).forEach(([id, currentLink]) => {
       if (id === rootId || !currentLink.name.startsWith(oldPrefix)) return;
+      const nextName = `${nextRootName}_${currentLink.name.slice(oldPrefix.length)}`;
       nextLinks[id] = {
         ...currentLink,
-        name: `${nextRootName}_${currentLink.name.slice(oldPrefix.length)}`,
+        name: nextName,
       };
+      renameOperations.push({
+        kind: 'link',
+        currentName: currentLink.name,
+        nextName,
+      });
     });
 
     const nextJoints: Record<string, UrdfJoint> = { ...component.robot.joints };
     Object.entries(component.robot.joints).forEach(([id, joint]) => {
       if (!joint.name.startsWith(oldPrefix)) return;
+      const nextName = `${nextRootName}_${joint.name.slice(oldPrefix.length)}`;
       nextJoints[id] = {
         ...joint,
-        name: `${nextRootName}_${joint.name.slice(oldPrefix.length)}`,
+        name: nextName,
       };
+      renameOperations.push({
+        kind: 'joint',
+        currentName: joint.name,
+        nextName,
+      });
     });
 
     updateComponentRobot(componentId, { links: nextLinks, joints: nextJoints }, options);
     updateComponentName(componentId, nextRootName, options);
-  }, [updateComponentName, updateComponentRobot]);
+    if (renameOperations.length) {
+      patchEditableSourceRenameEntities?.({
+        sourceFileName: component.sourceFile,
+        operations: renameOperations,
+      });
+    }
+  }, [patchEditableSourceRenameEntities, updateComponentName, updateComponentRobot]);
 
   const applyUpdate = useCallback((
     type: 'link' | 'joint',
@@ -184,12 +398,18 @@ export function useWorkspaceMutations({
       for (const comp of Object.values(latestAssemblyState.components)) {
         const resolvedLinkId = type === 'link' ? resolveLinkKey(comp.robot.links, id) : null;
         if (type === 'link' && resolvedLinkId) {
+          const currentLink = comp.robot.links[resolvedLinkId];
           const nextLink = data as UrdfLink;
+          const addedCollisionPatch = findAddedCollisionGeometryPatch(currentLink, nextLink);
+          const removedCollisionObjectIndex = findRemovedCollisionGeometryObjectIndex(currentLink, nextLink);
+          const updatedCollisionPatch = addedCollisionPatch === null && removedCollisionObjectIndex === null
+            ? findUpdatedCollisionGeometryPatch(currentLink, nextLink)
+            : null;
           const historyKey = options.historyKey ?? `assembly:component:${comp.id}:link:${resolvedLinkId}`;
           const historyLabel = options.historyLabel ?? 'Update assembly component';
           const isRootLink = resolvedLinkId === comp.robot.rootLinkId;
 
-          if (isRootLink && comp.robot.links[resolvedLinkId].name !== nextLink.name) {
+          if (isRootLink && currentLink.name !== nextLink.name) {
             ensurePendingAssemblyHistory(historyKey, historyLabel);
             renameComponentRootWithDefaults(comp.id, nextLink.name, {
               skipHistory: true,
@@ -226,6 +446,38 @@ export function useWorkspaceMutations({
             skipHistory: true,
             label: historyLabel,
           });
+          if (currentLink.name !== nextLink.name) {
+            patchEditableSourceRenameEntities?.({
+              sourceFileName: comp.sourceFile,
+              operations: [{
+                kind: 'link',
+                currentName: currentLink.name,
+                nextName: nextLink.name,
+              }],
+            });
+          }
+          if (addedCollisionPatch) {
+            patchEditableSourceAddCollisionBody?.({
+              sourceFileName: comp.sourceFile,
+              linkName: currentLink.name,
+              geometry: addedCollisionPatch.geometry,
+            });
+          }
+          if (removedCollisionObjectIndex !== null) {
+            patchEditableSourceDeleteCollisionBody?.({
+              sourceFileName: comp.sourceFile,
+              linkName: currentLink.name,
+              objectIndex: removedCollisionObjectIndex,
+            });
+          }
+          if (updatedCollisionPatch) {
+            patchEditableSourceUpdateCollisionBody?.({
+              sourceFileName: comp.sourceFile,
+              linkName: currentLink.name,
+              objectIndex: updatedCollisionPatch.objectIndex,
+              geometry: updatedCollisionPatch.geometry,
+            });
+          }
 
           if (commitMode === 'immediate') {
             commitPendingAssemblyHistory(historyKey);
@@ -237,6 +489,7 @@ export function useWorkspaceMutations({
 
         const resolvedJointId = type === 'joint' ? resolveJointKey(comp.robot.joints, id) : null;
         if (type === 'joint' && resolvedJointId) {
+          const currentJoint = comp.robot.joints[resolvedJointId];
           const historyKey = options.historyKey ?? `assembly:component:${comp.id}:joint:${resolvedJointId}`;
           const historyLabel = options.historyLabel ?? 'Update assembly component';
 
@@ -247,6 +500,16 @@ export function useWorkspaceMutations({
             skipHistory: true,
             label: historyLabel,
           });
+          if (currentJoint.name !== (data as UrdfJoint).name) {
+            patchEditableSourceRenameEntities?.({
+              sourceFileName: comp.sourceFile,
+              operations: [{
+                kind: 'joint',
+                currentName: currentJoint.name,
+                nextName: (data as UrdfJoint).name,
+              }],
+            });
+          }
 
           if (commitMode === 'immediate') {
             commitPendingAssemblyHistory(historyKey);
@@ -279,6 +542,17 @@ export function useWorkspaceMutations({
     if (type === 'link') {
       const resolvedLinkId = resolveLinkKey(useRobotStore.getState().links, id);
       if (resolvedLinkId) {
+        const currentLink = useRobotStore.getState().links[resolvedLinkId];
+        const nextLink = data as UrdfLink;
+        const addedCollisionPatch = currentLink
+          ? findAddedCollisionGeometryPatch(currentLink, nextLink)
+          : null;
+        const removedCollisionObjectIndex = currentLink
+          ? findRemovedCollisionGeometryObjectIndex(currentLink, nextLink)
+          : null;
+        const updatedCollisionPatch = currentLink && addedCollisionPatch === null && removedCollisionObjectIndex === null
+          ? findUpdatedCollisionGeometryPatch(currentLink, nextLink)
+          : null;
         const historyKey = options.historyKey ?? `robot:link:${resolvedLinkId}`;
         const historyLabel = options.historyLabel ?? 'Update link';
 
@@ -287,6 +561,34 @@ export function useWorkspaceMutations({
           skipHistory: true,
           label: historyLabel,
         });
+        if (currentLink && currentLink.name !== nextLink.name) {
+          patchEditableSourceRenameEntities?.({
+            operations: [{
+              kind: 'link',
+              currentName: currentLink.name,
+              nextName: nextLink.name,
+            }],
+          });
+        }
+        if (currentLink && addedCollisionPatch) {
+          patchEditableSourceAddCollisionBody?.({
+            linkName: currentLink.name,
+            geometry: addedCollisionPatch.geometry,
+          });
+        }
+        if (currentLink && removedCollisionObjectIndex !== null) {
+          patchEditableSourceDeleteCollisionBody?.({
+            linkName: currentLink.name,
+            objectIndex: removedCollisionObjectIndex,
+          });
+        }
+        if (currentLink && updatedCollisionPatch) {
+          patchEditableSourceUpdateCollisionBody?.({
+            linkName: currentLink.name,
+            objectIndex: updatedCollisionPatch.objectIndex,
+            geometry: updatedCollisionPatch.geometry,
+          });
+        }
 
         if (commitMode === 'immediate') {
           commitPendingRobotHistory(historyKey);
@@ -307,6 +609,15 @@ export function useWorkspaceMutations({
           skipHistory: true,
           label: historyLabel,
         });
+        if (currentJoint && currentJoint.name !== (data as UrdfJoint).name) {
+          patchEditableSourceRenameEntities?.({
+            operations: [{
+              kind: 'joint',
+              currentName: currentJoint.name,
+              nextName: (data as UrdfJoint).name,
+            }],
+          });
+        }
 
         if (currentJoint && (data as Partial<UrdfJoint>).origin) {
           const compensatedOrigins = resolveClosedLoopJointOriginCompensation(
@@ -335,10 +646,17 @@ export function useWorkspaceMutations({
     commitPendingRobotHistory,
     ensurePendingAssemblyHistory,
     ensurePendingRobotHistory,
+    findAddedCollisionGeometryPatch,
     renameComponentRootWithDefaults,
     schedulePendingAssemblyHistoryCommit,
     schedulePendingRobotHistoryCommit,
     sidebarTab,
+    findRemovedCollisionGeometryObjectIndex,
+    findUpdatedCollisionGeometryPatch,
+    patchEditableSourceAddCollisionBody,
+    patchEditableSourceDeleteCollisionBody,
+    patchEditableSourceUpdateCollisionBody,
+    patchEditableSourceRenameEntities,
     updateComponentRobot,
     updateJoint,
     updateLink,
@@ -438,6 +756,156 @@ export function useWorkspaceMutations({
     }
   }, [clearPendingCollisionTransform, handleTransformPendingChange]);
 
+  const handleAssemblyTransform = useCallback((
+    transform: AssemblyTransform,
+    options: UpdateCommitOptions = {},
+  ) => {
+    if (!(assemblyState && sidebarTab === 'workspace')) {
+      return;
+    }
+
+    const nextTransform = cloneAssemblyTransform(transform);
+    const latestAssembly = useAssemblyStore.getState().assemblyState;
+    if (!latestAssembly || areAssemblyTransformsEqual(latestAssembly.transform, nextTransform)) {
+      return;
+    }
+
+    const historyKey = options.historyKey ?? 'assembly:transform';
+    const historyLabel = options.historyLabel ?? 'Transform assembly';
+    const commitMode = options.commitMode ?? 'immediate';
+
+    ensurePendingAssemblyHistory(historyKey, historyLabel);
+    updateAssemblyTransform(nextTransform, {
+      skipHistory: true,
+      label: historyLabel,
+    });
+
+    if (commitMode === 'immediate') {
+      commitPendingAssemblyHistory(historyKey);
+    } else if (commitMode !== 'manual') {
+      schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+    }
+  }, [
+    areAssemblyTransformsEqual,
+    assemblyState,
+    commitPendingAssemblyHistory,
+    ensurePendingAssemblyHistory,
+    schedulePendingAssemblyHistoryCommit,
+    sidebarTab,
+    updateAssemblyTransform,
+  ]);
+
+  const handleComponentTransform = useCallback((
+    componentId: string,
+    transform: AssemblyTransform,
+    options: UpdateCommitOptions = {},
+  ) => {
+    if (!(assemblyState && sidebarTab === 'workspace')) {
+      return;
+    }
+
+    const latestAssembly = useAssemblyStore.getState().assemblyState;
+    const latestComponent = latestAssembly?.components[componentId];
+    if (!latestComponent) {
+      return;
+    }
+
+    const nextTransform = cloneAssemblyTransform(transform);
+    if (areAssemblyTransformsEqual(latestComponent.transform, nextTransform)) {
+      return;
+    }
+
+    const historyKey = options.historyKey ?? `assembly:component:${componentId}:transform`;
+    const historyLabel = options.historyLabel ?? 'Transform assembly component';
+    const commitMode = options.commitMode ?? 'immediate';
+
+    if (options.skipHistory) {
+      updateComponentTransform(componentId, nextTransform, {
+        skipHistory: true,
+        label: historyLabel,
+      });
+      return;
+    }
+
+    ensurePendingAssemblyHistory(historyKey, historyLabel);
+    updateComponentTransform(componentId, nextTransform, {
+      skipHistory: true,
+      label: historyLabel,
+    });
+
+    if (commitMode === 'immediate') {
+      commitPendingAssemblyHistory(historyKey);
+    } else if (commitMode !== 'manual') {
+      schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+    }
+  }, [
+    areAssemblyTransformsEqual,
+    assemblyState,
+    commitPendingAssemblyHistory,
+    ensurePendingAssemblyHistory,
+    schedulePendingAssemblyHistoryCommit,
+    sidebarTab,
+    updateComponentTransform,
+  ]);
+
+  const handleBridgeTransform = useCallback((
+    bridgeId: string,
+    origin: UrdfOrigin,
+    options: UpdateCommitOptions = {},
+  ) => {
+    if (!(assemblyState && sidebarTab === 'workspace')) {
+      return;
+    }
+
+    const latestAssembly = useAssemblyStore.getState().assemblyState;
+    const latestBridge = latestAssembly?.bridges[bridgeId];
+    if (!latestBridge) {
+      return;
+    }
+
+    const currentOrigin = latestBridge.joint.origin;
+    const sameOrigin = currentOrigin.xyz.x === origin.xyz.x
+      && currentOrigin.xyz.y === origin.xyz.y
+      && currentOrigin.xyz.z === origin.xyz.z
+      && currentOrigin.rpy.r === origin.rpy.r
+      && currentOrigin.rpy.p === origin.rpy.p
+      && currentOrigin.rpy.y === origin.rpy.y
+      && (currentOrigin.quatXyzw?.x ?? 0) === (origin.quatXyzw?.x ?? 0)
+      && (currentOrigin.quatXyzw?.y ?? 0) === (origin.quatXyzw?.y ?? 0)
+      && (currentOrigin.quatXyzw?.z ?? 0) === (origin.quatXyzw?.z ?? 0)
+      && (currentOrigin.quatXyzw?.w ?? 1) === (origin.quatXyzw?.w ?? 1);
+    if (sameOrigin) {
+      return;
+    }
+
+    const historyKey = options.historyKey ?? `assembly:bridge:${bridgeId}:transform`;
+    const historyLabel = options.historyLabel ?? 'Transform bridge joint';
+    const commitMode = options.commitMode ?? 'immediate';
+
+    ensurePendingAssemblyHistory(historyKey, historyLabel);
+    useAssemblyStore.getState().updateBridge(bridgeId, {
+      joint: {
+        ...latestBridge.joint,
+        origin,
+      },
+    }, {
+      skipHistory: true,
+      label: historyLabel,
+    });
+
+    if (commitMode === 'immediate') {
+      commitPendingAssemblyHistory(historyKey);
+    } else if (commitMode !== 'manual') {
+      schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
+    }
+  }, [
+    assemblyState,
+    commitPendingAssemblyHistory,
+    ensurePendingAssemblyHistory,
+    schedulePendingAssemblyHistoryCommit,
+    sidebarTab,
+  ]);
+
   const handleAddChild = useCallback((parentId: string) => {
     if (assemblyState && sidebarTab === 'workspace') {
       commitPendingAssemblyHistory();
@@ -445,6 +913,7 @@ export function useWorkspaceMutations({
       for (const component of Object.values(assemblyState.components)) {
         const resolvedParentId = resolveLinkKey(component.robot.links, parentId);
         if (!resolvedParentId) continue;
+        const parentLinkName = component.robot.links[resolvedParentId]?.name;
 
         const nextRobotState = addChildToRobot(
           {
@@ -454,6 +923,9 @@ export function useWorkspaceMutations({
           resolvedParentId,
         );
         const jointId = nextRobotState.selection.id;
+        const linkId = jointId ? nextRobotState.joints[jointId]?.childLinkId ?? null : null;
+        const newLink = linkId ? nextRobotState.links[linkId] : null;
+        const newJoint = jointId ? nextRobotState.joints[jointId] : null;
 
         updateComponentRobot(component.id, {
           links: nextRobotState.links,
@@ -462,7 +934,19 @@ export function useWorkspaceMutations({
           label: 'Add child link',
         });
 
-        if (jointId) {
+        if (parentLinkName && newLink && newJoint) {
+          patchEditableSourceAddChild?.({
+            sourceFileName: component.sourceFile,
+            parentLinkName,
+            linkName: newLink.name,
+            joint: newJoint,
+          });
+        }
+
+        if (linkId) {
+          setSelection({ type: 'link', id: linkId });
+          focusOn(linkId);
+        } else if (jointId) {
           setSelection({ type: 'joint', id: jointId });
         }
         return;
@@ -470,13 +954,32 @@ export function useWorkspaceMutations({
     }
 
     commitPendingRobotHistory();
-    const { jointId } = addChild(parentId);
+    const parentLinkName = useRobotStore.getState().links[parentId]?.name;
+    const { linkId, jointId } = addChild(parentId);
+    const nextState = useRobotStore.getState();
+    const newLink = nextState.links[linkId];
+    const newJoint = nextState.joints[jointId];
+    if (parentLinkName && newLink && newJoint) {
+      patchEditableSourceAddChild?.({
+        parentLinkName,
+        linkName: newLink.name,
+        joint: newJoint,
+      });
+    }
+    if (linkId) {
+      setSelection({ type: 'link', id: linkId });
+      focusOn(linkId);
+      return;
+    }
+
     setSelection({ type: 'joint', id: jointId });
   }, [
     addChild,
     assemblyState,
     commitPendingAssemblyHistory,
     commitPendingRobotHistory,
+    focusOn,
+    patchEditableSourceAddChild,
     setSelection,
     sidebarTab,
     updateComponentRobot,
@@ -484,23 +987,38 @@ export function useWorkspaceMutations({
 
   const handleAddCollisionBody = useCallback((parentId: string) => {
     if (assemblyState && sidebarTab === 'workspace') {
+      commitPendingAssemblyHistory();
+
       for (const component of Object.values(assemblyState.components)) {
-        const parentLink = component.robot.links[parentId];
+        const resolvedParentId = resolveLinkKey(component.robot.links, parentId);
+        if (!resolvedParentId) continue;
+
+        const parentLink = component.robot.links[resolvedParentId];
         if (!parentLink) continue;
 
         const updatedParentLink = appendCollisionBody(parentLink);
         const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
         const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
+        const newCollisionGeometry = nextCollisionEntries[nextObjectIndex]?.geometry ?? null;
 
         updateComponentRobot(component.id, {
           links: {
             ...component.robot.links,
-            [parentId]: updatedParentLink,
+            [resolvedParentId]: updatedParentLink,
           },
+        }, {
+          label: 'Add collision body',
         });
+        if (newCollisionGeometry) {
+          patchEditableSourceAddCollisionBody?.({
+            sourceFileName: component.sourceFile,
+            linkName: parentLink.name,
+            geometry: newCollisionGeometry,
+          });
+        }
 
-        setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
-        focusOn(parentId);
+        setSelection({ type: 'link', id: resolvedParentId, subType: 'collision', objectIndex: nextObjectIndex });
+        focusOn(resolvedParentId);
         return;
       }
       return;
@@ -511,12 +1029,21 @@ export function useWorkspaceMutations({
     const updatedParentLink = appendCollisionBody(parentLink);
     const nextCollisionEntries = getCollisionGeometryEntries(updatedParentLink);
     const nextObjectIndex = Math.max(0, nextCollisionEntries.length - 1);
+    const newCollisionGeometry = nextCollisionEntries[nextObjectIndex]?.geometry ?? null;
     updateLink(parentId, updatedParentLink);
+    if (newCollisionGeometry) {
+      patchEditableSourceAddCollisionBody?.({
+        linkName: parentLink.name,
+        geometry: newCollisionGeometry,
+      });
+    }
     setSelection({ type: 'link', id: parentId, subType: 'collision', objectIndex: nextObjectIndex });
     focusOn(parentId);
   }, [
     assemblyState,
+    commitPendingAssemblyHistory,
     focusOn,
+    patchEditableSourceAddCollisionBody,
     robotLinks,
     setSelection,
     sidebarTab,
@@ -528,6 +1055,7 @@ export function useWorkspaceMutations({
     if (assemblyState && sidebarTab === 'workspace') {
       for (const component of Object.values(assemblyState.components)) {
         if (!component.robot.links[linkId]) continue;
+        const targetLinkName = component.robot.links[linkId]?.name;
 
         if (linkId === component.robot.rootLinkId) {
           removeComponent(component.id);
@@ -572,6 +1100,13 @@ export function useWorkspaceMutations({
           joints: nextJoints,
         });
 
+        if (targetLinkName) {
+          patchEditableSourceDeleteSubtree?.({
+            sourceFileName: component.sourceFile,
+            linkName: targetLinkName,
+          });
+        }
+
         Object.values(assemblyState.bridges).forEach((bridge) => {
           const isAffectedParent = bridge.parentComponentId === component.id && toDeleteLinks.has(bridge.parentLinkId);
           const isAffectedChild = bridge.childComponentId === component.id && toDeleteLinks.has(bridge.childLinkId);
@@ -587,11 +1122,16 @@ export function useWorkspaceMutations({
     }
 
     if (linkId === rootLinkId) return;
+    const targetLinkName = robotLinks[linkId]?.name;
     deleteSubtree(linkId);
+    if (targetLinkName) {
+      patchEditableSourceDeleteSubtree?.({ linkName: targetLinkName });
+    }
     setSelection({ type: null, id: null });
   }, [
     assemblyState,
     deleteSubtree,
+    patchEditableSourceDeleteSubtree,
     removeBridge,
     removeComponent,
     rootLinkId,
@@ -619,6 +1159,9 @@ export function useWorkspaceMutations({
     handleCollisionTransformPreview,
     handleCollisionTransform,
     handleCollisionTransformPendingChange,
+    handleAssemblyTransform,
+    handleComponentTransform,
+    handleBridgeTransform,
     handleAddChild,
     handleAddCollisionBody,
     handleDelete,

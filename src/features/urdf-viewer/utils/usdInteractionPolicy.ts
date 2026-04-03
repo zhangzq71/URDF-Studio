@@ -1,9 +1,6 @@
-import type { ToolMode } from '../types.ts';
-import {
-  resolveEffectiveInteractionSubType,
-  type InteractiveGeometrySubType,
-  type ViewerHighlightMode,
-} from './interactionMode.ts';
+import type { ToolMode, ViewerInteractiveLayer, ViewerSceneMode } from '../types.ts';
+import type { InteractiveGeometrySubType } from './interactionMode.ts';
+import { resolvePreferredUsdGeometryRole } from './usdInteractionPicking.ts';
 
 export interface UsdStageInteractionPolicy {
   enableContinuousHover: boolean;
@@ -12,10 +9,11 @@ export interface UsdStageInteractionPolicy {
 }
 
 export interface ResolveUsdStageJointRotationOptions {
-  mode: 'detail' | 'hardware';
-  highlightMode: ViewerHighlightMode;
+  mode: ViewerSceneMode;
   showVisual: boolean;
   showCollision: boolean;
+  showCollisionAlwaysOnTop?: boolean;
+  interactionLayerPriority?: readonly ViewerInteractiveLayer[];
   toolMode: ToolMode;
 }
 
@@ -33,34 +31,29 @@ export function isContinuousHoverEnabledForToolMode(toolMode: ToolMode): boolean
 }
 
 export function resolveUsdStageInteractionPolicy(
-  mode: 'detail' | 'hardware',
+  mode: ViewerSceneMode,
   toolMode: ToolMode = 'select',
 ): UsdStageInteractionPolicy {
+  void mode;
   const enableContinuousHover = isContinuousHoverEnabledForToolMode(toolMode);
   const enableSelection = isInteractiveSelectionEnabledForToolMode(toolMode);
 
-  if (mode === 'hardware') {
-    return {
-      enableContinuousHover,
-      enableJointRotation: enableSelection,
-      enableMeshSelection: false,
-    };
-  }
-
   return {
     enableContinuousHover,
-    enableJointRotation: false,
+    enableJointRotation: enableSelection,
     enableMeshSelection: enableSelection,
   };
 }
 
 export function resolveUsdStageJointRotationRuntime({
-  highlightMode,
   mode,
   showVisual,
   showCollision,
+  showCollisionAlwaysOnTop = true,
+  interactionLayerPriority,
   toolMode,
 }: ResolveUsdStageJointRotationOptions): UsdStageJointRotationRuntime {
+  void mode;
   if (toolMode === 'measure' || !isInteractiveSelectionEnabledForToolMode(toolMode)) {
     return {
       enabled: false,
@@ -68,11 +61,12 @@ export function resolveUsdStageJointRotationRuntime({
     };
   }
 
-  const { subType } = resolveEffectiveInteractionSubType(
-    highlightMode,
+  const subType = resolvePreferredUsdGeometryRole({
+    interactionLayerPriority,
     showVisual,
     showCollision,
-  );
+    showCollisionAlwaysOnTop,
+  });
 
   if (subType !== 'visual') {
     return {
@@ -82,7 +76,7 @@ export function resolveUsdStageJointRotationRuntime({
   }
 
   return {
-    enabled: mode === 'detail' || mode === 'hardware',
+    enabled: true,
     pickSubType: subType,
   };
 }

@@ -27,34 +27,40 @@ test('syncRobotVisualColorsFromMaterials preserves additional visual body colors
             rpy: { r: 0, p: 0, y: 0 },
           },
         },
-        visualBodies: [{
-          type: GeometryType.MESH,
-          meshPath: 'assets/Base_Motor.stl',
-          dimensions: { x: 1, y: 1, z: 1 },
-          color: '#1a1a1a',
-          origin: {
-            xyz: { x: 0, y: 0, z: 0 },
-            rpy: { r: 0, p: 0, y: 0 },
+        visualBodies: [
+          {
+            type: GeometryType.MESH,
+            meshPath: 'assets/Base_Motor.stl',
+            dimensions: { x: 1, y: 1, z: 1 },
+            color: '#1a1a1a',
+            origin: {
+              xyz: { x: 0, y: 0, z: 0 },
+              rpy: { r: 0, p: 0, y: 0 },
+            },
           },
-        }],
+        ],
         collision: {
           type: GeometryType.MESH,
           meshPath: 'assets/Base.stl',
           dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffd11e',
           origin: {
             xyz: { x: 0, y: 0, z: 0 },
             rpy: { r: 0, p: 0, y: 0 },
           },
         },
-        collisionBodies: [{
-          type: GeometryType.MESH,
-          meshPath: 'assets/Base_Motor.stl',
-          dimensions: { x: 1, y: 1, z: 1 },
-          origin: {
-            xyz: { x: 0, y: 0, z: 0 },
-            rpy: { r: 0, p: 0, y: 0 },
+        collisionBodies: [
+          {
+            type: GeometryType.MESH,
+            meshPath: 'assets/Base_Motor.stl',
+            dimensions: { x: 1, y: 1, z: 1 },
+            color: '#1a1a1a',
+            origin: {
+              xyz: { x: 0, y: 0, z: 0 },
+              rpy: { r: 0, p: 0, y: 0 },
+            },
           },
-        }],
+        ],
       },
     },
     joints: {},
@@ -93,6 +99,7 @@ test('syncRobotVisualColorsFromMaterials still syncs the primary visual color fr
         collision: {
           type: GeometryType.BOX,
           dimensions: { x: 1, y: 1, z: 1 },
+          color: '#123456',
           origin: {
             xyz: { x: 0, y: 0, z: 0 },
             rpy: { r: 0, p: 0, y: 0 },

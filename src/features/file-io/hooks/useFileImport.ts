@@ -8,7 +8,8 @@ import JSZip from 'jszip';
 import { translations } from '@/shared/i18n';
 import { useAssetsStore, useUIStore } from '@/store';
 import { DEFAULT_MOTOR_LIBRARY } from '@/shared/data/motorLibrary';
-import type { RobotFile, MotorSpec } from '@/types';
+import { mergeMotorLibraryEntries } from '@/shared/data/motorLibraryMerge';
+import type { RobotFile } from '@/types';
 import type { AssetFile, LibraryFile, ImportResult } from '../types';
 import {
   detectFormat,
@@ -139,24 +140,11 @@ export function useFileImport(options: UseFileImportOptions = {}): UseFileImport
 
       // 1. Process Motor Library
       if (libraryFiles.length > 0) {
-        const newLibrary: Record<string, MotorSpec[]> = { ...DEFAULT_MOTOR_LIBRARY };
-        libraryFiles.forEach((f) => {
-          try {
-            const parts = f.path.split('/');
-            // Expecting .../Brand/Motor.txt
-            if (parts.length >= 2) {
-              const brand = parts[parts.length - 2];
-              const spec = JSON.parse(f.content) as MotorSpec;
-              if (!newLibrary[brand]) newLibrary[brand] = [];
-              if (!newLibrary[brand].some((m) => m.name === spec.name)) {
-                newLibrary[brand].push(spec);
-              }
-            }
-          } catch (err) {
-            console.error('Failed to parse motor spec', f.path, err);
-          }
+        const mergeResult = mergeMotorLibraryEntries(libraryFiles, DEFAULT_MOTOR_LIBRARY);
+        mergeResult.parseFailures.forEach((path) => {
+          console.error('Failed to parse motor spec', path);
         });
-        setMotorLibrary(newLibrary);
+        setMotorLibrary(mergeResult.library);
       }
 
       // 2. Load Assets

@@ -1,21 +1,88 @@
 import * as THREE from 'three';
 
+function closeTextureImageIfNeeded(texture: THREE.Texture): void {
+    const image = (texture as THREE.Texture & { image?: unknown }).image as { close?: () => void } | undefined;
+    if (!image || typeof image.close !== 'function') {
+        return;
+    }
+
+    try {
+        image.close();
+    } catch {
+        return;
+    }
+
+    if ((texture as THREE.Texture & { image?: unknown }).image === image) {
+        (texture as THREE.Texture & { image?: unknown }).image = null;
+    }
+}
+
+function releaseKnownObjectReferences(object: THREE.Object3D & Record<string, unknown>): void {
+    if ('links' in object) {
+        object.links = {};
+    }
+
+    if ('joints' in object) {
+        object.joints = {};
+    }
+
+    if ('mimicJoints' in object && Array.isArray(object.mimicJoints)) {
+        object.mimicJoints = [];
+    }
+
+    if ('jointValue' in object) {
+        object.jointValue = null;
+    }
+
+    if ('origPosition' in object) {
+        object.origPosition = null;
+    }
+
+    if ('origQuaternion' in object) {
+        object.origQuaternion = null;
+    }
+
+    if ('urdfNode' in object) {
+        object.urdfNode = null;
+    }
+
+    if ('userData' in object) {
+        object.userData = {};
+    }
+}
+
 export function disposeObject3D(
     object: THREE.Object3D | null,
     disposeTextures: boolean = true,
     excludeMaterials?: Set<THREE.Material>
 ): void {
     if (!object) return;
+    const disposedSkeletons = new Set<THREE.Skeleton>();
 
     object.traverse((child: any) => {
         if (child.geometry) {
             child.geometry.dispose();
         }
 
+        const skeleton = child.skeleton;
+        if (
+            skeleton instanceof THREE.Skeleton
+            && !disposedSkeletons.has(skeleton)
+            && typeof skeleton.dispose === 'function'
+        ) {
+            disposedSkeletons.add(skeleton);
+            skeleton.dispose();
+        }
+
         if (child.material) {
             disposeMaterial(child.material, disposeTextures, excludeMaterials);
         }
+
+        releaseKnownObjectReferences(child as THREE.Object3D & Record<string, unknown>);
     });
+
+    releaseKnownObjectReferences(object as THREE.Object3D & Record<string, unknown>);
+    object.clear();
 
     if (object.parent) {
         object.parent.remove(object);
@@ -49,11 +116,16 @@ export function disposeTexturesFromMaterial(material: THREE.Material): void {
         'gradientMap', 'metalnessMap', 'roughnessMap', 'clearcoatMap',
         'clearcoatNormalMap', 'clearcoatRoughnessMap', 'sheenColorMap',
         'sheenRoughnessMap', 'transmissionMap', 'thicknessMap',
+        'anisotropyMap', 'iridescenceMap', 'iridescenceThicknessMap',
+        'specularColorMap', 'specularIntensityMap',
     ];
+    const visitedTextures = new Set<THREE.Texture>();
 
     for (const prop of textureProperties) {
         const texture = (material as any)[prop];
-        if (texture && texture instanceof THREE.Texture) {
+        if (texture && texture instanceof THREE.Texture && !visitedTextures.has(texture)) {
+            visitedTextures.add(texture);
+            closeTextureImageIfNeeded(texture);
             texture.dispose();
         }
     }

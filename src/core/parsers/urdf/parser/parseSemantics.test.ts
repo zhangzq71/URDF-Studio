@@ -352,6 +352,276 @@ test('parseURDF preserves continuous joint effort and velocity without synthesiz
   assert.doesNotMatch(urdf, /<limit[^>]*upper=/);
 });
 
+test('parseURDF and generateURDF preserve joint calibration reference_position', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="joint_calibration_parse">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <calibration reference_position="-0.35" />
+    <limit lower="-1" upper="1" effort="5" velocity="2" />
+  </joint>
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.joints.hip_joint.referencePosition, -0.35);
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(urdf, /<calibration reference_position="-0\.35" \/>/);
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.equal(reparsed.joints.hip_joint.referencePosition, -0.35);
+});
+
+test('parseURDF and generateURDF preserve joint calibration rising and falling metadata', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="joint_calibration_edges">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <calibration reference_position="-0.35" rising="0.12" falling="-0.18" />
+    <limit lower="-1" upper="1" effort="5" velocity="2" />
+  </joint>
+</robot>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot.joints.hip_joint.calibration, {
+    referencePosition: -0.35,
+    rising: 0.12,
+    falling: -0.18,
+  });
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(
+    urdf,
+    /<calibration reference_position="-0\.35" rising="0\.12" falling="-0\.18" \/>/,
+  );
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.deepEqual(reparsed.joints.hip_joint.calibration, {
+    referencePosition: -0.35,
+    rising: 0.12,
+    falling: -0.18,
+  });
+});
+
+test('parseURDF and generateURDF preserve joint safety_controller metadata', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="joint_safety_controller_parse">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="-1" upper="1" effort="5" velocity="2" />
+    <safety_controller soft_lower_limit="-0.8" soft_upper_limit="0.9" k_position="12" k_velocity="3.5" />
+  </joint>
+</robot>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot.joints.hip_joint.safetyController, {
+    softLowerLimit: -0.8,
+    softUpperLimit: 0.9,
+    kPosition: 12,
+    kVelocity: 3.5,
+  });
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(
+    urdf,
+    /<safety_controller soft_lower_limit="-0\.8" soft_upper_limit="0\.9" k_position="12" k_velocity="3\.5" \/>/,
+  );
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.deepEqual(reparsed.joints.hip_joint.safetyController, {
+    softLowerLimit: -0.8,
+    softUpperLimit: 0.9,
+    kPosition: 12,
+    kVelocity: 3.5,
+  });
+});
+
+test('parseURDF and generateURDF preserve robot version and link type metadata', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="metadata_root" version="1.1">
+  <link name="base_link" type="rigid" />
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.version, '1.1');
+  assert.equal(robot.links.base_link.type, 'rigid');
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(urdf, /<robot name="metadata_root" version="1\.1">/);
+  assert.match(urdf, /<link name="base_link" type="rigid">\s*<\/link>/);
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.equal(reparsed.version, '1.1');
+  assert.equal(reparsed.links.base_link.type, 'rigid');
+});
+
+test('parseURDF and generateURDF preserve visual and collision metadata names', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="metadata_geometry">
+  <link name="base_link">
+    <visual name="base_visual">
+      <geometry>
+        <box size="1 2 3" />
+      </geometry>
+    </visual>
+    <collision name="base_collision">
+      <geometry>
+        <box size="1 2 3" />
+      </geometry>
+      <verbose value="mesh-simplified" />
+    </collision>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+  assert.equal(robot.links.base_link.visual.name, 'base_visual');
+  assert.equal(robot.links.base_link.collision.name, 'base_collision');
+  assert.equal(robot.links.base_link.collision.verbose, 'mesh-simplified');
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(urdf, /<visual name="base_visual">/);
+  assert.match(
+    urdf,
+    /<collision name="base_collision">[\s\S]*?<verbose value="mesh-simplified" \/>[\s\S]*?<\/collision>/,
+  );
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.equal(reparsed.links.base_link.visual.name, 'base_visual');
+  assert.equal(reparsed.links.base_link.collision.name, 'base_collision');
+  assert.equal(reparsed.links.base_link.collision.verbose, 'mesh-simplified');
+});
+
+test('parseURDF derives joint origin rpy from quat_xyzw and preserves quaternion metadata on roundtrip', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="joint_quat_origin">
+  <link name="base_link" />
+  <link name="tip_link" />
+  <joint name="yaw_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="tip_link" />
+    <origin xyz="0 0 0" quat_xyzw="0 0 0.70710678 0.70710678" />
+  </joint>
+</robot>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot.joints.yaw_joint.origin.quatXyzw, {
+    x: 0,
+    y: 0,
+    z: 0.70710678,
+    w: 0.70710678,
+  });
+  assert.ok(Math.abs(robot.joints.yaw_joint.origin.rpy.r) < 1e-6);
+  assert.ok(Math.abs(robot.joints.yaw_joint.origin.rpy.p) < 1e-6);
+  assert.ok(Math.abs(robot.joints.yaw_joint.origin.rpy.y - Math.PI / 2) < 1e-6);
+
+  const urdf = generateURDF({
+    ...robot,
+    selection: { type: null, id: null },
+  });
+
+  assert.match(
+    urdf,
+    /<origin xyz="0 0 0" rpy="[^"]+" quat_xyzw="0 0 0\.70710678 0\.70710678" \/>/,
+  );
+
+  const reparsed = parseURDF(urdf);
+  assert.ok(reparsed);
+  assert.deepEqual(reparsed.joints.yaw_joint.origin.quatXyzw, {
+    x: 0,
+    y: 0,
+    z: 0.70710678,
+    w: 0.70710678,
+  });
+});
+
+test('parseURDF derives link visual collision and inertial rpy from quat_xyzw', () => {
+  const robot = parseURDF(`<?xml version="1.0"?>
+<robot name="link_quat_origin">
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0" quat_xyzw="0.70710678 0 0 0.70710678" />
+      <mass value="1" />
+      <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" quat_xyzw="0 0 0.70710678 0.70710678" />
+      <geometry>
+        <box size="1 1 1" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" quat_xyzw="0 0.70710678 0 0.70710678" />
+      <geometry>
+        <box size="1 1 1" />
+      </geometry>
+    </collision>
+  </link>
+</robot>`);
+
+  assert.ok(robot);
+  assert.deepEqual(robot.links.base_link.inertial?.origin?.quatXyzw, {
+    x: 0.70710678,
+    y: 0,
+    z: 0,
+    w: 0.70710678,
+  });
+  assert.deepEqual(robot.links.base_link.visual.origin.quatXyzw, {
+    x: 0,
+    y: 0,
+    z: 0.70710678,
+    w: 0.70710678,
+  });
+  assert.deepEqual(robot.links.base_link.collision.origin.quatXyzw, {
+    x: 0,
+    y: 0.70710678,
+    z: 0,
+    w: 0.70710678,
+  });
+  assert.ok(Math.abs((robot.links.base_link.inertial?.origin?.rpy.r ?? 0) - Math.PI / 2) < 1e-6);
+  assert.ok(Math.abs(robot.links.base_link.visual.origin.rpy.y - Math.PI / 2) < 1e-6);
+  assert.ok(Math.abs(robot.links.base_link.collision.origin.rpy.p - Math.PI / 2) < 1e-6);
+});
+
 test('parseURDF preserves named material textures in robot materials state and export output', () => {
   const robot = parseURDF(`<?xml version="1.0"?>
 <robot name="material_texture_parse">

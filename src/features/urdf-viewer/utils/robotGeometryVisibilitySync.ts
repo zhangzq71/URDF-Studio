@@ -22,6 +22,7 @@ export interface SyncRobotGeometryVisibilityOptions {
   robotLinks?: Record<string, UrdfLink>;
   showCollision: boolean;
   showVisual: boolean;
+  showCollisionAlwaysOnTop?: boolean;
   highlightedMeshes?: ReadonlyMap<THREE.Mesh, unknown>;
 }
 
@@ -30,6 +31,7 @@ export function syncRobotGeometryVisibility({
   robotLinks,
   showCollision,
   showVisual,
+  showCollisionAlwaysOnTop = true,
   highlightedMeshes,
 }: SyncRobotGeometryVisibilityOptions): boolean {
   let changed = false;
@@ -44,6 +46,7 @@ export function syncRobotGeometryVisibility({
         collider: node,
         linkData,
         showCollision,
+        showCollisionAlwaysOnTop,
         highlightedMeshes,
       }) || changed;
 

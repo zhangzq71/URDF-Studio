@@ -27,7 +27,6 @@ interface TreeEditorFileBrowserContentProps {
   onFolderRenameDraftChange: (value: string) => void;
   onFolderContextMenu: (event: ReactMouseEvent, folderPath: string) => void;
   onToggleOpen: () => void;
-  previewFileName?: string;
   shouldFillSpace: boolean;
   t: TreeEditorTranslations;
   toggleFolder: (path: string) => void;
@@ -55,7 +54,6 @@ export function TreeEditorFileBrowserContent({
   onFolderRenameDraftChange,
   onFolderContextMenu,
   onToggleOpen,
-  previewFileName,
   shouldFillSpace,
   t,
   toggleFolder,
@@ -75,12 +73,14 @@ export function TreeEditorFileBrowserContent({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="text-[11px] leading-none font-semibold text-text-secondary uppercase tracking-[0.14em]">
+          <span className="text-[11px] leading-none font-semibold text-text-secondary tracking-[0.02em]">
             {t.fileBrowser}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[9px] leading-none text-text-tertiary">{availableFiles.length}</span>
+          <span className="text-[9px] leading-none text-text-tertiary">
+            {availableFiles.length}
+          </span>
           {canDeleteAllLibraryFiles && (
             <button
               type="button"
@@ -100,7 +100,9 @@ export function TreeEditorFileBrowserContent({
 
       {isOpen && isProMode && availableFiles.length > 0 && (
         <div className="px-2.5 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
-          <span className="text-[9px] leading-none text-system-blue">{t.clickToAddComponent}</span>
+          <span className="ui-static-copy-guard text-[9px] leading-none text-system-blue">
+            {t.clickToAddComponent}
+          </span>
         </div>
       )}
 
@@ -112,7 +114,9 @@ export function TreeEditorFileBrowserContent({
           }}
         >
           {availableFiles.length === 0 ? (
-            <div className="text-xs text-text-tertiary text-center py-4 italic">{t.dropOrImport}</div>
+            <div className="ui-static-copy-guard py-4 text-center text-xs italic whitespace-pre-line text-text-tertiary">
+              {t.dropOrImport}
+            </div>
           ) : (
             fileTree.map((node) => (
               <div
@@ -136,7 +140,6 @@ export function TreeEditorFileBrowserContent({
                   expandedFolders={expandedFolders}
                   toggleFolder={toggleFolder}
                   showAddAsComponent={isProMode}
-                  selectedFileName={isProMode ? previewFileName : undefined}
                   t={t}
                 />
               </div>

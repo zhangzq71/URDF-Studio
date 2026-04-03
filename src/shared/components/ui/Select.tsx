@@ -9,12 +9,16 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   options: SelectOption[];
   label?: string;
   error?: string;
+  containerClassName?: string;
+  labelClassName?: string;
 }
 
 export const Select: React.FC<SelectProps> = ({
   options,
   label,
   error,
+  containerClassName = '',
+  labelClassName = '',
   className = '',
   id,
   ...props
@@ -22,9 +26,12 @@ export const Select: React.FC<SelectProps> = ({
   const selectId = id || React.useId();
 
   return (
-    <div className="w-full">
+    <div className={`w-full ${containerClassName}`.trim()}>
       {label && (
-        <label htmlFor={selectId} className="block text-xs font-semibold text-text-secondary mb-1.5 ml-0.5">
+        <label
+          htmlFor={selectId}
+          className={`mb-1.5 ml-0.5 block text-xs font-semibold text-text-secondary ${labelClassName}`.trim()}
+        >
           {label}
         </label>
       )}

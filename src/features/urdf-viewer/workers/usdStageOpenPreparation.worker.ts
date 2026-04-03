@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import type { RobotFile } from '@/types';
-import { prepareUsdStageOpenData } from '../utils/usdStageOpenPreparation.ts';
+import { prepareUsdStageOpenDataCore } from '../utils/usdStageOpenPreparationCore.ts';
 import type {
   PrepareUsdStageOpenWorkerResponse,
   UsdStageOpenPreparationWorkerRequest,
@@ -65,7 +65,7 @@ workerScope.addEventListener('message', (event: MessageEvent<UsdStageOpenPrepara
       }
 
       const workerContext = resolveWorkerContext(message);
-      const result = await prepareUsdStageOpenData(
+      const result = await prepareUsdStageOpenDataCore(
         message.sourceFile,
         workerContext.availableFiles,
         workerContext.assets,

@@ -198,7 +198,14 @@ function createPrimitiveMesh(
     return mesh;
   }
 
-  if (geometry.type === GeometryType.SPHERE) {
+  if (geometry.type === GeometryType.PLANE) {
+    material.side = THREE.DoubleSide;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+    mesh.scale.set(dimensions.x || 1, dimensions.y || 1, 1);
+    return mesh;
+  }
+
+  if (geometry.type === GeometryType.SPHERE || geometry.type === GeometryType.ELLIPSOID) {
     const radius = dimensions.x || 0.1;
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 30, 30), material);
     mesh.scale.set(radius, dimensions.y || radius, dimensions.z || radius);
@@ -326,9 +333,9 @@ export async function buildRuntimeRobotFromState({
     linkTarget.add(group);
 
     if (isCollision) {
-      colliderMap[runtimeKey] = group;
+      colliderMap[runtimeKey] = group as URDFCollider;
     } else {
-      visualMap[runtimeKey] = group;
+      visualMap[runtimeKey] = group as URDFVisual;
     }
   };
 

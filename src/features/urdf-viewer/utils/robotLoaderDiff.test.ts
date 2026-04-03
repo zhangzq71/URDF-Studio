@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { JointType, type UrdfJoint } from '@/types';
 
-import { detectSingleJointPatch } from './robotLoaderDiff';
+import { detectJointPatches, detectSingleJointPatch } from './robotLoaderDiff';
 
 const makeJoint = (overrides: Partial<UrdfJoint> = {}): UrdfJoint => ({
   id: 'joint_1',
@@ -44,4 +44,41 @@ test('detectSingleJointPatch tolerates joints without limits', () => {
 
   assert.ok(patch);
   assert.equal(patch?.jointName, 'joint_1');
+});
+
+test('detectJointPatches returns multiple compatible joint patches for batch updates', () => {
+  const prevJoints = {
+    joint_1: makeJoint(),
+    joint_2: makeJoint({
+      id: 'joint_2',
+      name: 'joint_2',
+      childLinkId: 'link_2',
+    }),
+  };
+  const nextJoints = {
+    joint_1: makeJoint({
+      origin: {
+        xyz: { x: 0.1, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    }),
+    joint_2: makeJoint({
+      id: 'joint_2',
+      name: 'joint_2',
+      childLinkId: 'link_2',
+      origin: {
+        xyz: { x: -0.2, y: 0.3, z: 0 },
+        rpy: { r: 0, p: 0, y: 0.1 },
+      },
+    }),
+  };
+
+  const patches = detectJointPatches(prevJoints, nextJoints);
+
+  assert.ok(patches);
+  assert.equal(patches?.length, 2);
+  assert.deepEqual(
+    patches?.map((patch) => patch.jointName).sort(),
+    ['joint_1', 'joint_2'],
+  );
 });

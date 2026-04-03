@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
+
+function createSelectableHelperUserData(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        isGizmo: true,
+        isSelectableHelper: true,
+        ...extra,
+    };
+}
 
 // Uses unified material factory for consistent URDF/MJCF appearance
 export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, number, number]): void {
@@ -31,9 +40,7 @@ export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, num
                 child.material = newMat;
             }
 
-            // Enable shadows for ground contact
-            child.castShadow = true;
-            child.receiveShadow = true;
+            applyVisualMeshShadowPolicy(child as THREE.Mesh);
         }
     });
 }
@@ -45,7 +52,7 @@ export function applyRgbaToMesh(mesh: THREE.Object3D, rgba: [number, number, num
 export function createLinkAxesHelper(axesSize: number = 0.1): THREE.Object3D {
     const axesGroup = new THREE.Group();
     axesGroup.name = '__link_axes_helper__';
-    axesGroup.userData.isGizmo = true;
+    axesGroup.userData = createSelectableHelperUserData();
 
     const axisRadius = Math.max(0.001, axesSize * 0.015);
     const axisGeometry = new THREE.CylinderGeometry(axisRadius, axisRadius, axesSize, 8);
@@ -58,8 +65,7 @@ export function createLinkAxesHelper(axesSize: number = 0.1): THREE.Object3D {
     xAxis.rotation.z = -Math.PI / 2;
     xAxis.castShadow = false;
     xAxis.receiveShadow = false;
-    xAxis.userData.isGizmo = true;
-    xAxis.raycast = () => {};
+    xAxis.userData = createSelectableHelperUserData();
     axesGroup.add(xAxis);
 
     // Y axis (green)
@@ -69,8 +75,7 @@ export function createLinkAxesHelper(axesSize: number = 0.1): THREE.Object3D {
     yAxis.position.y = axesSize / 2;
     yAxis.castShadow = false;
     yAxis.receiveShadow = false;
-    yAxis.userData.isGizmo = true;
-    yAxis.raycast = () => {};
+    yAxis.userData = createSelectableHelperUserData();
     axesGroup.add(yAxis);
 
     // Z axis (blue)
@@ -81,8 +86,7 @@ export function createLinkAxesHelper(axesSize: number = 0.1): THREE.Object3D {
     zAxis.rotation.x = Math.PI / 2;
     zAxis.castShadow = false;
     zAxis.receiveShadow = false;
-    zAxis.userData.isGizmo = true;
-    zAxis.raycast = () => {};
+    zAxis.userData = createSelectableHelperUserData();
     axesGroup.add(zAxis);
 
     return axesGroup;
@@ -118,16 +122,14 @@ function createRotationIndicator(axisDirection: THREE.Vector3, baseLength: numbe
     const tubeGeometry = new THREE.TubeGeometry(curvePath, 50, tubeRadius, 8, false);
     const tubeMaterial = new THREE.MeshBasicMaterial({ color: color, depthTest: false });
     const tubeMesh = new THREE.Mesh(tubeGeometry, tubeMaterial);
-    tubeMesh.userData.isGizmo = true;
-    tubeMesh.raycast = () => {};
+    tubeMesh.userData = createSelectableHelperUserData();
     group.add(tubeMesh);
 
     // Create arrow at arc end (cone)
     const coneGeometry = new THREE.ConeGeometry(arrowSize, arrowSize * 2, 8);
     const coneMaterial = new THREE.MeshBasicMaterial({ color: color, depthTest: false });
     const coneMesh = new THREE.Mesh(coneGeometry, coneMaterial);
-    coneMesh.userData.isGizmo = true;
-    coneMesh.raycast = () => {};
+    coneMesh.userData = createSelectableHelperUserData();
 
     // Calculate arrow position and direction
     const endPoint = points3D[points3D.length - 1];
@@ -165,14 +167,12 @@ export function createJointAxisHelper(axis: THREE.Vector3): THREE.Object3D {
     const shaftGeometry = new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 16, 1);
     const shaftMesh = new THREE.Mesh(shaftGeometry, arrowMaterial);
     shaftMesh.position.y = shaftLength / 2;
-    shaftMesh.userData.isGizmo = true;
-    shaftMesh.raycast = () => {};
+    shaftMesh.userData = createSelectableHelperUserData();
 
     const headGeometry = new THREE.ConeGeometry(headRadius, headLength, 16);
     const headMesh = new THREE.Mesh(headGeometry, arrowMaterial);
     headMesh.position.y = shaftLength + headLength / 2;
-    headMesh.userData.isGizmo = true;
-    headMesh.raycast = () => {};
+    headMesh.userData = createSelectableHelperUserData();
 
     const arrow = new THREE.Group();
     arrow.add(shaftMesh);
@@ -186,7 +186,7 @@ export function createJointAxisHelper(axis: THREE.Vector3): THREE.Object3D {
 
     const axisGroup = new THREE.Group();
     axisGroup.name = '__joint_axis_helper__';
-    axisGroup.userData.isGizmo = true;
+    axisGroup.userData = createSelectableHelperUserData();
     axisGroup.add(arrow);
 
     // Add rotation direction indicator (green arc arrow)

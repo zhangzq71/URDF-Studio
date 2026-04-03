@@ -5,6 +5,7 @@ import { DEFAULT_LINK, JointType, type RobotData, type UrdfJoint, type UrdfLink 
 
 import {
   createRobotSemanticSnapshot,
+  createRobotPersistenceSnapshot,
   stripTransientJointMotionFromRobotData,
 } from './semanticSnapshot.ts';
 
@@ -14,11 +15,21 @@ function createLinks(): Record<string, UrdfLink> {
       ...DEFAULT_LINK,
       id: 'base_link',
       name: 'base_link',
+      visual: structuredClone(DEFAULT_LINK.visual),
+      visualBodies: structuredClone(DEFAULT_LINK.visualBodies ?? []),
+      collision: structuredClone(DEFAULT_LINK.collision),
+      collisionBodies: structuredClone(DEFAULT_LINK.collisionBodies ?? []),
+      inertial: structuredClone(DEFAULT_LINK.inertial),
     },
     tool_link: {
       ...DEFAULT_LINK,
       id: 'tool_link',
       name: 'tool_link',
+      visual: structuredClone(DEFAULT_LINK.visual),
+      visualBodies: structuredClone(DEFAULT_LINK.visualBodies ?? []),
+      collision: structuredClone(DEFAULT_LINK.collision),
+      collisionBodies: structuredClone(DEFAULT_LINK.collisionBodies ?? []),
+      inertial: structuredClone(DEFAULT_LINK.inertial),
     },
   };
 }
@@ -88,5 +99,19 @@ test('createRobotSemanticSnapshot detects link geometry edits', () => {
   assert.notEqual(
     createRobotSemanticSnapshot(baseline),
     createRobotSemanticSnapshot(edited),
+  );
+});
+
+test('createRobotPersistenceSnapshot ignores scene visibility-only changes', () => {
+  const baseline = createRobotData();
+  const hidden = createRobotData();
+
+  hidden.links.base_link.visible = false;
+  hidden.links.tool_link.visual.visible = false;
+  hidden.links.tool_link.collision.visible = false;
+
+  assert.equal(
+    createRobotPersistenceSnapshot(baseline),
+    createRobotPersistenceSnapshot(hidden),
   );
 });

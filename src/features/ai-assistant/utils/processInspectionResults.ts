@@ -14,6 +14,86 @@ interface ParsedInspectionResult {
   issues?: unknown[]
 }
 
+const issueIncludesAny = (text: string, patterns: string[]) => patterns.some(pattern => text.includes(pattern))
+
+const inferIssueCategory = (text: string) => {
+  if (issueIncludesAny(text, ['root', '<robot>', 'mimic', 'calibration', 'gazebo', 'sensor', 'transmission', 'extension', '根节点', '语义', '扩展', '传感器'])) {
+    return 'spec'
+  }
+
+  if (issueIncludesAny(text, ['mass', 'inertia', '质量', '惯性', 'symmetry', 'mirror', '对称', '镜像'])) {
+    return 'physical'
+  }
+
+  if (issueIncludesAny(text, ['frame', 'origin', 'axis', 'waist', 'coordinate', '坐标', '原点', '轴', '腰部'])) {
+    return 'frames'
+  }
+
+  if (issueIncludesAny(text, ['placement', 'attribution', 'transmission component', 'linkage', 'drive linkage', '归属', '传动件', '连杆'])) {
+    return 'assembly'
+  }
+
+  if (issueIncludesAny(text, ['topology', 'closed loop', 'collision', 'limit', 'orphan', '仿真', '拓扑', '闭环', '碰撞', '限位', '孤立'])) {
+    return 'simulation'
+  }
+
+  if (issueIncludesAny(text, ['name', '命名', '名称'])) {
+    return 'naming'
+  }
+
+  if (issueIncludesAny(text, ['motor', 'hardware', 'armature', 'torque', 'velocity', '电机', '硬件', '电枢', '力矩', '速度'])) {
+    return 'hardware'
+  }
+
+  return undefined
+}
+
+const inferIssueItemId = (
+  text: string,
+  categoryId: string | undefined,
+  selectedItems?: Record<string, string[]>
+) => {
+  if (!categoryId || !selectedItems?.[categoryId]?.length) {
+    return undefined
+  }
+
+  const selectedItemIds = new Set(selectedItems[categoryId])
+
+  if (
+    categoryId === 'frames' &&
+    selectedItemIds.has('frame_alignment') &&
+    issueIncludesAny(text, ['frame', 'origin', 'coordinate', 'collinear', '坐标', '原点', '共线'])
+  ) {
+    return 'frame_alignment'
+  }
+
+  if (
+    categoryId === 'simulation' &&
+    selectedItemIds.has('tree_connectivity') &&
+    issueIncludesAny(text, ['topology', 'closed loop', 'root', 'orphan', '拓扑', '闭环', '根节点', '孤立'])
+  ) {
+    return 'tree_connectivity'
+  }
+
+  if (
+    categoryId === 'hardware' &&
+    selectedItemIds.has('armature_config') &&
+    issueIncludesAny(text, ['armature', 'rotor inertia', 'equivalent inertia', '电枢', '转子', '惯量'])
+  ) {
+    return 'armature_config'
+  }
+
+  if (
+    categoryId === 'hardware' &&
+    selectedItemIds.has('motor_limits') &&
+    issueIncludesAny(text, ['effort', 'velocity', 'torque', 'peak', 'rated', '限位', '力矩', '速度', '额定', '峰值'])
+  ) {
+    return 'motor_limits'
+  }
+
+  return undefined
+}
+
 export function processInspectionResults(
   rawResults: unknown,
   selectedItems?: Record<string, string[]>,
@@ -21,25 +101,25 @@ export function processInspectionResults(
 ): InspectionReport {
   const t = translations[lang]
   const parsedResult = (rawResults || {}) as ParsedInspectionResult
+  const defaultCategoryId = INSPECTION_CRITERIA[0]?.id || 'spec'
 
   const issues = ((parsedResult.issues || []) as Record<string, unknown>[]).map(issue => {
+    const issueText = `${String(issue.title || '').toLowerCase()} ${String(issue.description || '').toLowerCase()}`
+
     if (issue.score === undefined) {
       issue.score = calculateItemScore(issue.type as IssueType, true)
     }
 
     if (!issue.category) {
-      const title = (issue.title as string)?.toLowerCase() || ''
-      if (title.includes('mass') || title.includes('inertia')) {
-        issue.category = 'physical'
-      } else if (title.includes('axis') || title.includes('joint')) {
-        issue.category = 'kinematics'
-      } else if (title.includes('name')) {
-        issue.category = 'naming'
-      } else if (title.includes('symmetry') || title.includes('left') || title.includes('right')) {
-        issue.category = 'symmetry'
-      } else if (title.includes('motor') || title.includes('hardware')) {
-        issue.category = 'hardware'
-      }
+      issue.category = inferIssueCategory(issueText)
+    }
+
+    if (!issue.category) {
+      issue.category = defaultCategoryId
+    }
+
+    if (!issue.itemId) {
+      issue.itemId = inferIssueItemId(issueText, issue.category as string | undefined, selectedItems)
     }
 
     return issue

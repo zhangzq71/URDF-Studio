@@ -1,4 +1,5 @@
 import React, { cloneElement, isValidElement } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ContextMenuFrameProps {
   position: { x: number; y: number } | null;
@@ -21,7 +22,7 @@ export const ContextMenuFrame: React.FC<ContextMenuFrameProps> = ({
 }) => {
   if (!position) return null;
 
-  return (
+  const menu = (
     <div
       className={`fixed z-[120] ${widthClassName} rounded-md border border-border-black bg-panel-bg p-1 shadow-xl ${className}`.trim()}
       style={{ left: `${position.x}px`, top: `${position.y}px` }}
@@ -30,6 +31,12 @@ export const ContextMenuFrame: React.FC<ContextMenuFrameProps> = ({
       {children}
     </div>
   );
+
+  if (typeof document === 'undefined' || !document.body) {
+    return menu;
+  }
+
+  return createPortal(menu, document.body);
 };
 
 export const ContextMenuItem: React.FC<ContextMenuItemProps> = ({

@@ -17,4 +17,6 @@ test('file-io feature barrel exposes usd export entrypoint', async () => {
   const moduleUnderTest = await import('./index.ts');
 
   assert.equal(typeof moduleUnderTest.exportRobotToUsd, 'function');
+  assert.equal(typeof moduleUnderTest.exportRobotToUsdWithWorker, 'function');
+  assert.equal(typeof moduleUnderTest.getUsdExportWorkerUnsupportedMeshPaths, 'function');
 });

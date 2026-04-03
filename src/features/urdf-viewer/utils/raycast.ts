@@ -1,9 +1,26 @@
 import * as THREE from 'three';
 
+function isSelectableHelperNode(object: THREE.Object3D | null): boolean {
+  return object?.userData?.isSelectableHelper === true;
+}
+
+function isBlockingGizmoNode(object: THREE.Object3D | null): boolean {
+  if (!object || object.userData?.isGizmo !== true) {
+    return false;
+  }
+
+  return !isSelectableHelperNode(object);
+}
+
 export function isGizmoObject(object: THREE.Object3D | null): boolean {
   let current: THREE.Object3D | null = object;
   while (current) {
-    if (current.userData?.isGizmo) return true;
+    if ((current as { isTransformControlsGizmo?: boolean }).isTransformControlsGizmo) {
+      return true;
+    }
+    if (isBlockingGizmoNode(current)) {
+      return true;
+    }
     current = current.parent;
   }
   return false;
@@ -14,7 +31,7 @@ export function collectGizmoRaycastTargets(scene: THREE.Object3D): THREE.Object3
 
   scene.traverse((child) => {
     if (!child.visible) return;
-    if (!child.userData?.isGizmo) return;
+    if (!isBlockingGizmoNode(child)) return;
     if (typeof (child as unknown as { raycast?: unknown }).raycast !== 'function') return;
     targets.push(child);
   });

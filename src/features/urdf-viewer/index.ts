@@ -1,6 +1,6 @@
 /**
  * URDF Viewer Feature Module
- * 3D visualization for Detail/Hardware modes with URDF/MJCF robot models
+ * 3D visualization for loaded robot documents with URDF/MJCF runtime models
  */
 export { URDFViewer } from './components/URDFViewer';
 export { RobotModel } from './components/RobotModel';
@@ -14,4 +14,5 @@ export { URDFViewerScene } from './components/URDFViewerScene';
 
 export * from './types';
 export * from './utils';
-export { useURDFViewerController } from './hooks';
+export { useURDFViewerController, useResponsivePanelLayout } from './hooks';
+export type { URDFViewerController } from './hooks';

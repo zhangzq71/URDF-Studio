@@ -10,7 +10,7 @@ import {
   type SourceCodeDocumentFlavor,
 } from '@/app/utils/sourceCodeDisplay';
 import type { Language } from '@/shared/i18n';
-import type { Theme, UrdfJoint } from '@/types';
+import type { BridgeJoint, Theme, UrdfJoint } from '@/types';
 import type { AssemblyState } from '@/types';
 import type {
   CollisionOptimizationOperation,
@@ -35,7 +35,9 @@ interface AppLayoutOverlaysProps {
   sourceCodeContent: string;
   sourceCodeDocumentFlavor: SourceCodeDocumentFlavor;
   forceSourceCodeReadOnly?: boolean;
-  onCodeChange: (newCode: string) => void;
+  autoApplyEnabled?: boolean;
+  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
+  onSourceCodeDownload?: () => void;
   onCloseCodeViewer: () => void;
   theme: Theme;
   selectedFileName?: string;
@@ -60,6 +62,7 @@ interface AppLayoutOverlaysProps {
   loadingBridgeDialogLabel: string;
   isBridgeModalOpen: boolean;
   onCloseBridgeModal: () => void;
+  onPreviewBridgeChange: (bridge: BridgeJoint | null) => void;
   onCreateBridge: (params: {
     name: string;
     parentComponentId: string;
@@ -75,7 +78,9 @@ export function AppLayoutOverlays({
   sourceCodeContent,
   sourceCodeDocumentFlavor,
   forceSourceCodeReadOnly = false,
+  autoApplyEnabled = true,
   onCodeChange,
+  onSourceCodeDownload,
   onCloseCodeViewer,
   theme,
   selectedFileName,
@@ -95,11 +100,14 @@ export function AppLayoutOverlays({
   loadingBridgeDialogLabel,
   isBridgeModalOpen,
   onCloseBridgeModal,
+  onPreviewBridgeChange,
   onCreateBridge,
 }: AppLayoutOverlaysProps) {
   const codeEditorFileName = selectedFileName
     ? selectedFileName.split('/').pop() || `${robotName}.urdf`
     : `${robotName}.urdf`;
+  const isSourceCodeReadOnly =
+    forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor);
   return (
     <>
       {isCodeViewerOpen && (
@@ -112,7 +120,9 @@ export function AppLayoutOverlays({
             fileName={codeEditorFileName}
             lang={lang}
             documentFlavor={sourceCodeDocumentFlavor}
-            readOnly={forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor)}
+            readOnly={isSourceCodeReadOnly}
+            autoApplyEnabled={autoApplyEnabled}
+            onDownload={isSourceCodeReadOnly ? undefined : onSourceCodeDownload}
           />
         </Suspense>
       )}
@@ -136,6 +146,7 @@ export function AppLayoutOverlays({
           <BridgeCreateModal
             isOpen={isBridgeModalOpen}
             onClose={onCloseBridgeModal}
+            onPreviewChange={onPreviewBridgeChange}
             onCreate={onCreateBridge}
             assemblyState={assemblyState}
             lang={lang}

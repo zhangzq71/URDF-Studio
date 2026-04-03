@@ -5,7 +5,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import type { RobotClosedLoopConstraint, RobotMaterialState, UrdfLink, UrdfJoint } from '@/types';
-import { DEFAULT_LINK, DEFAULT_JOINT } from '@/types';
+import { DEFAULT_LINK, DEFAULT_JOINT, DEFAULT_VISUAL_COLOR } from '@/types';
 import { resolveClosedLoopJointMotionCompensation } from '@/core/robot';
 import {
   syncRobotMaterialsForLinkUpdate,
@@ -92,7 +92,7 @@ const INITIAL_ROBOT_DATA: RobotData = {
       ...DEFAULT_LINK,
       id: INITIAL_LINK_ID,
       name: 'base_link',
-      visual: { ...DEFAULT_LINK.visual, color: '#64748b' }
+      visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR }
     }
   },
   joints: {},
@@ -312,7 +312,7 @@ export const useRobotStore = create<RobotData & RobotActions & {
           ...DEFAULT_LINK,
           id: newLinkId,
           name: `link_${Object.keys(state.links).length + 1}`,
-          visual: { ...DEFAULT_LINK.visual, color: '#3b82f6' }
+          visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR }
         };
 
         const newJoint: UrdfJoint = {

@@ -1,5 +1,5 @@
 import { UrdfJoint, JointType } from '@/types';
-import { parseVec3, parseRPY, parseFloatSafe } from './utils';
+import { parseVec3, parseOrigin, parseFloatSafe } from './utils';
 
 const AXIS_IMPORT_TYPES = new Set<JointType>([
     JointType.REVOLUTE,
@@ -60,8 +60,10 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
         }
 
         const axisEl = jointEl.querySelector("axis");
+        const calibrationEl = jointEl.querySelector("calibration");
         const limitEl = jointEl.querySelector("limit");
         const dynamicsEl = jointEl.querySelector("dynamics");
+        const safetyControllerEl = jointEl.querySelector("safety_controller");
         const hardwareEl = jointEl.querySelector("hardware");
         const mimicEl = jointEl.querySelector("mimic");
 
@@ -95,6 +97,37 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
                 velocity: parseLimitAttribute(limitEl, "velocity"),
             }
             : undefined;
+        const referencePosition = parseFloatSafe(
+            calibrationEl?.getAttribute("reference_position"),
+            Number.NaN,
+        );
+        const calibration = calibrationEl
+            ? {
+                ...(Number.isFinite(referencePosition) ? { referencePosition } : {}),
+                ...(calibrationEl.hasAttribute("rising")
+                    ? { rising: parseFloatSafe(calibrationEl.getAttribute("rising"), Number.NaN) }
+                    : {}),
+                ...(calibrationEl.hasAttribute("falling")
+                    ? { falling: parseFloatSafe(calibrationEl.getAttribute("falling"), Number.NaN) }
+                    : {}),
+            }
+            : undefined;
+        const safetyController = safetyControllerEl
+            ? {
+                ...(safetyControllerEl.hasAttribute("soft_lower_limit")
+                    ? { softLowerLimit: parseFloatSafe(safetyControllerEl.getAttribute("soft_lower_limit"), Number.NaN) }
+                    : {}),
+                ...(safetyControllerEl.hasAttribute("soft_upper_limit")
+                    ? { softUpperLimit: parseFloatSafe(safetyControllerEl.getAttribute("soft_upper_limit"), Number.NaN) }
+                    : {}),
+                ...(safetyControllerEl.hasAttribute("k_position")
+                    ? { kPosition: parseFloatSafe(safetyControllerEl.getAttribute("k_position"), Number.NaN) }
+                    : {}),
+                ...(safetyControllerEl.hasAttribute("k_velocity")
+                    ? { kVelocity: parseFloatSafe(safetyControllerEl.getAttribute("k_velocity"), Number.NaN) }
+                    : {}),
+            }
+            : undefined;
 
         joints[id] = {
             id,
@@ -102,10 +135,7 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
             type: jointType,
             parentLinkId: parentEl?.getAttribute("link") || "",
             childLinkId: childEl?.getAttribute("link") || "",
-            origin: {
-                xyz: parseVec3(originEl?.getAttribute("xyz")),
-                rpy: parseRPY(originEl?.getAttribute("rpy"))
-            },
+            origin: parseOrigin(originEl),
             axis,
             limit,
             dynamics: {
@@ -113,6 +143,9 @@ export const parseJoints = (robotEl: Element): Record<string, UrdfJoint> => {
                 friction: parseFloatSafe(dynamicsEl?.getAttribute("friction"), 0)
             },
             hardware: hardware,
+            ...(calibration && Object.keys(calibration).length > 0 ? { calibration } : {}),
+            ...(safetyController && Object.keys(safetyController).length > 0 ? { safetyController } : {}),
+            ...(Number.isFinite(referencePosition) ? { referencePosition } : {}),
             mimic: mimicEl?.getAttribute("joint")
                 ? {
                     joint: mimicEl.getAttribute("joint") || '',

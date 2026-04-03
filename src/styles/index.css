@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @font-face {
   font-family: 'JetBrains Mono';
@@ -28,8 +28,13 @@
   font-style: normal;
 }
 
-code, pre, kbd, samp {
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+code,
+pre,
+kbd,
+samp {
+  font-family:
+    'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace !important;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -77,20 +82,36 @@ code, pre, kbd, samp {
   --ui-segmented-bg: #f1f5f9;
   --ui-segmented-active: #ffffff;
   --ui-switch-off: #cbd5e1;
+  --ui-switch-thumb: #ffffff;
   --ui-slider-accent: #007aff;
   --ui-slider-track: #d7dde6;
   --ui-slider-thumb-bg: #ffffff;
   --ui-slider-thumb-border: rgba(15, 23, 42, 0.12);
-  --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.10), 0 4px 10px rgba(15, 23, 42, 0.10);
-  --ui-slider-thumb-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.12), 0 6px 14px rgba(15, 23, 42, 0.14);
-  --ui-slider-thumb-shadow-active: 0 3px 8px rgba(15, 23, 42, 0.14), 0 8px 18px rgba(15, 23, 42, 0.16);
+  --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.1), 0 4px 10px rgba(15, 23, 42, 0.1);
+  --ui-slider-thumb-shadow-hover:
+    0 2px 4px rgba(15, 23, 42, 0.12), 0 6px 14px rgba(15, 23, 42, 0.14);
+  --ui-slider-thumb-shadow-active:
+    0 3px 8px rgba(15, 23, 42, 0.14), 0 8px 18px rgba(15, 23, 42, 0.16);
+
+  /* Settings modal surfaces */
+  --ui-settings-shell: #f3f4f6;
+  --ui-settings-card: #f9fafb;
+  --ui-settings-muted: #eef2f7;
+  --ui-settings-accent: #3b82f6;
+  --ui-settings-accent-soft: rgba(59, 130, 246, 0.12);
+
+  /* IDE preview colors */
+  --ui-code-tag: #2563eb;
+  --ui-code-attr: #7c3aed;
+  --ui-code-value: #ea580c;
 
   color-scheme: light;
 }
 
 html:lang(en),
 html[data-lang='en'] {
-  --font-language-scale: 1;
+  /* Keep Latin text visually closer to adjacent CJK copy in the UI. */
+  --font-language-scale: 0.95;
 }
 
 html:lang(zh),
@@ -136,6 +157,7 @@ html[data-lang='zh'] {
   --ui-segmented-bg: #151518;
   --ui-segmented-active: #3a3a3c;
   --ui-switch-off: #3a3a3c;
+  --ui-switch-thumb: #ffffff;
   --ui-slider-accent: #0a84ff;
   --ui-slider-track: #48484a;
   --ui-slider-thumb-bg: #f2f2f7;
@@ -143,6 +165,18 @@ html[data-lang='zh'] {
   --ui-slider-thumb-shadow: 0 1px 2px rgba(0, 0, 0, 0.36), 0 4px 10px rgba(0, 0, 0, 0.42);
   --ui-slider-thumb-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.42), 0 6px 14px rgba(0, 0, 0, 0.5);
   --ui-slider-thumb-shadow-active: 0 3px 8px rgba(0, 0, 0, 0.48), 0 8px 18px rgba(0, 0, 0, 0.56);
+
+  /* Settings modal surfaces */
+  --ui-settings-shell: #111827;
+  --ui-settings-card: #172033;
+  --ui-settings-muted: #202b3f;
+  --ui-settings-accent: #60a5fa;
+  --ui-settings-accent-soft: rgba(96, 165, 250, 0.16);
+
+  /* IDE preview colors */
+  --ui-code-tag: #93c5fd;
+  --ui-code-attr: #c4b5fd;
+  --ui-code-value: #fdba74;
 
   color-scheme: dark;
 }
@@ -172,8 +206,10 @@ html[data-lang='zh'] {
     --ui-slider-track: #7d8896;
     --ui-slider-thumb-border: rgba(15, 23, 42, 0.2);
     --ui-slider-thumb-shadow: 0 1px 2px rgba(15, 23, 42, 0.14), 0 4px 10px rgba(15, 23, 42, 0.16);
-    --ui-slider-thumb-shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.20);
-    --ui-slider-thumb-shadow-active: 0 3px 8px rgba(15, 23, 42, 0.2), 0 8px 18px rgba(15, 23, 42, 0.22);
+    --ui-slider-thumb-shadow-hover:
+      0 2px 4px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.2);
+    --ui-slider-thumb-shadow-active:
+      0 3px 8px rgba(15, 23, 42, 0.2), 0 8px 18px rgba(15, 23, 42, 0.22);
   }
 
   .dark {
@@ -235,9 +271,18 @@ html[data-lang='zh'] {
   --color-text-tertiary: var(--ui-text-tertiary);
   --color-segmented-bg: var(--ui-segmented-bg);
   --color-switch-off: var(--ui-switch-off);
+  --color-switch-thumb: var(--ui-switch-thumb);
   --color-slider-accent: var(--ui-slider-accent);
   --color-slider-track: var(--ui-slider-track);
-  
+  --color-settings-shell: var(--ui-settings-shell);
+  --color-settings-card: var(--ui-settings-card);
+  --color-settings-muted: var(--ui-settings-muted);
+  --color-settings-accent: var(--ui-settings-accent);
+  --color-settings-accent-soft: var(--ui-settings-accent-soft);
+  --color-code-tag: var(--ui-code-tag);
+  --color-code-attr: var(--ui-code-attr);
+  --color-code-value: var(--ui-code-value);
+
   --color-google-dark-bg: var(--color-panel-bg);
   --color-google-dark-surface: var(--color-element-bg);
   --color-google-dark-border: var(--color-border-black);
@@ -247,9 +292,41 @@ html[data-lang='zh'] {
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    sans-serif;
   @apply bg-google-light-bg text-text-primary;
   overflow: hidden;
+}
+
+button,
+button *,
+label,
+.ui-static-copy-guard,
+.ui-static-copy-guard * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.ui-static-copy-guard input,
+.ui-static-copy-guard textarea,
+.ui-static-copy-guard pre,
+.ui-static-copy-guard code,
+.ui-static-copy-guard [contenteditable='true'],
+.allow-text-selection {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-user-drag: auto;
 }
 
 /* Unified focus ring for keyboard navigation */
@@ -264,23 +341,66 @@ body {
 }
 
 /* Override Tailwind text utilities to scale */
-.text-xs { font-size: calc(0.75rem * var(--font-effective-scale)) !important; }
-.text-sm { font-size: calc(0.875rem * var(--font-effective-scale)) !important; }
-.text-base { font-size: calc(1rem * var(--font-effective-scale)) !important; }
-.text-lg { font-size: calc(1.125rem * var(--font-effective-scale)) !important; }
-.text-xl { font-size: calc(1.25rem * var(--font-effective-scale)) !important; }
-.text-2xl { font-size: calc(1.5rem * var(--font-effective-scale)) !important; }
-.text-3xl { font-size: calc(1.875rem * var(--font-effective-scale)) !important; }
-.text-4xl { font-size: calc(2.25rem * var(--font-effective-scale)) !important; }
+.text-xs {
+  font-size: calc(0.75rem * var(--font-effective-scale)) !important;
+}
+
+.text-sm {
+  font-size: calc(0.875rem * var(--font-effective-scale)) !important;
+}
+
+.text-base {
+  font-size: calc(1rem * var(--font-effective-scale)) !important;
+}
+
+.text-lg {
+  font-size: calc(1.125rem * var(--font-effective-scale)) !important;
+}
+
+.text-xl {
+  font-size: calc(1.25rem * var(--font-effective-scale)) !important;
+}
+
+.text-2xl {
+  font-size: calc(1.5rem * var(--font-effective-scale)) !important;
+}
+
+.text-3xl {
+  font-size: calc(1.875rem * var(--font-effective-scale)) !important;
+}
+
+.text-4xl {
+  font-size: calc(2.25rem * var(--font-effective-scale)) !important;
+}
 
 /* Override arbitrary pixel font sizes commonly used in the app */
-.text-\[8px\] { font-size: calc(8px * var(--font-effective-scale)) !important; }
-.text-\[9px\] { font-size: calc(9px * var(--font-effective-scale)) !important; }
-.text-\[10px\] { font-size: calc(10px * var(--font-effective-scale)) !important; }
-.text-\[11px\] { font-size: calc(11px * var(--font-effective-scale)) !important; }
-.text-\[12px\] { font-size: calc(12px * var(--font-effective-scale)) !important; }
-.text-\[13px\] { font-size: calc(13px * var(--font-effective-scale)) !important; }
-.text-\[14px\] { font-size: calc(14px * var(--font-effective-scale)) !important; }
+.text-\[8px\] {
+  font-size: calc(8px * var(--font-effective-scale)) !important;
+}
+
+.text-\[9px\] {
+  font-size: calc(9px * var(--font-effective-scale)) !important;
+}
+
+.text-\[10px\] {
+  font-size: calc(10px * var(--font-effective-scale)) !important;
+}
+
+.text-\[11px\] {
+  font-size: calc(11px * var(--font-effective-scale)) !important;
+}
+
+.text-\[12px\] {
+  font-size: calc(12px * var(--font-effective-scale)) !important;
+}
+
+.text-\[13px\] {
+  font-size: calc(13px * var(--font-effective-scale)) !important;
+}
+
+.text-\[14px\] {
+  font-size: calc(14px * var(--font-effective-scale)) !important;
+}
 
 /* Custom scrollbar for panels */
 ::-webkit-scrollbar {
@@ -316,7 +436,7 @@ input::-webkit-inner-spin-button {
   margin: 0;
 }
 
-input[type=number] {
+input[type='number'] {
   -moz-appearance: textfield;
   appearance: textfield;
 }

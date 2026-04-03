@@ -13,10 +13,10 @@ test('markVisualObject preserves authored multi-material palettes without an exp
     name: 'dark',
     color: new THREE.Color('#1b1f24'),
   });
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    [authoredLightMaterial, authoredDarkMaterial],
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+    authoredLightMaterial,
+    authoredDarkMaterial,
+  ]);
 
   markVisualObject(mesh, 'base', undefined, true);
 
@@ -39,15 +39,15 @@ test('updateVisualMaterial applies an explicit override across all mesh material
     name: 'dark',
     color: new THREE.Color('#1b1f24'),
   });
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    [authoredLightMaterial, authoredDarkMaterial],
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+    authoredLightMaterial,
+    authoredDarkMaterial,
+  ]);
   const disposedMaterials = new Set<THREE.Material>();
 
   updateVisualMaterial(mesh, '#123456', disposedMaterials);
 
-  const nextMaterials = mesh.material as THREE.MeshStandardMaterial[];
+  const nextMaterials = mesh.material as unknown as THREE.MeshStandardMaterial[];
   assert.equal(nextMaterials[0] instanceof THREE.MeshStandardMaterial, true);
   assert.equal(nextMaterials[1] instanceof THREE.MeshStandardMaterial, true);
   assert.notEqual(nextMaterials[0], authoredLightMaterial);
@@ -66,15 +66,12 @@ test('updateVisualMaterial preserves exact authored white overrides without wash
     name: 'light',
     color: new THREE.Color('#808080'),
   });
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    authoredMaterial,
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), authoredMaterial);
   const disposedMaterials = new Set<THREE.Material>();
 
   updateVisualMaterial(mesh, '#ffffff', disposedMaterials);
 
-  const nextMaterial = mesh.material as THREE.MeshStandardMaterial;
+  const nextMaterial = mesh.material as unknown as THREE.MeshStandardMaterial;
   assert.equal(nextMaterial.color.getHexString(), 'ffffff');
   assert.equal(nextMaterial.toneMapped, false);
   assert.equal(nextMaterial.userData.urdfColorApplied, true);
@@ -87,18 +84,15 @@ test('updateVisualMaterial preserves alpha from 8-digit hex overrides', () => {
     opacity: 1,
     transparent: false,
   });
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    authoredMaterial,
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), authoredMaterial);
   const disposedMaterials = new Set<THREE.Material>();
 
   updateVisualMaterial(mesh, '#89afcc66', disposedMaterials);
 
-  const nextMaterial = mesh.material as THREE.MeshStandardMaterial;
+  const nextMaterial = mesh.material as unknown as THREE.MeshStandardMaterial;
   assert.equal(nextMaterial.color.getHexString(), '89afcc');
   assert.equal(nextMaterial.transparent, true);
-  assert.ok(Math.abs(nextMaterial.opacity - (0x66 / 255)) < 1e-6);
+  assert.ok(Math.abs(nextMaterial.opacity - 0x66 / 255) < 1e-6);
   assert.equal(nextMaterial.depthWrite, false);
   assert.equal(nextMaterial.userData.urdfColorApplied, true);
   assert.equal((nextMaterial.userData.urdfColor as THREE.Color).getHexString(), '89afcc');

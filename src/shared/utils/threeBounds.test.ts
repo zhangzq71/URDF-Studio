@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { computeVisibleMeshBounds } from './threeBounds.ts';
+import {
+  alignObjectLowestPointToZ,
+  computeVisibleMeshBounds,
+  getLowestMeshZ,
+} from './threeBounds.ts';
 
 function createBoxMesh(size: number, position: [number, number, number]) {
   const mesh = new THREE.Mesh(
@@ -32,8 +36,14 @@ test('computeVisibleMeshBounds skips helper and infrastructure meshes', () => {
 
   const bounds = computeVisibleMeshBounds(root);
   assert.ok(bounds);
-  assert.deepEqual(bounds.min.toArray().map((value) => Number(value.toFixed(6))), [-1, -1, -1]);
-  assert.deepEqual(bounds.max.toArray().map((value) => Number(value.toFixed(6))), [1, 1, 1]);
+  assert.deepEqual(
+    bounds.min.toArray().map((value) => Number(value.toFixed(6))),
+    [-1, -1, -1],
+  );
+  assert.deepEqual(
+    bounds.max.toArray().map((value) => Number(value.toFixed(6))),
+    [1, 1, 1],
+  );
 });
 
 test('computeVisibleMeshBounds excludes invisible descendants by default', () => {
@@ -87,6 +97,79 @@ test('computeVisibleMeshBounds can include ground plane helpers for camera clipp
 
   const bounds = computeVisibleMeshBounds(root, { includeGroundPlaneHelpers: true });
   assert.ok(bounds);
-  assert.deepEqual(bounds.min.toArray().map((value) => Number(value.toFixed(6))), [-12, -12, -12]);
-  assert.deepEqual(bounds.max.toArray().map((value) => Number(value.toFixed(6))), [12, 12, 12]);
+  assert.deepEqual(
+    bounds.min.toArray().map((value) => Number(value.toFixed(6))),
+    [-12, -12, -12],
+  );
+  assert.deepEqual(
+    bounds.max.toArray().map((value) => Number(value.toFixed(6))),
+    [12, 12, 12],
+  );
+});
+
+test('computeVisibleMeshBounds skips meshes nested under helper wrappers', () => {
+  const root = new THREE.Group();
+
+  const robotMesh = createBoxMesh(2, [0, 0, 0]);
+  root.add(robotMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.userData.isHelper = true;
+  const nestedHelperMesh = createBoxMesh(40, [100, 0, 0]);
+  helperGroup.add(nestedHelperMesh);
+  root.add(helperGroup);
+
+  const bounds = computeVisibleMeshBounds(root);
+  assert.ok(bounds);
+  assert.deepEqual(
+    bounds.min.toArray().map((value) => Number(value.toFixed(6))),
+    [-1, -1, -1],
+  );
+  assert.deepEqual(
+    bounds.max.toArray().map((value) => Number(value.toFixed(6))),
+    [1, 1, 1],
+  );
+});
+
+test('ground alignment ignores helper descendant meshes', () => {
+  const root = new THREE.Group();
+
+  const robotMesh = createBoxMesh(2, [0, 0, 5]);
+  root.add(robotMesh);
+
+  const helperGroup = new THREE.Group();
+  helperGroup.userData.isHelper = true;
+  const nestedHelperMesh = createBoxMesh(20, [0, 0, -50]);
+  helperGroup.add(nestedHelperMesh);
+  root.add(helperGroup);
+
+  const lowestZ = getLowestMeshZ(root, { includeVisual: true, includeCollision: false });
+  assert.equal(lowestZ, 4);
+
+  const alignedZ = alignObjectLowestPointToZ(root, 0, {
+    includeVisual: true,
+    includeCollision: false,
+  });
+  assert.equal(alignedZ, 0);
+  assert.equal(Number(root.position.z.toFixed(6)), -4);
+});
+
+test('ground alignment keeps URDF runtime roots that use __-prefixed synthetic names', () => {
+  const root = new THREE.Group();
+  root.name = '__workspace_world__::component::comp_demo';
+  (root as THREE.Group & { isURDFJoint?: boolean }).isURDFJoint = true;
+
+  const robotMesh = createBoxMesh(2, [0, 0, 5]);
+  robotMesh.userData.isVisualMesh = true;
+  root.add(robotMesh);
+
+  const lowestZ = getLowestMeshZ(root, { includeVisual: true, includeCollision: false });
+  assert.equal(lowestZ, 4);
+
+  const alignedZ = alignObjectLowestPointToZ(root, 0, {
+    includeVisual: true,
+    includeCollision: false,
+  });
+  assert.equal(alignedZ, 0);
+  assert.equal(Number(root.position.z.toFixed(6)), -4);
 });

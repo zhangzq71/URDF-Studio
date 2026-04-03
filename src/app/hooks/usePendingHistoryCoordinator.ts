@@ -12,6 +12,7 @@ export interface UpdateCommitOptions {
   historyLabel?: string;
   commitMode?: UpdateCommitMode;
   debounceMs?: number;
+  skipHistory?: boolean;
 }
 
 interface PendingHistoryEntry<T> {

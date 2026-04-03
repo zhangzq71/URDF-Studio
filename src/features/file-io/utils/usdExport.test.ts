@@ -6,7 +6,8 @@ import { GeometryType, JointType, type RobotState } from '@/types';
 import { computeUsdInertiaProperties } from '@/shared/utils/inertiaUsd.ts';
 import { exportRobotToUsd } from './usdExport.ts';
 
-const BASE_COLOR_TEXTURE_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+const BASE_COLOR_TEXTURE_DATA_URL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
 
 if (typeof globalThis.ProgressEvent === 'undefined') {
   class ProgressEventPolyfill extends Event {
@@ -14,7 +15,10 @@ if (typeof globalThis.ProgressEvent === 'undefined') {
     total: number;
     lengthComputable: boolean;
 
-    constructor(type: string, init: { loaded?: number; total?: number; lengthComputable?: boolean } = {}) {
+    constructor(
+      type: string,
+      init: { loaded?: number; total?: number; lengthComputable?: boolean } = {},
+    ) {
       super(type);
       this.loaded = init.loaded ?? 0;
       this.total = init.total ?? 0;
@@ -108,7 +112,10 @@ function createTwoLinkRobot(): RobotState {
   };
 }
 
-async function readArchiveText(payload: Awaited<ReturnType<typeof exportRobotToUsd>>, path: string) {
+async function readArchiveText(
+  payload: Awaited<ReturnType<typeof exportRobotToUsd>>,
+  path: string,
+) {
   const entry = payload.archiveFiles.get(path);
   assert.ok(entry, `missing archive entry: ${path}`);
   return entry.text();
@@ -147,16 +154,21 @@ function createGridStlBlob(cellCount = 8) {
 }
 
 function createUvObjBlob() {
-  return new Blob([[
-    'o textured_triangle',
-    'v 0 0 0',
-    'v 1 0 0',
-    'v 0 1 0',
-    'vt 0 0',
-    'vt 1 0',
-    'vt 0 1',
-    'f 1/1 2/2 3/3',
-  ].join('\n')], { type: 'text/plain;charset=utf-8' });
+  return new Blob(
+    [
+      [
+        'o textured_triangle',
+        'v 0 0 0',
+        'v 1 0 0',
+        'v 0 1 0',
+        'vt 0 0',
+        'vt 1 0',
+        'vt 0 1',
+        'f 1/1 2/2 3/3',
+      ].join('\n'),
+    ],
+    { type: 'text/plain;charset=utf-8' },
+  );
 }
 
 function createMeshRobot(meshPath: string): RobotState {
@@ -205,6 +217,7 @@ function createSharedMeshRobot(meshPath: string): RobotState {
         origin: { xyz: { x: 0.5, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
         axis: { x: 1, y: 0, z: 0 },
         angle: 0,
+        dynamics: { damping: 0, friction: 0 },
         hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
       },
     },
@@ -275,13 +288,16 @@ function extractTriangleCount(baseLayer: string) {
 
 function extractTuples(text: string, attributeName: string): number[][] {
   const escapedName = attributeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return Array.from(text.matchAll(new RegExp(`${escapedName} = \\(([^)]+)\\)`, 'g')))
-    .map((match) => match[1]
-      .split(',')
-      .map((value) => Number(value.trim())));
+  return Array.from(text.matchAll(new RegExp(`${escapedName} = \\(([^)]+)\\)`, 'g'))).map((match) =>
+    match[1].split(',').map((value) => Number(value.trim())),
+  );
 }
 
-function assertQuaternionClose(actualWxyz: number[], expected: THREE.Quaternion, epsilon = 1e-5): void {
+function assertQuaternionClose(
+  actualWxyz: number[],
+  expected: THREE.Quaternion,
+  epsilon = 1e-5,
+): void {
   const actual = new THREE.Quaternion(
     actualWxyz[1] ?? 0,
     actualWxyz[2] ?? 0,
@@ -319,23 +335,58 @@ test('exports robot state into a layered USD package', async () => {
   assert.equal(payload.downloadFileName, 'two_link_robot.usd');
   assert.equal(payload.archiveFileName, 'two_link_robot_usd.zip');
   assert.equal(payload.rootLayerPath, 'two_link_robot/usd/two_link_robot.usd');
-  assert.deepEqual(
-    Array.from(payload.archiveFiles.keys()).sort(),
-    [
-      'two_link_robot/usd/assets/base_color.png',
-      'two_link_robot/usd/configuration/two_link_robot_description_base.usd',
-      'two_link_robot/usd/configuration/two_link_robot_description_physics.usd',
-      'two_link_robot/usd/configuration/two_link_robot_description_sensor.usd',
-      'two_link_robot/usd/two_link_robot.usd',
-    ],
-  );
+  assert.deepEqual(Array.from(payload.archiveFiles.keys()).sort(), [
+    'two_link_robot/usd/assets/base_color.png',
+    'two_link_robot/usd/configuration/two_link_robot_description_base.usd',
+    'two_link_robot/usd/configuration/two_link_robot_description_physics.usd',
+    'two_link_robot/usd/configuration/two_link_robot_description_sensor.usd',
+    'two_link_robot/usd/two_link_robot.usd',
+  ]);
 
   assert.match(payload.content, /^#usda 1.0/);
   assert.match(payload.content, /defaultPrim = "two_link_robot_description"/);
   assert.match(payload.content, /prepend variantSets = \["Physics", "Sensor"\]/);
-  assert.match(payload.content, /prepend references = @configuration\/two_link_robot_description_base\.usd@/);
-  assert.match(payload.content, /prepend payload = @configuration\/two_link_robot_description_physics\.usd@/);
-  assert.match(payload.content, /prepend payload = @configuration\/two_link_robot_description_sensor\.usd@/);
+  assert.match(
+    payload.content,
+    /prepend references = @configuration\/two_link_robot_description_base\.usd@/,
+  );
+  assert.match(
+    payload.content,
+    /prepend payload = @configuration\/two_link_robot_description_physics\.usd@/,
+  );
+  assert.match(
+    payload.content,
+    /prepend payload = @configuration\/two_link_robot_description_sensor\.usd@/,
+  );
+});
+
+test('isaacsim USDA export keeps root stem without forcing _description sidecar names', async () => {
+  const payload = await exportRobotToUsd({
+    robot: createTwoLinkRobot(),
+    exportName: 'go1',
+    assets: createTwoLinkAssets(),
+    fileFormat: 'usda',
+    layoutProfile: 'isaacsim',
+  });
+
+  assert.equal(payload.downloadFileName, 'go1.usda');
+  assert.equal(payload.archiveFileName, 'go1_usda.zip');
+  assert.equal(payload.rootLayerPath, 'go1/go1.usda');
+  assert.deepEqual(Array.from(payload.archiveFiles.keys()).sort(), [
+    'go1/assets/base_color.png',
+    'go1/configuration/go1_base.usda',
+    'go1/configuration/go1_physics.usda',
+    'go1/configuration/go1_robot.usda',
+    'go1/configuration/go1_sensor.usda',
+    'go1/go1.usda',
+  ]);
+
+  assert.match(payload.content, /defaultPrim = "go1"/);
+  assert.match(payload.content, /prepend variantSets = \["Physics", "Sensor", "Robot"\]/);
+  assert.match(payload.content, /prepend references = @configuration\/go1_base\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_physics\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_sensor\.usda@/);
+  assert.match(payload.content, /prepend payload = @configuration\/go1_robot\.usda@/);
 });
 
 test('preserves link transforms and writes physics joints into separate USD layers', async () => {
@@ -376,9 +427,18 @@ test('preserves link transforms and writes physics joints into separate USD laye
   assert.match(physicsLayer, /def PhysicsScene "physicsScene"/);
   assert.match(physicsLayer, /prepend apiSchemas = \["PhysicsArticulationRootAPI"\]/);
   assert.match(physicsLayer, /prepend apiSchemas = \["PhysicsRigidBodyAPI", "PhysicsMassAPI"\]/);
-  assert.match(physicsLayer, /over "two_link_robot_description" \(\n\s+prepend apiSchemas = \["PhysicsArticulationRootAPI"\]\n\s*\)\n\{/);
-  assert.match(physicsLayer, /over "base_link" \(\n\s+prepend apiSchemas = \["PhysicsRigidBodyAPI", "PhysicsMassAPI"\]\n\s*\)\n\s+\{/);
-  assert.match(physicsLayer, /over "collision_0" \(\n\s+prepend apiSchemas = \["PhysicsCollisionAPI"\]\n\s*\)\n\s+\{/);
+  assert.match(
+    physicsLayer,
+    /over "two_link_robot_description" \(\n\s+prepend apiSchemas = \["PhysicsArticulationRootAPI"\]\n\s*\)\n\{/,
+  );
+  assert.match(
+    physicsLayer,
+    /over "base_link" \(\n\s+prepend apiSchemas = \["PhysicsRigidBodyAPI", "PhysicsMassAPI"\]\n\s*\)\n\s+\{/,
+  );
+  assert.match(
+    physicsLayer,
+    /over "collision_0" \(\n\s+prepend apiSchemas = \["PhysicsCollisionAPI"\]\n\s*\)\n\s+\{/,
+  );
   assert.match(physicsLayer, /over "collisions"/);
   assert.doesNotMatch(physicsLayer, /over "colliders"/);
   assert.match(physicsLayer, /float physics:mass = 1\.25/);
@@ -386,7 +446,10 @@ test('preserves link transforms and writes physics joints into separate USD laye
   assert.match(physicsLayer, /over "joints"/);
   assert.match(physicsLayer, /def PhysicsRevoluteJoint "joint_link1"/);
   assert.match(physicsLayer, /rel physics:body0 = <\/two_link_robot_description\/base_link>/);
-  assert.match(physicsLayer, /rel physics:body1 = <\/two_link_robot_description\/base_link\/link1>/);
+  assert.match(
+    physicsLayer,
+    /rel physics:body1 = <\/two_link_robot_description\/base_link\/link1>/,
+  );
   assert.match(physicsLayer, /uniform token physics:axis = "Z"/);
   assert.match(physicsLayer, /float physics:lowerLimit = -90/);
   assert.match(physicsLayer, /float physics:upperLimit = 60/);
@@ -459,10 +522,12 @@ test('serializes visual and collision origins using URDF ZYX rpy semantics', asy
   );
   const exportedOrientations = extractTuples(baseLayer, 'quatf xformOp:orient');
 
-  const expectedVisualQuaternion = new THREE.Quaternion()
-    .setFromEuler(new THREE.Euler(0.37, -0.52, 0.91, 'ZYX'));
-  const expectedCollisionQuaternion = new THREE.Quaternion()
-    .setFromEuler(new THREE.Euler(-0.41, 0.63, -0.27, 'ZYX'));
+  const expectedVisualQuaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(0.37, -0.52, 0.91, 'ZYX'),
+  );
+  const expectedCollisionQuaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(-0.41, 0.63, -0.27, 'ZYX'),
+  );
 
   assert.ok(
     includesQuaternionClose(exportedOrientations, expectedVisualQuaternion),
@@ -493,7 +558,10 @@ test('serializes internal material metadata and display colors into the base lay
   assert.match(baseLayer, /def Material "Material_0"/);
   assert.match(baseLayer, /uniform token info:id = "UsdPreviewSurface"/);
   assert.match(baseLayer, /color3f inputs:diffuseColor = \(0\.006049, 0\.40724, 0\.03434\)/);
-  assert.match(baseLayer, /rel material:binding = <\/two_link_robot_description\/Looks\/Material_0>/);
+  assert.match(
+    baseLayer,
+    /rel material:binding = <\/two_link_robot_description\/Looks\/Material_0>/,
+  );
 });
 
 test('exports explicit mesh material colors into USD preview materials instead of loader defaults', async () => {
@@ -544,9 +612,16 @@ test('deduplicates repeated mesh geometry into a shared USD mesh library', async
     1,
     'expected shared mesh geometry to be serialized once',
   );
-  assert.match(baseLayer, /prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/);
+  assert.match(
+    baseLayer,
+    /prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/,
+  );
   assert.equal(
-    Array.from(baseLayer.matchAll(/prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/g)).length,
+    Array.from(
+      baseLayer.matchAll(
+        /prepend references = <\/shared_mesh_robot_description\/__MeshLibrary\/Geometry_0>/g,
+      ),
+    ).length,
     2,
     'expected both mesh instances to reference the shared geometry prototype',
   );
@@ -583,7 +658,10 @@ test('diagonalizes off-diagonal inertial tensors before writing USD mass propert
   const diagonalInertia = extractTuples(physicsLayer, 'physics:diagonalInertia').at(-1);
   assert.ok(diagonalInertia, 'expected link1 diagonal inertia');
   expected.diagonalInertia.forEach((value, index) => {
-    assert.ok(Math.abs(diagonalInertia[index]! - value) <= 1e-5, `expected inertia[${index}] to match`);
+    assert.ok(
+      Math.abs(diagonalInertia[index]! - value) <= 1e-5,
+      `expected inertia[${index}] to match`,
+    );
   });
 
   const principalAxes = extractTuples(physicsLayer, 'physics:principalAxes').at(-1);
@@ -631,13 +709,17 @@ test('can simplify mesh geometry before serializing USD mesh prims', async () =>
   const originalTriangles = extractTriangleCount(originalBaseLayer);
   const compressedTriangles = extractTriangleCount(compressedBaseLayer);
 
-  assert.ok(compressedTriangles < originalTriangles, `expected compressed mesh triangle count to decrease: ${compressedTriangles} < ${originalTriangles}`);
+  assert.ok(
+    compressedTriangles < originalTriangles,
+    `expected compressed mesh triangle count to decrease: ${compressedTriangles} < ${originalTriangles}`,
+  );
 });
 
 test('exports textured mesh materials with UV primvars and archived texture assets', async () => {
   const meshPath = 'meshes/textured_triangle.obj';
   const texturePath = 'textures/checker.png';
-  const textureDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const textureDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
 
   const payload = await exportRobotToUsd({
     robot: createTexturedMeshRobot(meshPath, texturePath),
@@ -664,8 +746,14 @@ test('exports textured mesh materials with UV primvars and archived texture asse
   assert.match(baseLayer, /def Shader "DiffuseTexture"/);
   assert.match(baseLayer, /uniform token info:id = "UsdUVTexture"/);
   assert.match(baseLayer, /asset inputs:file = @\.\.\/assets\/checker\.png@/);
-  assert.match(baseLayer, /float2 inputs:st\.connect = <\/mesh_robot_textured_description\/Looks\/Material_0\/PrimvarReader_st\.outputs:result>/);
-  assert.match(baseLayer, /color3f inputs:diffuseColor\.connect = <\/mesh_robot_textured_description\/Looks\/Material_0\/DiffuseTexture\.outputs:rgb>/);
+  assert.match(
+    baseLayer,
+    /float2 inputs:st\.connect = <\/mesh_robot_textured_description\/Looks\/Material_0\/PrimvarReader_st\.outputs:result>/,
+  );
+  assert.match(
+    baseLayer,
+    /color3f inputs:diffuseColor\.connect = <\/mesh_robot_textured_description\/Looks\/Material_0\/DiffuseTexture\.outputs:rgb>/,
+  );
   assert.match(baseLayer, /texCoord2f\[] primvars:st = \[/);
   assert.match(baseLayer, /uniform token primvars:st:interpolation = "faceVarying"/);
 });
@@ -673,7 +761,8 @@ test('exports textured mesh materials with UV primvars and archived texture asse
 test('exports texture-only mesh materials with a neutral white USD preview color instead of the default visual blue', async () => {
   const meshPath = 'meshes/textured_triangle.obj';
   const texturePath = 'textures/checker.png';
-  const textureDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const textureDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
   const robot = createMeshRobot(meshPath);
   robot.materials = {
     base_link: {
@@ -705,7 +794,8 @@ test('exports texture-only mesh materials with a neutral white USD preview color
 test('archives texture assets for mesh metadata even when the mesh has no UV coordinates', async () => {
   const meshPath = 'meshes/grid.stl';
   const texturePath = 'textures/checker.png';
-  const textureDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const textureDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
   const robot = createTexturedMeshRobot(meshPath, texturePath);
 
   const payload = await exportRobotToUsd({
@@ -788,7 +878,10 @@ test('reports phased USD export progress for links, geometry, scene serializatio
   phaseOrder.forEach((phase) => {
     const firstIndex = progressUpdates.findIndex((progress) => progress.phase === phase);
     assert.ok(firstIndex >= 0, `expected progress updates for phase ${phase}`);
-    assert.ok(firstIndex > previousPhaseIndex, `expected phase ${phase} to start after the previous phase`);
+    assert.ok(
+      firstIndex > previousPhaseIndex,
+      `expected phase ${phase} to start after the previous phase`,
+    );
     previousPhaseIndex = firstIndex;
 
     const phaseUpdates = progressUpdates.filter((progress) => progress.phase === phase);
@@ -802,7 +895,9 @@ test('reports phased USD export progress for links, geometry, scene serializatio
   });
 
   assert.ok(
-    progressUpdates.some((progress) => progress.phase === 'links' && progress.label === 'base_link'),
+    progressUpdates.some(
+      (progress) => progress.phase === 'links' && progress.label === 'base_link',
+    ),
     'expected link progress labels to include the current link name',
   );
 });

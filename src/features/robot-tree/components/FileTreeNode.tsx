@@ -169,33 +169,41 @@ const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
                 ? 'bg-system-blue/10 dark:bg-system-blue/20 text-system-blue'
                 : node.file.format === 'sdf'
                   ? 'bg-teal-100 dark:bg-teal-900/25 text-teal-700 dark:text-teal-300'
-                : node.file.format === 'xacro'
-                  ? 'bg-element-bg dark:bg-element-hover text-text-secondary'
-                  : node.file.format === 'mjcf'
-                    ? 'bg-orange-100 dark:bg-orange-900/25 text-orange-600 dark:text-orange-300'
-                    : node.file.format === 'mesh'
-                      ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                      : 'bg-element-bg dark:bg-element-hover text-text-tertiary'
+                  : node.file.format === 'xacro'
+                    ? 'bg-element-bg dark:bg-element-hover text-text-secondary'
+                    : node.file.format === 'mjcf'
+                      ? 'bg-orange-100 dark:bg-orange-900/25 text-orange-600 dark:text-orange-300'
+                      : node.file.format === 'mesh'
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                        : 'bg-element-bg dark:bg-element-hover text-text-tertiary'
             }`}
           >
             {node.file.format === 'mesh'
-              ? node.file.name.split('.').pop()?.toUpperCase() ?? 'MESH'
+              ? (node.file.name.split('.').pop()?.toUpperCase() ?? 'MESH')
               : node.file.format.toUpperCase()}
           </span>
         )}
 
         {(showAddButton || showDeleteButton) && !isEditingFolder && (
-          <div className={`flex items-center gap-1 transition-opacity ${
-            isSelectedFile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
-          }`}>
+          <div
+            className={`flex items-center gap-1 transition-opacity ${
+              isSelectedFile
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+            }`}
+          >
             {showAddButton && (
               <button
                 onClick={handleAddAsComponent}
                 className="px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800/50 flex items-center gap-1 transition-colors group/btn"
                 title={t.addComponent}
               >
-                <Plus size={10} strokeWidth={3} className="group-hover/btn:scale-110 transition-transform" />
-                <span className="text-[9px] font-bold uppercase tracking-tighter">{t.add}</span>
+                <Plus
+                  size={10}
+                  strokeWidth={3}
+                  className="group-hover/btn:scale-110 transition-transform"
+                />
+                <span className="text-[9px] font-semibold tracking-[0.01em]">{t.add}</span>
               </button>
             )}
 
@@ -205,7 +213,11 @@ const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
                 className="px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800/50 flex items-center transition-colors group/btn"
                 title={t.removeFromLibrary}
               >
-                <Trash2 size={10} strokeWidth={2.5} className="group-hover/btn:scale-110 transition-transform" />
+                <Trash2
+                  size={10}
+                  strokeWidth={2.5}
+                  className="group-hover/btn:scale-110 transition-transform"
+                />
               </button>
             )}
           </div>

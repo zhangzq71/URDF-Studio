@@ -1,10 +1,9 @@
-import { SkeletonOptionsPanel, DetailOptionsPanel, HardwareOptionsPanel } from '@/shared/components/Panel';
+import { UnifiedVisualizerOptionsPanel } from '@/shared/components/Panel';
 import type { Language } from '@/shared/i18n';
-import { translations } from '@/shared/i18n';
+import { useUIStore } from '@/store';
 import type { VisualizerController } from '../hooks/useVisualizerController';
 
 interface VisualizerPanelsProps {
-  mode: 'skeleton' | 'detail' | 'hardware';
   lang: Language;
   showOptionsPanel?: boolean;
   setShowOptionsPanel?: (show: boolean) => void;
@@ -12,36 +11,44 @@ interface VisualizerPanelsProps {
 }
 
 export const VisualizerPanels = ({
-  mode,
   lang,
   showOptionsPanel = true,
   setShowOptionsPanel,
   controller,
 }: VisualizerPanelsProps) => {
   const { panel, state, handleAutoFitGround } = controller;
-  const t = translations[lang];
+  const groundPlaneOffset = useUIStore((storeState) => storeState.groundPlaneOffset);
+  const setGroundPlaneOffset = useUIStore((storeState) => storeState.setGroundPlaneOffset);
 
   return (
     <>
-      {showOptionsPanel && mode === 'skeleton' && (
-        <SkeletonOptionsPanel
-          key="skeleton"
+      {showOptionsPanel && (
+        <UnifiedVisualizerOptionsPanel
+          key="visualizer-unified"
           ref={panel.optionsPanelRef}
           lang={lang}
           showGeometry={state.showGeometry}
           setShowGeometry={state.setShowGeometry}
+          showOrigin={state.showOrigin}
+          setShowOrigin={state.setShowOrigin}
+          frameSize={state.frameSize}
+          setFrameSize={state.setFrameSize}
           showLabels={state.showLabels}
           setShowLabels={state.setShowLabels}
+          labelScale={state.labelScale}
+          setLabelScale={state.setLabelScale}
           showJointAxes={state.showJointAxes}
           setShowJointAxes={state.setShowJointAxes}
           jointAxisSize={state.jointAxisSize}
           setJointAxisSize={state.setJointAxisSize}
-          showSkeletonOrigin={state.showSkeletonOrigin}
-          setShowSkeletonOrigin={state.setShowSkeletonOrigin}
-          frameSize={state.frameSize}
-          setFrameSize={state.setFrameSize}
-          labelScale={state.labelScale}
-          setLabelScale={state.setLabelScale}
+          showCollision={state.showCollision}
+          setShowCollision={state.setShowCollision}
+          showInertia={state.showInertia}
+          setShowInertia={state.setShowInertia}
+          showCenterOfMass={state.showCenterOfMass}
+          setShowCenterOfMass={state.setShowCenterOfMass}
+          modelOpacity={state.modelOpacity}
+          setModelOpacity={state.setModelOpacity}
           isCollapsed={panel.isOptionsCollapsed}
           toggleCollapsed={panel.toggleOptionsCollapsed}
           onMouseDown={panel.handleMouseDown}
@@ -49,51 +56,8 @@ export const VisualizerPanels = ({
           onClose={setShowOptionsPanel ? () => setShowOptionsPanel(false) : undefined}
           optionsPanelPos={panel.optionsPanelPos}
           onAutoFitGround={handleAutoFitGround}
-        />
-      )}
-      {showOptionsPanel && mode === 'detail' && (
-        <DetailOptionsPanel
-          key="detail"
-          ref={panel.optionsPanelRef}
-          lang={lang}
-          showDetailOrigin={state.showDetailOrigin}
-          setShowDetailOrigin={state.setShowDetailOrigin}
-          showDetailLabels={state.showDetailLabels}
-          setShowDetailLabels={state.setShowDetailLabels}
-          showVisual={state.showVisual}
-          setShowVisual={state.setShowVisual}
-          showCollision={state.showCollision}
-          setShowCollision={state.setShowCollision}
-          showInertia={state.showInertia}
-          setShowInertia={state.setShowInertia}
-          showCenterOfMass={state.showCenterOfMass}
-          setShowCenterOfMass={state.setShowCenterOfMass}
-          transformMode={state.transformMode}
-          setTransformMode={state.setTransformMode}
-          isCollapsed={panel.isOptionsCollapsed}
-          toggleCollapsed={panel.toggleOptionsCollapsed}
-          onMouseDown={panel.handleMouseDown}
-          onResetPosition={() => panel.setOptionsPanelPos(null)}
-          optionsPanelPos={panel.optionsPanelPos}
-        />
-      )}
-      {showOptionsPanel && mode === 'hardware' && (
-        <HardwareOptionsPanel
-          key="hardware"
-          ref={panel.optionsPanelRef}
-          lang={lang}
-          showHardwareOrigin={state.showHardwareOrigin}
-          setShowHardwareOrigin={state.setShowHardwareOrigin}
-          showHardwareLabels={state.showHardwareLabels}
-          setShowHardwareLabels={state.setShowHardwareLabels}
-          transformMode={state.transformMode}
-          setTransformMode={state.setTransformMode}
-          isCollapsed={panel.isOptionsCollapsed}
-          toggleCollapsed={panel.toggleOptionsCollapsed}
-          onMouseDown={panel.handleMouseDown}
-          onResetPosition={() => panel.setOptionsPanelPos(null)}
-          onClose={setShowOptionsPanel ? () => setShowOptionsPanel(false) : undefined}
-          optionsPanelPos={panel.optionsPanelPos}
+          groundPlaneOffset={groundPlaneOffset}
+          setGroundPlaneOffset={setGroundPlaneOffset}
         />
       )}
     </>

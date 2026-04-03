@@ -14,6 +14,40 @@ interface VisibleMeshBoundsOptions {
 type MeshRole = 'visual' | 'collision' | 'unknown';
 const GROUND_PLANE_BOUND_OBJECT_NAMES = new Set(['ReferenceGrid', 'GroundShadowPlane']);
 
+function isRuntimeUrdfNode(object: THREE.Object3D | null): boolean {
+  return Boolean(
+    object &&
+    ((object as THREE.Object3D & { isURDFJoint?: boolean }).isURDFJoint ||
+      (object as THREE.Object3D & { isURDFLink?: boolean }).isURDFLink),
+  );
+}
+
+function shouldIgnoreBoundsAncestor(
+  object: THREE.Object3D | null,
+  options?: { includeGroundPlaneHelpers?: boolean },
+): boolean {
+  let current: THREE.Object3D | null = object;
+
+  while (current) {
+    const isGroundPlaneHelper = Boolean(
+      options?.includeGroundPlaneHelpers && GROUND_PLANE_BOUND_OBJECT_NAMES.has(current.name),
+    );
+
+    if (
+      current.userData?.isGizmo ||
+      (current.name?.startsWith('__') && !isRuntimeUrdfNode(current)) ||
+      ((current.userData?.isHelper || current.userData?.excludeFromSceneBounds) &&
+        !isGroundPlaneHelper)
+    ) {
+      return true;
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
 function getMeshRole(mesh: THREE.Mesh): MeshRole {
   let current: THREE.Object3D | null = mesh;
 
@@ -26,10 +60,7 @@ function getMeshRole(mesh: THREE.Mesh): MeshRole {
       return 'collision';
     }
 
-    if (
-      current.userData?.isVisualMesh === true ||
-      current.userData?.geometryRole === 'visual'
-    ) {
+    if (current.userData?.isVisualMesh === true || current.userData?.geometryRole === 'visual') {
       return 'visual';
     }
 
@@ -53,7 +84,7 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
   root.updateMatrixWorld(true);
 
   const visitNode = (obj: THREE.Object3D) => {
-    if (obj.userData?.isHelper || obj.userData?.isGizmo || obj.name?.startsWith('__')) return;
+    if (shouldIgnoreBoundsAncestor(obj)) return;
     if (!(obj as THREE.Mesh).isMesh) return;
 
     const mesh = obj as THREE.Mesh;
@@ -102,7 +133,7 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
 export function alignObjectLowestPointToZ(
   root: THREE.Object3D,
   targetZ = 0,
-  options?: LowestMeshZOptions
+  options?: LowestMeshZOptions,
 ): number | null {
   const minZ = getLowestMeshZ(root, options);
   if (minZ === null) {
@@ -128,18 +159,10 @@ export function computeVisibleMeshBounds(
   const worldBox = new THREE.Box3();
   let hasBounds = false;
 
-  root.updateMatrixWorld(true, true);
+  root.updateMatrixWorld(true);
 
   const visitNode = (obj: THREE.Object3D) => {
-    const isGroundPlaneHelper = includeGroundPlaneHelpers
-      && GROUND_PLANE_BOUND_OBJECT_NAMES.has(obj.name);
-
-    if (
-      (obj.userData?.isHelper && !isGroundPlaneHelper) ||
-      obj.userData?.isGizmo ||
-      (obj.userData?.excludeFromSceneBounds && !isGroundPlaneHelper) ||
-      obj.name?.startsWith('__')
-    ) {
+    if (shouldIgnoreBoundsAncestor(obj, { includeGroundPlaneHelpers })) {
       return;
     }
 
@@ -159,8 +182,12 @@ export function computeVisibleMeshBounds(
 
     worldBox.copy(localBox).applyMatrix4(mesh.matrixWorld);
     if (
-      !Number.isFinite(worldBox.min.x) || !Number.isFinite(worldBox.min.y) || !Number.isFinite(worldBox.min.z) ||
-      !Number.isFinite(worldBox.max.x) || !Number.isFinite(worldBox.max.y) || !Number.isFinite(worldBox.max.z)
+      !Number.isFinite(worldBox.min.x) ||
+      !Number.isFinite(worldBox.min.y) ||
+      !Number.isFinite(worldBox.min.z) ||
+      !Number.isFinite(worldBox.max.x) ||
+      !Number.isFinite(worldBox.max.y) ||
+      !Number.isFinite(worldBox.max.z)
     ) {
       return;
     }

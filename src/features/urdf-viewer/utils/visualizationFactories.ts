@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 
+function createSelectableHelperUserData(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        isGizmo: true,
+        isSelectableHelper: true,
+        ...extra,
+    };
+}
+
 /**
  * Create a visual arrow indicator for joint axis (used for both URDF and MJCF joints).
  * Color: Red for X, Green for Y, Blue for Z dominant component.
@@ -8,7 +16,7 @@ export function createJointAxisVisualization(axis: THREE.Vector3, size: number =
     const length = 0.15 * size;
     const group = new THREE.Group();
     group.name = '__joint_axis_helper__';
-    group.userData.isGizmo = true;
+    group.userData = createSelectableHelperUserData();
 
     // Determine color based on dominant axis
     const absAxis = new THREE.Vector3(Math.abs(axis.x), Math.abs(axis.y), Math.abs(axis.z));
@@ -26,8 +34,7 @@ export function createJointAxisVisualization(axis: THREE.Vector3, size: number =
     const shaftMat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
     const shaft = new THREE.Mesh(shaftGeom, shaftMat);
     shaft.position.y = length * 0.4;
-    shaft.userData.isGizmo = true;
-    shaft.raycast = () => {};
+    shaft.userData = createSelectableHelperUserData();
     shaft.renderOrder = 1001;
     group.add(shaft);
 
@@ -36,8 +43,7 @@ export function createJointAxisVisualization(axis: THREE.Vector3, size: number =
     const headMat = new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
     const head = new THREE.Mesh(headGeom, headMat);
     head.position.y = length * 0.9;
-    head.userData.isGizmo = true;
-    head.raycast = () => {};
+    head.userData = createSelectableHelperUserData();
     head.renderOrder = 1001;
     group.add(head);
 
@@ -58,7 +64,7 @@ export function createJointAxisVisualization(axis: THREE.Vector3, size: number =
 export function createOriginAxes(size: number): THREE.Group {
     const originAxes = new THREE.Group();
     originAxes.name = '__origin_axes__';
-    originAxes.userData = { isGizmo: true };
+    originAxes.userData = createSelectableHelperUserData();
 
     const thickness = size * 0.04;
     const headSize = size * 0.2;
@@ -70,8 +76,7 @@ export function createOriginAxes(size: number): THREE.Group {
     const xAxis = new THREE.Mesh(xAxisGeom, xAxisMat);
     xAxis.rotation.set(0, 0, -Math.PI / 2);
     xAxis.position.set(size / 2, 0, 0);
-    xAxis.userData = { isGizmo: true };
-    xAxis.raycast = () => {};
+    xAxis.userData = createSelectableHelperUserData();
     xAxis.renderOrder = 999;
     originAxes.add(xAxis);
 
@@ -79,8 +84,7 @@ export function createOriginAxes(size: number): THREE.Group {
     const xCone = new THREE.Mesh(xConeGeom, xAxisMat);
     xCone.rotation.set(0, 0, -Math.PI / 2);
     xCone.position.set(size, 0, 0);
-    xCone.userData = { isGizmo: true };
-    xCone.raycast = () => {};
+    xCone.userData = createSelectableHelperUserData();
     xCone.renderOrder = 999;
     originAxes.add(xCone);
 
@@ -89,16 +93,14 @@ export function createOriginAxes(size: number): THREE.Group {
     const yAxisMat = new THREE.MeshBasicMaterial({ color: 0x22c55e });
     const yAxis = new THREE.Mesh(yAxisGeom, yAxisMat);
     yAxis.position.set(0, size / 2, 0);
-    yAxis.userData = { isGizmo: true };
-    yAxis.raycast = () => {};
+    yAxis.userData = createSelectableHelperUserData();
     yAxis.renderOrder = 999;
     originAxes.add(yAxis);
 
     const yConeGeom = new THREE.ConeGeometry(headRadius, headSize, 12);
     const yCone = new THREE.Mesh(yConeGeom, yAxisMat);
     yCone.position.set(0, size, 0);
-    yCone.userData = { isGizmo: true };
-    yCone.raycast = () => {};
+    yCone.userData = createSelectableHelperUserData();
     yCone.renderOrder = 999;
     originAxes.add(yCone);
 
@@ -108,8 +110,7 @@ export function createOriginAxes(size: number): THREE.Group {
     const zAxis = new THREE.Mesh(zAxisGeom, zAxisMat);
     zAxis.rotation.set(Math.PI / 2, 0, 0);
     zAxis.position.set(0, 0, size / 2);
-    zAxis.userData = { isGizmo: true };
-    zAxis.raycast = () => {};
+    zAxis.userData = createSelectableHelperUserData();
     zAxis.renderOrder = 999;
     originAxes.add(zAxis);
 
@@ -117,8 +118,7 @@ export function createOriginAxes(size: number): THREE.Group {
     const zCone = new THREE.Mesh(zConeGeom, zAxisMat);
     zCone.rotation.set(Math.PI / 2, 0, 0);
     zCone.position.set(0, 0, size);
-    zCone.userData = { isGizmo: true };
-    zCone.raycast = () => {};
+    zCone.userData = createSelectableHelperUserData();
     zCone.renderOrder = 999;
     originAxes.add(zCone);
 
@@ -135,7 +135,7 @@ export function createJointAxisViz(
 ): THREE.Group {
     const jointAxisViz = new THREE.Group();
     jointAxisViz.name = '__joint_axis__';
-    jointAxisViz.userData = { isGizmo: true, originalScale: scale };
+    jointAxisViz.userData = createSelectableHelperUserData({ originalScale: scale });
 
     const axisVec = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), axisVec);
@@ -153,8 +153,7 @@ export function createJointAxisViz(
     const shaft = new THREE.Mesh(shaftGeom, shaftMat);
     shaft.rotation.set(Math.PI / 2, 0, 0);
     shaft.position.set(0, 0, (arrowLength - arrowHeadLength) / 2);
-    shaft.userData = { isGizmo: true };
-    shaft.raycast = () => {};
+    shaft.userData = createSelectableHelperUserData();
     shaft.renderOrder = 999;
     jointAxisViz.add(shaft);
 
@@ -163,8 +162,7 @@ export function createJointAxisViz(
     const head = new THREE.Mesh(headGeom, shaftMat);
     head.rotation.set(Math.PI / 2, 0, 0);
     head.position.set(0, 0, arrowLength - arrowHeadLength / 2);
-    head.userData = { isGizmo: true };
-    head.raycast = () => {};
+    head.userData = createSelectableHelperUserData();
     head.renderOrder = 999;
     jointAxisViz.add(head);
 
@@ -175,8 +173,7 @@ export function createJointAxisViz(
         const torusArc = jointType === 'revolute' ? Math.PI * 1.5 : Math.PI * 2;
         const torusGeom = new THREE.TorusGeometry(torusRadius, tubeRadius, 8, 32, torusArc);
         const torus = new THREE.Mesh(torusGeom, shaftMat);
-        torus.userData = { isGizmo: true };
-        torus.raycast = () => {};
+        torus.userData = createSelectableHelperUserData();
         torus.renderOrder = 999;
         jointAxisViz.add(torus);
 
@@ -185,8 +182,7 @@ export function createJointAxisViz(
         const miniCone = new THREE.Mesh(miniConeGeom, shaftMat);
         miniCone.position.set(torusRadius, 0, 0);
         miniCone.rotation.set(Math.PI / 2, 0, -Math.PI / 2);
-        miniCone.userData = { isGizmo: true };
-        miniCone.raycast = () => {};
+        miniCone.userData = createSelectableHelperUserData();
         miniCone.renderOrder = 999;
         jointAxisViz.add(miniCone);
     }
@@ -198,8 +194,7 @@ export function createJointAxisViz(
         const shaft2 = new THREE.Mesh(shaft2Geom, shaftMat);
         shaft2.rotation.set(-Math.PI / 2, 0, 0);
         shaft2.position.set(0, 0, -(arrowLength - arrowHeadLength) / 2);
-        shaft2.userData = { isGizmo: true };
-        shaft2.raycast = () => {};
+        shaft2.userData = createSelectableHelperUserData();
         shaft2.renderOrder = 999;
         jointAxisViz.add(shaft2);
 
@@ -207,8 +202,7 @@ export function createJointAxisViz(
         const head2 = new THREE.Mesh(head2Geom, shaftMat);
         head2.rotation.set(-Math.PI / 2, 0, 0);
         head2.position.set(0, 0, -(arrowLength - arrowHeadLength / 2));
-        head2.userData = { isGizmo: true };
-        head2.raycast = () => {};
+        head2.userData = createSelectableHelperUserData();
         head2.renderOrder = 999;
         jointAxisViz.add(head2);
     }
@@ -225,7 +219,7 @@ export function createJointAxisViz(
 export function createCoMVisual(): THREE.Group {
     const comVisual = new THREE.Group();
     comVisual.name = '__com_visual__';
-    comVisual.userData = { isGizmo: true };
+    comVisual.userData = createSelectableHelperUserData();
 
     // Fixed radius for CoM sphere (0.01m = 1cm)
     const radius = 0.01;
@@ -244,8 +238,7 @@ export function createCoMVisual(): THREE.Group {
         const mesh = new THREE.Mesh(geometry, (i % 2 === 0) ? matBlack : matWhite);
         mesh.rotation.set(rot[0], rot[1], rot[2]);
         mesh.renderOrder = 10001;
-        mesh.userData = { isGizmo: true };
-        mesh.raycast = () => { };
+        mesh.userData = createSelectableHelperUserData();
         comVisual.add(mesh);
     });
 
@@ -263,7 +256,7 @@ export function createInertiaBox(
 ): THREE.Group {
     const inertiaBox = new THREE.Group();
     inertiaBox.name = '__inertia_box__';
-    inertiaBox.userData = { isGizmo: true };
+    inertiaBox.userData = createSelectableHelperUserData();
 
     const geom = new THREE.BoxGeometry(width, height, depth);
 
@@ -277,8 +270,7 @@ export function createInertiaBox(
     mat.userData = { isSharedMaterial: true };  // Prevent opacity modification
     const mesh = new THREE.Mesh(geom, mat);
     mesh.quaternion.copy(rotation);
-    mesh.userData = { isGizmo: true };
-    mesh.raycast = () => { };
+    mesh.userData = createSelectableHelperUserData();
     mesh.renderOrder = 9999;
     inertiaBox.add(mesh);
 
@@ -293,8 +285,7 @@ export function createInertiaBox(
     lineMat.userData = { isSharedMaterial: true };  // Prevent opacity modification
     const line = new THREE.LineSegments(edges, lineMat);
     line.quaternion.copy(rotation);
-    line.userData = { isGizmo: true };
-    line.raycast = () => { };
+    line.userData = createSelectableHelperUserData();
     line.renderOrder = 10000;
     inertiaBox.add(line);
 

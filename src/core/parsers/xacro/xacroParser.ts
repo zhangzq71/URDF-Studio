@@ -543,9 +543,10 @@ function processConditionals(content: string, ctx: XacroContext): string {
             return coerceExpressionTruthy(evaluated);
         }
 
-        // If unresolved xacro syntax remains, treat as false in browser fallback mode.
+        // Avoid silently taking a branch when the condition still contains unresolved
+        // xacro syntax. Failing fast keeps the import path debuggable.
         if (/\$\(|\$\{/.test(value)) {
-            return false;
+            throw new Error(`[Xacro] Unresolved conditional expression: ${rawCondition}`);
         }
 
         const normalized = value.replace(/^['"]|['"]$/g, '').trim().toLowerCase();
@@ -583,9 +584,16 @@ function cleanupXacroElements(content: string): string {
     // Remove xacro:macro definitions (they've been used for expansion)
     content = content.replace(/<xacro:macro[^>]*>[\s\S]*?<\/xacro:macro>/g, '');
 
-    // Remove remaining unprocessed xacro elements
-    content = content.replace(/<xacro:[^>]*\/>/g, '');
-    content = content.replace(/<xacro:[^>]*>[\s\S]*?<\/xacro:[^>]*>/g, '');
+    const unresolvedXacroTags = Array.from(content.matchAll(/<xacro:([^\s/>]+)/g))
+        .map((match) => match[1])
+        .filter(Boolean);
+    if (unresolvedXacroTags.length > 0) {
+        const uniqueUnresolvedTags = Array.from(new Set(unresolvedXacroTags));
+        const preview = uniqueUnresolvedTags.slice(0, 5).join(', ');
+        throw new Error(
+            `[Xacro] Unresolved xacro elements remain after expansion (${uniqueUnresolvedTags.length}): ${preview}`,
+        );
+    }
 
     // Clean up xmlns:xacro attributes
     content = content.replace(/\s*xmlns:xacro="[^"]*"/g, '');

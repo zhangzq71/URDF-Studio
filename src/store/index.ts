@@ -11,6 +11,8 @@ export type {
   ViewOptions,
   PanelsState,
   SidebarState,
+  GlobalFontSize,
+  CodeEditorFontFamily,
   RotationDisplayMode,
 } from './uiStore';
 
@@ -35,6 +37,9 @@ export type { RobotData } from './robotStore';
 
 // Assembly Store - multi-URDF assembly
 export { useAssemblyStore, useAssemblyCanUndo, useAssemblyCanRedo } from './assemblyStore';
+
+// Assembly selection store - component/assembly transform targets in workspace mode
+export { useAssemblySelectionStore, ASSEMBLY_SELECTION_ID } from './assemblySelectionStore';
 
 // Collision transform store - transient drag state for collision gizmos
 export { useCollisionTransformStore } from './collisionTransformStore';

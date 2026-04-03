@@ -151,7 +151,7 @@ function renderHook() {
 function resetStoresToBaseline() {
   useUIStore.setState({
     lang: 'en',
-    appMode: 'detail',
+    appMode: 'editor',
     sidebarTab: 'structure',
   });
 
@@ -378,6 +378,7 @@ function createExportConfig(
       ...sdfOverrides,
     },
     usd: {
+      fileFormat: 'usd',
       compressMeshes: true,
       meshQuality: 50,
     },

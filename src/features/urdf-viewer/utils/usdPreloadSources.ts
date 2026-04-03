@@ -1,15 +1,37 @@
 import type { RobotFile } from '@/types';
+import { buildCriticalUsdDependencyPaths } from './usdCriticalDependencyPaths.ts';
+import { USD_INSTANCEABLE_VISUAL_SCOPE_NORMALIZATION_VERSION } from './usdStageOpenTextNormalization.ts';
+import {
+  buildBlobBackedLargeTextUsdSignature,
+  isBlobBackedLargeTextUsd,
+} from './usdStageOpenLargeText.ts';
 
 export type UsdPreloadSourceKind = 'blob-url' | 'text-content';
 
 export interface UsdPreloadSource {
   kind: UsdPreloadSourceKind;
   loadBlob: () => Promise<Blob>;
+  loadText?: (() => Promise<string>) | null;
+  normalizationCacheKey: string | null;
 }
 
 export interface UsdPreloadEntry {
   path: string;
   loadBlob: () => Promise<Blob>;
+  loadText?: (() => Promise<string>) | null;
+  normalizationCacheKey: string | null;
+}
+
+type StageOpenSourceFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl'>;
+type StageOpenAvailableFile = Pick<RobotFile, 'name' | 'content' | 'blobUrl' | 'format'>;
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
 }
 
 function normalizeUsdAssetPath(path: string): string {
@@ -36,6 +58,169 @@ export function toVirtualUsdPath(path: string): string {
     return '/';
   }
   return `/${normalizedPath}`;
+}
+
+function isUsdLayerPath(path: string): boolean {
+  return /\.usd(?:a|c|z)?$/i.test(normalizeUsdAssetPath(path));
+}
+
+function shouldBuildUsdNormalizationCacheKey(path: string): boolean {
+  return normalizeUsdAssetPath(path).toLowerCase().endsWith('.usda');
+}
+
+function hasInlineUsdLayerTextContent(
+  file: Pick<RobotFile, 'name' | 'content'> | null | undefined,
+): boolean {
+  if (!file || !isUsdLayerPath(file.name)) {
+    return false;
+  }
+
+  const normalizedPath = normalizeUsdAssetPath(file.name).toLowerCase();
+  if (normalizedPath.endsWith('.usdc') || normalizedPath.endsWith('.usdz')) {
+    return false;
+  }
+
+  return typeof file.content === 'string' && file.content.length > 0;
+}
+
+function pickMoreInformativeUsdLayerFile<T extends Pick<RobotFile, 'name' | 'content' | 'blobUrl'>>(
+  existingFile: T | undefined,
+  candidateFile: T,
+): T {
+  if (!existingFile) {
+    return candidateFile;
+  }
+
+  const existingHasInlineText = hasInlineUsdLayerTextContent(existingFile);
+  const candidateHasInlineText = hasInlineUsdLayerTextContent(candidateFile);
+  if (candidateHasInlineText !== existingHasInlineText) {
+    return candidateHasInlineText ? candidateFile : existingFile;
+  }
+
+  if (!existingFile.blobUrl && candidateFile.blobUrl) {
+    return candidateFile;
+  }
+
+  if ((existingFile.content?.length ?? 0) === 0 && (candidateFile.content?.length ?? 0) > 0) {
+    return candidateFile;
+  }
+
+  return existingFile;
+}
+
+function buildUsdStageOpenFileIndex(
+  sourceFile: StageOpenSourceFile,
+  availableFiles: StageOpenAvailableFile[],
+): Map<string, StageOpenSourceFile | StageOpenAvailableFile> {
+  const fileIndex = new Map<string, StageOpenSourceFile | StageOpenAvailableFile>();
+
+  const registerFile = (file: StageOpenSourceFile | StageOpenAvailableFile) => {
+    if (!isUsdLayerPath(file.name)) {
+      return;
+    }
+
+    const virtualPath = toVirtualUsdPath(file.name);
+    const existingFile = fileIndex.get(virtualPath);
+    fileIndex.set(virtualPath, pickMoreInformativeUsdLayerFile(existingFile, file));
+  };
+
+  availableFiles.forEach(registerFile);
+  registerFile(sourceFile);
+
+  return fileIndex;
+}
+
+export function extractUsdLayerReferencesFromText(layerText: string): string[] {
+  if (!layerText) {
+    return [];
+  }
+
+  const references = new Set<string>();
+  const referenceRegex = /@([^@]+\.usd(?:a|c|z)?)@/gi;
+  let match: RegExpExecArray | null = null;
+  while ((match = referenceRegex.exec(layerText))) {
+    const referencePath = String(match[1] || '').trim();
+    if (!referencePath) {
+      continue;
+    }
+    references.add(referencePath);
+  }
+
+  return Array.from(references);
+}
+
+export function resolveUsdLayerReferencePath(
+  baseUsdPath: string,
+  referencedPath: string,
+): string | null {
+  const normalizedReferencePath = String(referencedPath || '')
+    .trim()
+    .replace(/\\/g, '/');
+  if (!normalizedReferencePath) {
+    return null;
+  }
+
+  if (/^[a-z]+:\/\//i.test(normalizedReferencePath)) {
+    return null;
+  }
+
+  if (normalizedReferencePath.startsWith('/')) {
+    return toVirtualUsdPath(normalizedReferencePath);
+  }
+
+  const baseSegments = normalizeUsdAssetPath(baseUsdPath).split('/').filter(Boolean);
+  baseSegments.pop();
+
+  normalizedReferencePath.split('/').forEach((segment) => {
+    if (!segment || segment === '.') {
+      return;
+    }
+    if (segment === '..') {
+      if (baseSegments.length > 0) {
+        baseSegments.pop();
+      }
+      return;
+    }
+    baseSegments.push(segment);
+  });
+
+  return baseSegments.length > 0 ? `/${baseSegments.join('/')}` : '/';
+}
+
+export function collectUsdStageOpenRelevantVirtualPaths(
+  sourceFile: StageOpenSourceFile,
+  availableFiles: StageOpenAvailableFile[],
+): string[] {
+  const rootPath = toVirtualUsdPath(sourceFile.name);
+  const fileIndex = buildUsdStageOpenFileIndex(sourceFile, availableFiles);
+  const pendingPaths = [rootPath, ...buildCriticalUsdDependencyPaths(rootPath)];
+  const visitedPaths = new Set<string>();
+  const orderedPaths: string[] = [];
+
+  while (pendingPaths.length > 0) {
+    const currentPath = pendingPaths.shift()!;
+    if (visitedPaths.has(currentPath) || !isUsdLayerPath(currentPath)) {
+      continue;
+    }
+
+    visitedPaths.add(currentPath);
+    orderedPaths.push(currentPath);
+
+    const currentFile = fileIndex.get(currentPath);
+    if (!hasInlineUsdLayerTextContent(currentFile)) {
+      continue;
+    }
+
+    extractUsdLayerReferencesFromText(currentFile.content).forEach((referencePath) => {
+      const resolvedPath = resolveUsdLayerReferencePath(currentPath, referencePath);
+      if (!resolvedPath || visitedPaths.has(resolvedPath) || !isUsdLayerPath(resolvedPath)) {
+        return;
+      }
+      pendingPaths.push(resolvedPath);
+    });
+  }
+
+  return orderedPaths;
 }
 
 export function inferUsdBundleVirtualDirectory(sourcePath: string): string {
@@ -79,7 +264,49 @@ async function fetchBlobFromUrl(url: string): Promise<Blob> {
     throw new Error(`Failed to fetch blob source: ${response.status}`);
   }
 
-  return response.blob();
+  const bytes = await response.arrayBuffer();
+  return new Blob([bytes], {
+    type: response.headers.get('content-type') || 'application/octet-stream',
+  });
+}
+
+async function fetchTextFromUrl(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch text source: ${response.status}`);
+  }
+
+  return await response.text();
+}
+
+function buildUsdPreloadNormalizationSourceSignature(
+  file: Pick<RobotFile, 'name' | 'content' | 'blobUrl'>,
+  resolvedBlobUrl: string | null,
+): string {
+  if (resolvedBlobUrl) {
+    return `blob-url:${resolvedBlobUrl}`;
+  }
+
+  const contentSignature = isBlobBackedLargeTextUsd(file)
+    ? buildBlobBackedLargeTextUsdSignature(file, hashString)
+    : hashString(String(file.content || ''));
+
+  return ['text-content', contentSignature, String(file.content?.length ?? 0)].join('\u0000');
+}
+
+function buildUsdPreloadNormalizationCacheKey(
+  file: Pick<RobotFile, 'name' | 'content' | 'blobUrl'>,
+  resolvedBlobUrl: string | null,
+): string | null {
+  if (!shouldBuildUsdNormalizationCacheKey(file.name)) {
+    return null;
+  }
+
+  return [
+    toVirtualUsdPath(file.name),
+    buildUsdPreloadNormalizationSourceSignature(file, resolvedBlobUrl),
+    USD_INSTANCEABLE_VISUAL_SCOPE_NORMALIZATION_VERSION,
+  ].join('\u0000');
 }
 
 export function resolveUsdBlobUrl(
@@ -103,17 +330,37 @@ export function createUsdPreloadSource(
   file: Pick<RobotFile, 'name' | 'content' | 'blobUrl'>,
   assets: Record<string, string>,
 ): UsdPreloadSource {
+  const normalizedPath = normalizeUsdAssetPath(file.name).toLowerCase();
   const resolvedBlobUrl = resolveUsdBlobUrl(file.name, file.blobUrl, assets);
+  const canInlineTextContent =
+    typeof file.content === 'string' &&
+    file.content.length > 0 &&
+    !normalizedPath.endsWith('.usdc') &&
+    !normalizedPath.endsWith('.usdz');
+
+  if (canInlineTextContent) {
+    return {
+      kind: 'text-content',
+      loadBlob: async () => new Blob([file.content], { type: 'text/plain' }),
+      loadText: async () => String(file.content || ''),
+      normalizationCacheKey: buildUsdPreloadNormalizationCacheKey(file, null),
+    };
+  }
+
   if (resolvedBlobUrl) {
     return {
       kind: 'blob-url',
       loadBlob: () => fetchBlobFromUrl(resolvedBlobUrl),
+      loadText: normalizedPath.endsWith('.usda') ? () => fetchTextFromUrl(resolvedBlobUrl) : null,
+      normalizationCacheKey: buildUsdPreloadNormalizationCacheKey(file, resolvedBlobUrl),
     };
   }
 
   return {
     kind: 'text-content',
     loadBlob: async () => new Blob([file.content], { type: 'text/plain' }),
+    loadText: async () => String(file.content || ''),
+    normalizationCacheKey: buildUsdPreloadNormalizationCacheKey(file, null),
   };
 }
 
@@ -123,28 +370,67 @@ export function buildUsdBundlePreloadEntries(
   assets: Record<string, string>,
 ): UsdPreloadEntry[] {
   const rootPath = toVirtualUsdPath(sourceFile.name);
-  const bundleDirectory = inferUsdBundleVirtualDirectory(sourceFile.name);
+  const fileIndex = buildUsdStageOpenFileIndex(sourceFile, availableFiles);
+  const relevantVirtualPaths = collectUsdStageOpenRelevantVirtualPaths(sourceFile, availableFiles);
   const preloadEntries = new Map<string, UsdPreloadEntry>();
 
-  const addEntry = (path: string, loadBlob: () => Promise<Blob>) => {
+  const addEntry = (
+    path: string,
+    loadBlob: () => Promise<Blob>,
+    loadText: (() => Promise<string>) | null | undefined,
+    normalizationCacheKey: string | null,
+  ) => {
     const virtualPath = toVirtualUsdPath(path);
     if (!preloadEntries.has(virtualPath)) {
-      preloadEntries.set(virtualPath, { path: virtualPath, loadBlob });
+      preloadEntries.set(virtualPath, {
+        path: virtualPath,
+        loadBlob,
+        loadText: loadText ?? null,
+        normalizationCacheKey,
+      });
     }
   };
 
-  availableFiles.forEach((file) => {
-    if (file.format === 'mesh') return;
-    if (!isUsdPathWithinBundleDirectory(file.name, bundleDirectory)) return;
-    addEntry(file.name, createUsdPreloadSource(file, assets).loadBlob);
+  relevantVirtualPaths.forEach((virtualPath) => {
+    const file = fileIndex.get(virtualPath);
+    if (file) {
+      const preloadSource = createUsdPreloadSource(file, assets);
+      addEntry(
+        file.name,
+        preloadSource.loadBlob,
+        preloadSource.loadText,
+        preloadSource.normalizationCacheKey,
+      );
+      return;
+    }
+
+    const resolvedBlobUrl = resolveUsdBlobUrl(virtualPath, undefined, assets);
+    if (resolvedBlobUrl) {
+      addEntry(
+        virtualPath,
+        () => fetchBlobFromUrl(resolvedBlobUrl),
+        virtualPath.toLowerCase().endsWith('.usda')
+          ? () => fetchTextFromUrl(resolvedBlobUrl)
+          : null,
+        buildUsdPreloadNormalizationCacheKey(
+          {
+            name: virtualPath,
+            content: '',
+            blobUrl: resolvedBlobUrl,
+          },
+          resolvedBlobUrl,
+        ),
+      );
+    }
   });
 
-  Object.entries(assets).forEach(([path, url]) => {
-    if (!isUsdPathWithinBundleDirectory(path, bundleDirectory)) return;
-    addEntry(path, () => fetchBlobFromUrl(url));
-  });
-
-  addEntry(sourceFile.name, createUsdPreloadSource(sourceFile, assets).loadBlob);
+  const sourcePreload = createUsdPreloadSource(sourceFile, assets);
+  addEntry(
+    sourceFile.name,
+    sourcePreload.loadBlob,
+    sourcePreload.loadText,
+    sourcePreload.normalizationCacheKey,
+  );
 
   return Array.from(preloadEntries.values()).sort((left, right) => {
     if (left.path === rootPath) return 1;

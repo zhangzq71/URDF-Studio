@@ -1,49 +1,31 @@
-import { Suspense, lazy, useMemo, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MeasureTool } from './MeasureTool';
 import { RobotModel } from './RobotModel';
 import type {
   MeasureTargetResolver,
   RobotModelProps,
-  ToolMode,
   ViewerDocumentLoadEvent,
-  URDFViewerProps,
   ViewerRuntimeStageBridge,
   UsdLoadingPhaseLabels,
 } from '../types';
 import { isContinuousHoverEnabledForToolMode } from '../utils/usdInteractionPolicy';
-import type { URDFViewerController } from '../hooks/useURDFViewerController';
-import type { RobotFile } from '@/types';
-import type { ViewerRobotDataResolution } from '../utils/viewerRobotData';
+import { shouldForceViewerRuntimeRemount } from '../utils/loadStrategy';
+import {
+  shouldBootstrapUsdOffscreenStage,
+  shouldUseUsdOffscreenStage,
+} from '../utils/usdOffscreenStagePolicy';
+import { getViewerRobotSourceFormat } from '../utils/sourceFormat';
+import type { URDFViewerSceneBaseProps } from '../utils/viewerSceneProps';
+
+const LazyUsdOffscreenStage = lazy(async () => ({
+  default: (await import('./UsdOffscreenStage')).UsdOffscreenStage,
+}));
 
 const LazyUsdWasmStage = lazy(async () => ({
   default: (await import('./UsdWasmStage')).UsdWasmStage,
 }));
 
-interface URDFViewerSceneProps {
-  controller: URDFViewerController;
-  active?: boolean;
-  sourceFile?: RobotFile | null;
-  availableFiles: RobotFile[];
-  urdfContent: string;
-  assets: Record<string, string>;
-  onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
-  onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
-  sourceFilePath?: string;
-  groundPlaneOffset?: number;
-  mode: 'detail' | 'hardware';
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
-  hoverSelectionEnabled?: boolean;
-  onHover?: URDFViewerProps['onHover'];
-  onMeshSelect?: URDFViewerProps['onMeshSelect'];
-  robotLinks?: URDFViewerProps['robotLinks'];
-  robotJoints?: URDFViewerProps['robotJoints'];
-  focusTarget?: URDFViewerProps['focusTarget'];
-  onCollisionTransformPreview?: URDFViewerProps['onCollisionTransformPreview'];
-  onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
-  isMeshPreview?: boolean;
-  runtimeInstanceKey?: number;
-  toolMode: ToolMode;
+export interface URDFViewerSceneProps extends URDFViewerSceneBaseProps {
   t: RobotModelProps['t'];
 }
 
@@ -51,11 +33,15 @@ export const URDFViewerScene = ({
   controller,
   active = true,
   sourceFile,
+  sourceFormat,
   availableFiles,
   urdfContent,
   assets,
   onRobotDataResolved,
   onDocumentLoadEvent,
+  onSceneReadyForDisplay,
+  retainedRobot,
+  onRuntimeRobotLoaded,
   sourceFilePath,
   groundPlaneOffset,
   mode,
@@ -71,42 +57,194 @@ export const URDFViewerScene = ({
   onCollisionTransform,
   isMeshPreview = false,
   runtimeInstanceKey = 0,
+  sourceSceneAssemblyComponentId,
+  sourceSceneAssemblyComponentTransform,
+  showSourceSceneAssemblyComponentControls = false,
+  onSourceSceneAssemblyComponentTransform,
   toolMode,
   t,
 }: URDFViewerSceneProps) => {
   const useUsdStage = sourceFile?.format === 'usd' && !isMeshPreview;
   const usdSourceFile = useUsdStage ? sourceFile : null;
+  const useUsdOffscreenOnlyRenderer = usdSourceFile
+    ? shouldUseUsdOffscreenStage({
+        toolMode,
+        selection,
+        hoveredSelection,
+        focusTarget,
+        sourceFile: usdSourceFile,
+        availableFiles,
+        showOrigins: controller.showOrigins,
+        showJointAxes: controller.showJointAxes,
+        showCenterOfMass: controller.showCenterOfMass,
+        showInertia: controller.showInertia,
+      })
+    : false;
+  const shouldRemountRuntime = shouldForceViewerRuntimeRemount(sourceFile?.format);
+  const usdStageSessionKey = usdSourceFile
+    ? `${usdSourceFile.name}:${shouldRemountRuntime ? runtimeInstanceKey : 'stable'}`
+    : null;
+  const useUsdOffscreenBootstrap = usdSourceFile
+    ? !useUsdOffscreenOnlyRenderer &&
+      shouldBootstrapUsdOffscreenStage({
+        toolMode,
+        selection,
+        hoveredSelection,
+        focusTarget,
+      })
+    : false;
   const effectiveHoverSelectionEnabled =
     hoverSelectionEnabled && isContinuousHoverEnabledForToolMode(toolMode);
   const measureTargetResolverRef = useRef<MeasureTargetResolver | null>(null);
-  const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(() => ({
-    onRobotResolved: controller.handleJointPanelRobotLoaded,
-    onSelectionChange: controller.handleSelectWrapper,
-    onActiveJointChange: controller.handleActiveJointChange,
-    onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
-  }), [
-    controller.handleActiveJointChange,
-    controller.handleJointPanelRobotLoaded,
-    controller.handleRuntimeJointAnglesChange,
-    controller.handleSelectWrapper,
-  ]);
-  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(() => ({
-    'checking-path': t.loadingRobotCheckingPath,
-    'preloading-dependencies': t.loadingRobotPreloadingDependencies,
-    'initializing-renderer': t.loadingRobotInitializingRenderer,
-    'streaming-meshes': t.loadingRobotStreamingMeshes,
-    'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
-    'resolving-metadata': t.loadingRobotResolvingMetadata,
-    'finalizing-scene': t.loadingRobotFinalizingScene,
-  }), [
-    t.loadingRobotApplyingStageFixes,
-    t.loadingRobotCheckingPath,
-    t.loadingRobotFinalizingScene,
-    t.loadingRobotInitializingRenderer,
-    t.loadingRobotPreloadingDependencies,
-    t.loadingRobotResolvingMetadata,
-    t.loadingRobotStreamingMeshes,
-  ]);
+  const readyNotificationFrameARef = useRef<number | null>(null);
+  const readyNotificationFrameBRef = useRef<number | null>(null);
+  const [offscreenBootstrapReady, setOffscreenBootstrapReady] = useState(false);
+  const [interactiveUsdStageReady, setInteractiveUsdStageReady] = useState(false);
+  const runtimeBridge = useMemo<ViewerRuntimeStageBridge>(
+    () => ({
+      onRobotResolved: controller.handleJointPanelRobotLoaded,
+      onSelectionChange: controller.handleSelectWrapper,
+      onActiveJointChange: controller.handleActiveJointChange,
+      onJointAnglesChange: controller.handleRuntimeJointAnglesChange,
+    }),
+    [
+      controller.handleActiveJointChange,
+      controller.handleJointPanelRobotLoaded,
+      controller.handleRuntimeJointAnglesChange,
+      controller.handleSelectWrapper,
+    ],
+  );
+  const usdLoadingPhaseLabels = useMemo<UsdLoadingPhaseLabels>(
+    () => ({
+      'checking-path': t.loadingRobotCheckingPath,
+      'preloading-dependencies': t.loadingRobotPreloadingDependencies,
+      'initializing-renderer': t.loadingRobotInitializingRenderer,
+      'streaming-meshes': t.loadingRobotStreamingMeshes,
+      'applying-stage-fixes': t.loadingRobotApplyingStageFixes,
+      'resolving-metadata': t.loadingRobotResolvingMetadata,
+      'finalizing-scene': t.loadingRobotFinalizingScene,
+    }),
+    [
+      t.loadingRobotApplyingStageFixes,
+      t.loadingRobotCheckingPath,
+      t.loadingRobotFinalizingScene,
+      t.loadingRobotInitializingRenderer,
+      t.loadingRobotPreloadingDependencies,
+      t.loadingRobotResolvingMetadata,
+      t.loadingRobotStreamingMeshes,
+    ],
+  );
+  const cancelScheduledSceneReadyNotification = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (readyNotificationFrameARef.current !== null) {
+      window.cancelAnimationFrame(readyNotificationFrameARef.current);
+      readyNotificationFrameARef.current = null;
+    }
+
+    if (readyNotificationFrameBRef.current !== null) {
+      window.cancelAnimationFrame(readyNotificationFrameBRef.current);
+      readyNotificationFrameBRef.current = null;
+    }
+  }, []);
+  const scheduleSceneReadyForDisplay = useCallback(() => {
+    if (!onSceneReadyForDisplay) {
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      onSceneReadyForDisplay();
+      return;
+    }
+
+    // Defer handoff release until after the next paint so the viewer stage has
+    // a rendered frame before it becomes visible.
+    cancelScheduledSceneReadyNotification();
+    readyNotificationFrameARef.current = window.requestAnimationFrame(() => {
+      readyNotificationFrameARef.current = null;
+      readyNotificationFrameBRef.current = window.requestAnimationFrame(() => {
+        readyNotificationFrameBRef.current = null;
+        onSceneReadyForDisplay();
+      });
+    });
+  }, [cancelScheduledSceneReadyNotification, onSceneReadyForDisplay]);
+  useEffect(
+    () => () => {
+      cancelScheduledSceneReadyNotification();
+    },
+    [cancelScheduledSceneReadyNotification],
+  );
+  useEffect(() => {
+    setOffscreenBootstrapReady(false);
+    setInteractiveUsdStageReady(false);
+  }, [usdStageSessionKey]);
+  const handleUsdOffscreenDocumentLoadEvent = useCallback(
+    (event: ViewerDocumentLoadEvent) => {
+      if (event.status === 'ready') {
+        setOffscreenBootstrapReady(true);
+        scheduleSceneReadyForDisplay();
+      }
+      onDocumentLoadEvent?.(event);
+    },
+    [onDocumentLoadEvent, scheduleSceneReadyForDisplay],
+  );
+  const handleUsdWasmDocumentLoadEvent = useCallback(
+    (event: ViewerDocumentLoadEvent) => {
+      if (useUsdOffscreenBootstrap) {
+        if (event.status === 'loading') {
+          return;
+        }
+
+        if (event.status === 'ready') {
+          setInteractiveUsdStageReady(true);
+          scheduleSceneReadyForDisplay();
+          // The worker-rendered bootstrap stage is already visible at this point.
+          // Keep the hidden main-thread handoff from reopening the global loading HUD.
+          return;
+        }
+
+        if (event.status === 'error') {
+          setInteractiveUsdStageReady(false);
+          onDocumentLoadEvent?.(event);
+        }
+        return;
+      }
+
+      if (event.status === 'ready') {
+        scheduleSceneReadyForDisplay();
+      }
+      onDocumentLoadEvent?.(event);
+    },
+    [onDocumentLoadEvent, scheduleSceneReadyForDisplay, useUsdOffscreenBootstrap],
+  );
+  const handleRobotLoaded = useCallback(
+    (robot: Parameters<NonNullable<RobotModelProps['onRobotLoaded']>>[0]) => {
+      controller.handleRobotLoaded(robot);
+      onRuntimeRobotLoaded?.(robot);
+      scheduleSceneReadyForDisplay();
+    },
+    [controller.handleRobotLoaded, onRuntimeRobotLoaded, scheduleSceneReadyForDisplay],
+  );
+  // For default USD select mode, keep the worker-rendered stage on screen until
+  // the interactive main-thread stage has finished its own hidden handoff load.
+  const mountUsdOffscreenStage = Boolean(
+    usdSourceFile &&
+    (useUsdOffscreenOnlyRenderer || (useUsdOffscreenBootstrap && !interactiveUsdStageReady)),
+  );
+  const mountUsdWasmStage = Boolean(
+    usdSourceFile &&
+    !useUsdOffscreenOnlyRenderer &&
+    (!useUsdOffscreenBootstrap || offscreenBootstrapReady),
+  );
+  const usdOffscreenStageActive =
+    active &&
+    (useUsdOffscreenOnlyRenderer || (useUsdOffscreenBootstrap && !interactiveUsdStageReady));
+  const usdWasmStageActive =
+    active &&
+    !useUsdOffscreenOnlyRenderer &&
+    (!useUsdOffscreenBootstrap || interactiveUsdStageReady);
 
   return (
     <>
@@ -124,63 +262,95 @@ export const URDFViewerScene = ({
 
       {usdSourceFile ? (
         <Suspense fallback={null}>
-          <LazyUsdWasmStage
-            key={runtimeInstanceKey}
-            active={active}
-            sourceFile={usdSourceFile}
-            availableFiles={availableFiles}
-            assets={assets}
-            groundPlaneOffset={groundPlaneOffset}
-            mode={mode}
-            justSelectedRef={controller.justSelectedRef}
-            selection={selection}
-            hoveredSelection={hoveredSelection}
-            hoverSelectionEnabled={effectiveHoverSelectionEnabled}
-            onHover={onHover}
-            onMeshSelect={onMeshSelect}
-            showOrigins={controller.showOrigins}
-            showOriginsOverlay={controller.showOriginsOverlay}
-            originSize={controller.originSize}
-            showJointAxes={controller.showJointAxes}
-            showJointAxesOverlay={controller.showJointAxesOverlay}
-            jointAxisSize={controller.jointAxisSize}
-            highlightMode={controller.highlightMode}
-            showCenterOfMass={controller.showCenterOfMass}
-            showCoMOverlay={controller.showCoMOverlay}
-            centerOfMassSize={controller.centerOfMassSize}
-            showInertia={controller.showInertia}
-            showInertiaOverlay={controller.showInertiaOverlay}
-            showVisual={controller.showVisual}
-            showCollision={controller.showCollision}
-            robotLinks={robotLinks}
-            toolMode={toolMode}
-            transformMode={controller.transformMode}
-            onCollisionTransformPreview={onCollisionTransformPreview}
-            onCollisionTransformEnd={onCollisionTransform}
-            onTransformPending={controller.handleTransformPending}
-            setIsDragging={controller.setIsDragging}
-            loadingLabel={t.loadingRobot}
-            loadingDetailLabel={t.loadingRobotPreparing}
-            loadingPhaseLabels={usdLoadingPhaseLabels}
-            onRobotDataResolved={onRobotDataResolved}
-            onDocumentLoadEvent={onDocumentLoadEvent}
-            runtimeBridge={runtimeBridge}
-            measureTargetResolverRef={measureTargetResolverRef}
-          />
+          {mountUsdOffscreenStage ? (
+            <LazyUsdOffscreenStage
+              key={`${usdSourceFile.name}:${shouldRemountRuntime ? runtimeInstanceKey : 'stable'}:offscreen`}
+              active={usdOffscreenStageActive}
+              sourceFile={usdSourceFile}
+              availableFiles={availableFiles}
+              assets={assets}
+              groundPlaneOffset={groundPlaneOffset}
+              showVisual={controller.showVisual}
+              showCollision={controller.showCollision}
+              showCollisionAlwaysOnTop={controller.showCollisionAlwaysOnTop}
+              loadingLabel={t.loadingRobot}
+              loadingDetailLabel={t.loadingRobotPreparing}
+              loadingPhaseLabels={usdLoadingPhaseLabels}
+              onRobotDataResolved={onRobotDataResolved}
+              onDocumentLoadEvent={handleUsdOffscreenDocumentLoadEvent}
+              selection={selection}
+              hoveredSelection={hoveredSelection}
+              hoverSelectionEnabled={effectiveHoverSelectionEnabled}
+              onHover={onHover}
+              onMeshSelect={onMeshSelect}
+              interactionLayerPriority={controller.interactionLayerPriority}
+              toolMode={toolMode}
+              runtimeBridge={runtimeBridge}
+              retainReadyAsLoadingDuringBootstrapHandoff={useUsdOffscreenBootstrap}
+            />
+          ) : null}
+          {mountUsdWasmStage ? (
+            <LazyUsdWasmStage
+              key={`${usdSourceFile.name}:${shouldRemountRuntime ? runtimeInstanceKey : 'stable'}`}
+              active={usdWasmStageActive}
+              sourceFile={usdSourceFile}
+              availableFiles={availableFiles}
+              assets={assets}
+              groundPlaneOffset={groundPlaneOffset}
+              mode={mode}
+              justSelectedRef={controller.justSelectedRef}
+              selection={selection}
+              hoveredSelection={hoveredSelection}
+              hoverSelectionEnabled={effectiveHoverSelectionEnabled}
+              onHover={onHover}
+              onMeshSelect={onMeshSelect}
+              showOrigins={controller.showOrigins}
+              showOriginsOverlay={controller.showOriginsOverlay}
+              originSize={controller.originSize}
+              showJointAxes={controller.showJointAxes}
+              showJointAxesOverlay={controller.showJointAxesOverlay}
+              jointAxisSize={controller.jointAxisSize}
+              showCenterOfMass={controller.showCenterOfMass}
+              showCoMOverlay={controller.showCoMOverlay}
+              centerOfMassSize={controller.centerOfMassSize}
+              showInertia={controller.showInertia}
+              showInertiaOverlay={controller.showInertiaOverlay}
+              showVisual={controller.showVisual}
+              showCollision={controller.showCollision}
+              showCollisionAlwaysOnTop={controller.showCollisionAlwaysOnTop}
+              interactionLayerPriority={controller.interactionLayerPriority}
+              toolMode={toolMode}
+              robotLinks={robotLinks}
+              transformMode={controller.transformMode}
+              onCollisionTransformPreview={onCollisionTransformPreview}
+              onCollisionTransformEnd={onCollisionTransform}
+              onTransformPending={controller.handleTransformPending}
+              setIsDragging={controller.setIsDragging}
+              loadingLabel={t.loadingRobot}
+              loadingDetailLabel={t.loadingRobotPreparing}
+              loadingPhaseLabels={usdLoadingPhaseLabels}
+              onRobotDataResolved={onRobotDataResolved}
+              onDocumentLoadEvent={handleUsdWasmDocumentLoadEvent}
+              runtimeBridge={runtimeBridge}
+              measureTargetResolverRef={measureTargetResolverRef}
+            />
+          ) : null}
         </Suspense>
       ) : (
         <Suspense fallback={null}>
           <RobotModel
-            key={runtimeInstanceKey}
             active={active}
             urdfContent={urdfContent}
             assets={assets}
-            sourceFormat={sourceFile?.format === 'mjcf' ? 'mjcf' : sourceFile?.format === 'urdf' ? 'urdf' : 'auto'}
+            sourceFormat={sourceFormat ?? getViewerRobotSourceFormat(sourceFile?.format)}
+            reloadToken={runtimeInstanceKey}
+            initialRobot={retainedRobot}
             sourceFilePath={sourceFilePath}
-            onRobotLoaded={controller.handleRobotLoaded}
+            onRobotLoaded={handleRobotLoaded}
             onDocumentLoadEvent={onDocumentLoadEvent}
             showCollision={controller.showCollision}
             showVisual={controller.showVisual}
+            showCollisionAlwaysOnTop={controller.showCollisionAlwaysOnTop}
             onSelect={controller.handleSelectWrapper}
             onHover={onHover}
             onMeshSelect={onMeshSelect}
@@ -197,7 +367,6 @@ export const URDFViewerScene = ({
             hoveredSelection={hoveredSelection}
             hoverSelectionEnabled={effectiveHoverSelectionEnabled}
             groundPlaneOffset={groundPlaneOffset}
-            highlightMode={controller.highlightMode}
             showInertia={controller.showInertia}
             showInertiaOverlay={controller.showInertiaOverlay}
             showCenterOfMass={controller.showCenterOfMass}
@@ -209,6 +378,7 @@ export const URDFViewerScene = ({
             showJointAxes={controller.showJointAxes}
             showJointAxesOverlay={controller.showJointAxesOverlay}
             jointAxisSize={controller.jointAxisSize}
+            interactionLayerPriority={controller.interactionLayerPriority}
             modelOpacity={controller.modelOpacity}
             robotLinks={robotLinks}
             robotJoints={robotJoints}
@@ -221,6 +391,10 @@ export const URDFViewerScene = ({
             onTransformPending={controller.handleTransformPending}
             isSelectionLockedRef={controller.transformPendingRef}
             isMeshPreview={isMeshPreview}
+            sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
+            sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
+            showSourceSceneAssemblyComponentControls={showSourceSceneAssemblyComponentControls}
+            onSourceSceneAssemblyComponentTransform={onSourceSceneAssemblyComponentTransform}
           />
         </Suspense>
       )}

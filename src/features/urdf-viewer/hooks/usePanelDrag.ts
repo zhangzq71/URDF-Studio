@@ -219,7 +219,7 @@ export function usePanelDrag(
     bodyUserSelectRef.current = document.body.style.userSelect;
     bodyCursorRef.current = document.body.style.cursor;
     document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'move';
+    document.body.style.cursor = 'grabbing';
     setDragging(panel);
     attachDocumentListeners();
   }, [attachDocumentListeners, containerRef, getCommittedPosition, getPanelRef]);

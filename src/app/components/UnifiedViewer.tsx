@@ -1,32 +1,65 @@
 import React, { useEffect } from 'react';
 import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 import { AlertCircle, FileCode, X } from 'lucide-react';
-import type { RobotFile, RobotState, Theme } from '@/types';
+import type {
+  AppMode,
+  AssemblyState,
+  InteractionSelection,
+  RobotFile,
+  RobotState,
+  Theme,
+} from '@/types';
+import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { useResolvedTheme } from '@/shared/hooks';
 import { WorkspaceCanvas } from './WorkspaceCanvas';
-import { STUDIO_ENVIRONMENT_INTENSITY, WORKSPACE_CANVAS_BACKGROUND } from '@/shared/components/3d';
+import {
+  STUDIO_ENVIRONMENT_INTENSITY,
+  WORKSPACE_CANVAS_BACKGROUND,
+  type SnapshotCaptureAction,
+} from '@/shared/components/3d';
 import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
 import {
   useURDFViewerController,
   URDFViewerPanels,
   URDFViewerScene,
+  type URDFViewerController,
+  type ViewerHelperKind,
   buildViewerRobotLinksScopeSignature,
-  createStableViewerResourceScope,
+  resolveDefaultViewerToolMode,
   type ToolMode,
   type ViewerDocumentLoadEvent,
   type ViewerJointMotionStateValue,
   type ViewerRobotDataResolution,
+  type ViewerRobotSourceFormat,
   type ViewerResourceScope,
+  useResponsivePanelLayout,
 } from '@/features/urdf-viewer';
+import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import {
   createInitialUnifiedViewerMountState,
+  resolveUnifiedViewerSessionState,
   resolveUnifiedViewerMountState,
 } from '@/app/utils/unifiedViewerMountState';
+import { resolveUnifiedViewerHandoffReadyState } from '@/app/utils/unifiedViewerHandoffReadyState';
+import { resolveUnifiedViewerForcedSessionState } from '@/app/utils/unifiedViewerForcedSessionState';
+import { resolveUnifiedViewerLoadReleaseState } from '@/app/utils/unifiedViewerLoadReleaseState';
+import {
+  captureUnifiedViewerOptionsVisibility,
+  shouldRestoreUnifiedViewerOptionsPanel,
+} from '@/app/utils/unifiedViewerOptionsRestore';
+import { buildUnifiedViewerSceneProps } from '@/app/utils/unifiedViewerSceneProps';
+import { buildUnifiedViewerResourceScopes } from '@/app/utils/unifiedViewerResourceScopes';
+import { resolveUnifiedViewerVisualizerRobot } from '@/app/utils/unifiedViewerSceneRobots';
+import { resolveUnifiedViewerViewportState } from '@/app/utils/unifiedViewerViewportState';
 import { useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
+import type { DocumentLoadState } from '@/store/assetsStore';
+import type { UpdateCommitOptions } from '@/app/hooks/usePendingHistoryCoordinator';
+import { setRegressionViewerResourceScope } from '@/shared/debug/regressionBridge';
 
 interface FilePreviewState {
   urdfContent: string;
@@ -35,27 +68,45 @@ interface FilePreviewState {
 
 interface UnifiedViewerProps {
   robot: RobotState;
-  mode: 'skeleton' | 'detail' | 'hardware';
-  onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
-  onMeshSelect?: (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => void;
-  onHover?: (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => void;
+  visualizerRobot?: RobotState;
+  mode: AppMode;
+  onSelect: (
+    type: 'link' | 'joint',
+    id: string,
+    subType?: 'visual' | 'collision',
+    helperKind?: ViewerHelperKind,
+  ) => void;
+  onMeshSelect?: (
+    linkId: string,
+    jointId: string | null,
+    objectIndex: number,
+    objectType: 'visual' | 'collision',
+  ) => void;
+  onHover?: (
+    type: 'link' | 'joint' | null,
+    id: string | null,
+    subType?: 'visual' | 'collision',
+    objectIndex?: number,
+    helperKind?: ViewerHelperKind,
+  ) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   assets: Record<string, string>;
   lang: Language;
   theme: Theme;
   showVisual?: boolean;
   setShowVisual?: (show: boolean) => void;
-  snapshotAction?: React.RefObject<(() => void) | null>;
+  snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
   showToolbar?: boolean;
   setShowToolbar?: (show: boolean) => void;
   showOptionsPanel?: boolean;
   setShowOptionsPanel?: (show: boolean) => void;
-  showSkeletonOptionsPanel?: boolean;
-  setShowSkeletonOptionsPanel?: (show: boolean) => void;
+  showVisualizerOptionsPanel?: boolean;
+  setShowVisualizerOptionsPanel?: (show: boolean) => void;
   showJointPanel?: boolean;
   setShowJointPanel?: (show: boolean) => void;
   availableFiles: RobotFile[];
   urdfContent: string;
+  viewerSourceFormat?: ViewerRobotSourceFormat;
   sourceFilePath?: string;
   sourceFile?: RobotFile | null;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
@@ -64,20 +115,53 @@ interface UnifiedViewerProps {
   jointMotionState?: Record<string, ViewerJointMotionStateValue>;
   onJointChange?: (jointName: string, angle: number) => void;
   syncJointChangesToApp?: boolean;
-  selection?: { type: 'link' | 'joint' | null; id: string | null; subType?: 'visual' | 'collision'; objectIndex?: number };
+  selection?: InteractionSelection;
   focusTarget?: string | null;
   isMeshPreview?: boolean;
   onTransformPendingChange?: (pending: boolean) => void;
-  onCollisionTransformPreview?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
-  onCollisionTransform?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
+  onCollisionTransformPreview?: (
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => void;
+  onCollisionTransform?: (
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => void;
+  assemblyState?: AssemblyState | null;
+  assemblyWorkspaceActive?: boolean;
+  assemblySelection?: AssemblySelection;
+  sourceSceneAssemblyComponentId?: string | null;
+  onAssemblyTransform?: (transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  }) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: {
+      position: { x: number; y: number; z: number };
+      rotation: { r: number; p: number; y: number };
+    },
+    options?: UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (
+    bridgeId: string,
+    origin: {
+      xyz: { x: number; y: number; z: number };
+      rpy: { r: number; p: number; y: number };
+      quatXyzw?: { x: number; y: number; z: number; w: number };
+    },
+  ) => void;
   filePreview?: FilePreviewState;
   onClosePreview?: () => void;
   pendingViewerToolMode?: ToolMode | null;
   onConsumePendingViewerToolMode?: () => void;
   viewerReloadKey?: number;
+  documentLoadState: DocumentLoadState;
 }
-
-const emptySelection = { type: null as null, id: null as null };
 
 type RaycastableObject = ThreeObject3D & {
   raycast?: ThreeObject3D['raycast'];
@@ -141,7 +225,10 @@ function FilePreviewBanner({
   return (
     <div className="absolute top-3 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-border-black bg-panel-bg px-3 py-2 shadow-lg">
       <FileCode className="w-4 h-4 shrink-0 text-system-blue" />
-      <span className="max-w-[320px] truncate text-sm font-medium text-text-primary" title={fileName}>
+      <span
+        className="max-w-[320px] truncate text-sm font-medium text-text-primary"
+        title={fileName}
+      >
         {t.filePreview}: {displayName}
       </span>
       <button
@@ -165,17 +252,68 @@ function FilePreviewError({ lang }: { lang: Language }) {
   );
 }
 
+function URDFViewerJointsPanel({
+  controller,
+  showJointPanel,
+  setShowJointPanel,
+  lang,
+}: {
+  controller: URDFViewerController;
+  showJointPanel: boolean;
+  setShowJointPanel?: (show: boolean) => void;
+  lang: Language;
+}) {
+  const t = translations[lang];
+  const { jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
+    containerRef: controller.containerRef,
+    optionsPanelRef: controller.optionsPanelRef,
+    jointPanelRef: controller.jointPanelRef,
+    showOptionsPanel: false,
+    showJointPanel,
+    showToolbar: false,
+  });
+
+  return (
+    <JointsPanel
+      showJointPanel={showJointPanel}
+      robot={controller.jointPanelRobot ?? controller.robot}
+      jointPanelRef={controller.jointPanelRef}
+      jointPanelPos={controller.jointPanelPos}
+      defaultPosition={jointsDefaultPosition}
+      maxHeight={jointsPanelMaxHeight}
+      onMouseDown={(event) => controller.handleMouseDown('joints', event)}
+      t={t}
+      handleResetJoints={controller.handleResetJoints}
+      angleUnit={controller.angleUnit}
+      setAngleUnit={controller.setAngleUnit}
+      isJointsCollapsed={controller.isJointsCollapsed}
+      toggleJointsCollapsed={controller.toggleJointsCollapsed}
+      setShowJointPanel={setShowJointPanel}
+      jointPanelStore={controller.jointPanelStore}
+      setActiveJoint={controller.setActiveJoint}
+      handleJointAngleChange={controller.handleJointAngleChange}
+      handleJointChangeCommit={controller.handleJointChangeCommit}
+      onSelect={controller.handleSelectWrapper}
+      onHover={controller.handleHoverWrapper}
+    />
+  );
+}
+
 interface ViewerSceneConnectorProps {
-  controller: ReturnType<typeof useURDFViewerController>;
+  controller: URDFViewerController;
   active: boolean;
   activePreview?: FilePreviewState;
   viewerResourceScope: ViewerResourceScope;
+  retainedRobot?: ThreeObject3D | null;
   effectiveSourceFile: RobotFile | null | undefined;
   effectiveSourceFilePath?: string;
   effectiveUrdfContent: string;
+  effectiveSourceFormat?: ViewerRobotSourceFormat;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
-  mode: 'detail' | 'hardware';
+  onSceneReadyForDisplay?: () => void;
+  onRuntimeRobotLoaded?: (robot: ThreeObject3D) => void;
+  mode: 'editor';
   selection?: UnifiedViewerProps['selection'];
   onHover?: UnifiedViewerProps['onHover'];
   onMeshSelect?: UnifiedViewerProps['onMeshSelect'];
@@ -185,6 +323,13 @@ interface ViewerSceneConnectorProps {
   onCollisionTransform?: UnifiedViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
   viewerReloadKey?: number;
+  sourceSceneAssemblyComponentId?: string | null;
+  sourceSceneAssemblyComponentTransform?: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  } | null;
+  showSourceSceneAssemblyComponentControls?: boolean;
+  onSourceSceneAssemblyComponentTransform?: UnifiedViewerProps['onComponentTransform'];
   t: typeof translations.en;
 }
 
@@ -193,11 +338,15 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
   active,
   activePreview,
   viewerResourceScope,
+  retainedRobot,
   effectiveSourceFile,
   effectiveSourceFilePath,
   effectiveUrdfContent,
+  effectiveSourceFormat,
   onRobotDataResolved,
   onDocumentLoadEvent,
+  onSceneReadyForDisplay,
+  onRuntimeRobotLoaded,
   mode,
   selection,
   onHover,
@@ -208,505 +357,868 @@ const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
   onCollisionTransform,
   isMeshPreview = false,
   viewerReloadKey = 0,
+  sourceSceneAssemblyComponentId = null,
+  sourceSceneAssemblyComponentTransform = null,
+  showSourceSceneAssemblyComponentControls = false,
+  onSourceSceneAssemblyComponentTransform,
   t,
 }: ViewerSceneConnectorProps) {
-  const hoveredSelection = useSelectionStore((state) => state.hoveredSelection);
-  const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
-
-  return (
-    <URDFViewerScene
-      controller={controller}
-      active={active}
-      sourceFile={effectiveSourceFile}
-      availableFiles={viewerResourceScope.availableFiles}
-      urdfContent={effectiveUrdfContent}
-      assets={viewerResourceScope.assets}
-      onRobotDataResolved={onRobotDataResolved}
-      onDocumentLoadEvent={onDocumentLoadEvent}
-      sourceFilePath={effectiveSourceFilePath}
-      groundPlaneOffset={groundPlaneOffset}
-      mode={activePreview ? 'detail' : mode}
-      selection={activePreview ? emptySelection : selection}
-      hoveredSelection={activePreview ? undefined : hoveredSelection}
-      hoverSelectionEnabled={active && !activePreview}
-      onHover={active && !activePreview ? onHover : undefined}
-      onMeshSelect={active && !activePreview ? onMeshSelect : undefined}
-      robotLinks={activePreview ? undefined : robot.links}
-      robotJoints={activePreview ? undefined : robot.joints}
-      focusTarget={activePreview ? undefined : focusTarget}
-      onCollisionTransformPreview={activePreview ? undefined : onCollisionTransformPreview}
-      onCollisionTransform={activePreview ? undefined : onCollisionTransform}
-      isMeshPreview={activePreview ? false : isMeshPreview}
-      runtimeInstanceKey={viewerReloadKey}
-      toolMode={controller.toolMode}
-      t={t}
-    />
+  const shouldSubscribeToHoveredSelection = effectiveSourceFile?.format === 'usd' && !isMeshPreview;
+  const hoveredSelection = useSelectionStore(
+    React.useCallback(
+      (state) => (shouldSubscribeToHoveredSelection ? state.hoveredSelection : undefined),
+      [shouldSubscribeToHoveredSelection],
+    ),
   );
+  const sceneProps = buildUnifiedViewerSceneProps({
+    controller,
+    active,
+    hasActivePreview: Boolean(activePreview),
+    hoveredSelection,
+    viewerResourceScope,
+    retainedRobot,
+    effectiveSourceFile,
+    effectiveSourceFilePath,
+    effectiveUrdfContent,
+    effectiveSourceFormat,
+    onRobotDataResolved,
+    onDocumentLoadEvent,
+    onSceneReadyForDisplay,
+    onRuntimeRobotLoaded,
+    mode,
+    selection,
+    onHover,
+    onMeshSelect,
+    robot,
+    focusTarget,
+    onCollisionTransformPreview,
+    onCollisionTransform,
+    isMeshPreview,
+    viewerReloadKey,
+    sourceSceneAssemblyComponentId,
+    sourceSceneAssemblyComponentTransform,
+    showSourceSceneAssemblyComponentControls,
+    onSourceSceneAssemblyComponentTransform,
+  });
+
+  return <URDFViewerScene {...sceneProps} t={t} />;
 });
 
-export const UnifiedViewer = React.memo(({
-  robot,
-  mode,
-  onSelect,
-  onMeshSelect,
-  onHover,
-  onUpdate,
-  assets,
-  lang,
-  theme,
-  showVisual,
-  setShowVisual,
-  snapshotAction,
-  showToolbar = true,
-  setShowToolbar,
-  showOptionsPanel = true,
-  setShowOptionsPanel,
-  showSkeletonOptionsPanel = true,
-  setShowSkeletonOptionsPanel,
-  showJointPanel = true,
-  setShowJointPanel,
-  availableFiles,
-  urdfContent,
-  sourceFilePath,
-  sourceFile,
-  onRobotDataResolved,
-  onDocumentLoadEvent,
-  jointAngleState,
-  jointMotionState,
-  onJointChange,
-  syncJointChangesToApp = false,
-  selection,
-  focusTarget,
-  isMeshPreview = false,
-  onTransformPendingChange,
-  onCollisionTransformPreview,
-  onCollisionTransform,
-  filePreview,
-  onClosePreview,
-  pendingViewerToolMode = null,
-  onConsumePendingViewerToolMode,
-  viewerReloadKey = 0,
-}: UnifiedViewerProps) => {
-  const t = translations[lang];
-  const activePreview = mode === 'skeleton' ? undefined : filePreview;
-  const isPreviewing = !!activePreview;
-  const isViewerMode = isPreviewing || mode === 'detail' || mode === 'hardware';
-  const viewerVisible = isViewerMode;
-  const visualizerVisible = !isViewerMode;
-  const [viewerSceneMode, setViewerSceneMode] = React.useState<'detail' | 'hardware'>(
-    mode === 'hardware' ? 'hardware' : 'detail',
-  );
-  const [mountState, setMountState] = React.useState(() => createInitialUnifiedViewerMountState({
-    mode,
-    isPreviewing,
-  }));
-  const effectiveJointAngleState = isPreviewing ? undefined : jointAngleState;
-  const effectiveJointMotionState = isPreviewing ? undefined : jointMotionState;
-  const effectiveSyncJointChangesToApp = isPreviewing ? false : syncJointChangesToApp;
-  const resolvedTheme = useResolvedTheme(theme);
-  const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
-  const skeletonOptionsVisibleRef = React.useRef(showSkeletonOptionsPanel);
-  const viewerUnmountTimerRef = React.useRef<number | null>(null);
-  const visualizerUnmountTimerRef = React.useRef<number | null>(null);
-  const optionsVisibleAtPointerDownRef = React.useRef({
-    viewer: showOptionsPanel,
-    skeleton: showSkeletonOptionsPanel,
-  });
-
-  useEffect(() => {
-    viewerOptionsVisibleRef.current = showOptionsPanel;
-  }, [showOptionsPanel]);
-
-  useEffect(() => {
-    skeletonOptionsVisibleRef.current = showSkeletonOptionsPanel;
-  }, [showSkeletonOptionsPanel]);
-
-  useEffect(() => {
-    setMountState((current) => resolveUnifiedViewerMountState(current, {
-      mode,
-      isPreviewing,
-    }));
-  }, [isPreviewing, mode]);
-
-  // Keep quick mode flips warm, but unmount the inactive scene once the user
-  // settles so hidden useFrame subscriptions stop consuming work in the background.
-  useEffect(() => {
-    if (viewerVisible) {
-      if (viewerUnmountTimerRef.current !== null) {
-        window.clearTimeout(viewerUnmountTimerRef.current);
-        viewerUnmountTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (!mountState.viewerMounted) {
-      return;
-    }
-
-    viewerUnmountTimerRef.current = window.setTimeout(() => {
-      viewerUnmountTimerRef.current = null;
-      setMountState((current) => (current.viewerMounted
-        ? { ...current, viewerMounted: false }
-        : current));
-    }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
-
-    return () => {
-      if (viewerUnmountTimerRef.current !== null) {
-        window.clearTimeout(viewerUnmountTimerRef.current);
-        viewerUnmountTimerRef.current = null;
-      }
-    };
-  }, [mountState.viewerMounted, viewerVisible]);
-
-  useEffect(() => {
-    if (visualizerVisible) {
-      if (visualizerUnmountTimerRef.current !== null) {
-        window.clearTimeout(visualizerUnmountTimerRef.current);
-        visualizerUnmountTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (!mountState.visualizerMounted) {
-      return;
-    }
-
-    visualizerUnmountTimerRef.current = window.setTimeout(() => {
-      visualizerUnmountTimerRef.current = null;
-      setMountState((current) => (current.visualizerMounted
-        ? { ...current, visualizerMounted: false }
-        : current));
-    }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
-
-    return () => {
-      if (visualizerUnmountTimerRef.current !== null) {
-        window.clearTimeout(visualizerUnmountTimerRef.current);
-        visualizerUnmountTimerRef.current = null;
-      }
-    };
-  }, [mountState.visualizerMounted, visualizerVisible]);
-
-  useEffect(() => {
-    if (mode === 'detail' || mode === 'hardware') {
-      setViewerSceneMode(mode);
-    }
-  }, [mode]);
-
-  useEffect(() => () => {
-    if (viewerUnmountTimerRef.current !== null) {
-      window.clearTimeout(viewerUnmountTimerRef.current);
-      viewerUnmountTimerRef.current = null;
-    }
-    if (visualizerUnmountTimerRef.current !== null) {
-      window.clearTimeout(visualizerUnmountTimerRef.current);
-      visualizerUnmountTimerRef.current = null;
-    }
-  }, []);
-
-  const visualizerController = useVisualizerController({
+export const UnifiedViewer = React.memo(
+  ({
     robot,
-    onUpdate,
+    visualizerRobot: visualizerRobotInput,
     mode,
-    propShowVisual: showVisual,
-    propSetShowVisual: setShowVisual,
-  });
-  const viewerController = useURDFViewerController({
-    onJointChange,
-    syncJointChangesToApp: effectiveSyncJointChangesToApp,
-    showJointPanel,
-    jointAngleState: effectiveJointAngleState,
-    jointMotionState: effectiveJointMotionState,
     onSelect,
     onMeshSelect,
     onHover,
-    selection,
+    onUpdate,
+    assets,
+    lang,
+    theme,
     showVisual,
     setShowVisual,
-    onTransformPendingChange,
-    active: isViewerMode,
-    jointStateScopeKey: resolveViewerJointScopeKey({
-      previewFileName: activePreview?.fileName,
-      sourceFile,
-      sourceFilePath,
-      robotName: robot.name,
-    }),
-  });
-
-  const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
-  const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
-  const effectiveSourceFile = activePreview ? null : sourceFile;
-  const controlLayerKey = 'shared';
-  const workspaceEnvironment = 'studio' as const;
-  const workspaceEnvironmentIntensity = isViewerMode
-    ? STUDIO_ENVIRONMENT_INTENSITY.viewer[resolvedTheme]
-    : STUDIO_ENVIRONMENT_INTENSITY.workspace[resolvedTheme];
-  const showWorldOriginAxesPreference = useUIStore((state) => state.viewOptions.showAxes);
-  const showUsageGuidePreference = useUIStore((state) => state.viewOptions.showUsageGuide);
-  const showWorldOriginAxes = showWorldOriginAxesPreference && (isViewerMode
-    ? !viewerController.showOrigins
-    : !(
-      (mode === 'skeleton' && visualizerController.state.showSkeletonOrigin)
-      || (mode === 'detail' && visualizerController.state.showDetailOrigin)
-      || (mode === 'hardware' && visualizerController.state.showHardwareOrigin)
-    ));
-  const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
-  const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
-  const viewerGroupRef = React.useRef<ThreeGroup | null>(null);
-  const visualizerGroupRef = React.useRef<ThreeGroup | null>(null);
-  const viewerRaycastCacheRef = React.useRef(
-    new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
-  );
-  const visualizerRaycastCacheRef = React.useRef(
-    new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
-  );
-  const viewerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
-    [activePreview, robot.links],
-  );
-  const viewerRobotLinksForScope = React.useMemo(
-    () => (activePreview ? undefined : robot.links),
-    [activePreview, viewerRobotLinksScopeSignature],
-  );
-  const visualizerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(robot.links),
-    [robot.links],
-  );
-  const visualizerRobotLinksForScope = React.useMemo(
-    () => robot.links,
-    [visualizerRobotLinksScopeSignature],
-  );
-
-  const viewerResourceScope = React.useMemo(() => {
-    const next = createStableViewerResourceScope(viewerResourceScopeRef.current, {
-      assets,
-      availableFiles,
-      sourceFile: effectiveSourceFile,
-      sourceFilePath: effectiveSourceFilePath,
-      robotLinks: viewerRobotLinksForScope,
-    });
-    viewerResourceScopeRef.current = next;
-    return next;
-  }, [assets, availableFiles, effectiveSourceFile, effectiveSourceFilePath, viewerRobotLinksForScope]);
-
-  const visualizerResourceScope = React.useMemo(() => {
-    const next = createStableViewerResourceScope(visualizerResourceScopeRef.current, {
-      assets,
-      availableFiles,
-      sourceFile,
-      sourceFilePath,
-      robotLinks: visualizerRobotLinksForScope,
-    });
-    visualizerResourceScopeRef.current = next;
-    return next;
-  }, [assets, availableFiles, sourceFile, sourceFilePath, visualizerRobotLinksForScope]);
-
-  const handleWorkspacePointerDownCapture = React.useCallback(() => {
-    optionsVisibleAtPointerDownRef.current = {
-      viewer: showOptionsPanel,
-      skeleton: showSkeletonOptionsPanel,
-    };
-  }, [showOptionsPanel, showSkeletonOptionsPanel]);
-
-  // Blank-canvas clicks should clear selection, not dismiss an already-open options panel.
-  const restoreViewerOptionsIfNeeded = React.useCallback(() => {
-    if (!optionsVisibleAtPointerDownRef.current.viewer || !setShowOptionsPanel) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      if (!viewerOptionsVisibleRef.current) {
-        setShowOptionsPanel(true);
-      }
-    });
-  }, [setShowOptionsPanel]);
-
-  const restoreSkeletonOptionsIfNeeded = React.useCallback(() => {
-    if (!optionsVisibleAtPointerDownRef.current.skeleton || !setShowSkeletonOptionsPanel) {
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      if (!skeletonOptionsVisibleRef.current) {
-        setShowSkeletonOptionsPanel(true);
-      }
-    });
-  }, [setShowSkeletonOptionsPanel]);
-
-  const handleViewerPointerMissed = React.useCallback(() => {
-    viewerController.handlePointerMissed();
-    restoreViewerOptionsIfNeeded();
-  }, [restoreViewerOptionsIfNeeded, viewerController]);
-
-  const handleVisualizerPointerMissed = React.useCallback(() => {
-    visualizerController.clearSelection();
-    restoreSkeletonOptionsIfNeeded();
-  }, [restoreSkeletonOptionsIfNeeded, visualizerController]);
-
-  const visualizerSceneSignature = React.useMemo(
-    () => [
-      robot.name,
-      robot.rootLinkId,
-      Object.keys(robot.links).length,
-      Object.keys(robot.joints).length,
-      mode,
-    ].join(':'),
-    [mode, robot.joints, robot.links, robot.name, robot.rootLinkId],
-  );
-
-  useEffect(() => {
-    const root = viewerGroupRef.current;
-    syncGroupRaycastInteractivity(root, viewerVisible, viewerRaycastCacheRef.current);
-
-    return () => {
-      syncGroupRaycastInteractivity(root, true, viewerRaycastCacheRef.current);
-    };
-  }, [viewerVisible, mountState.viewerMounted, viewerReloadKey]);
-
-  useEffect(() => {
-    const root = visualizerGroupRef.current;
-    // Hidden R3F groups can still receive pointer raycasts, so explicitly disable
-    // the inactive scene to prevent background hover/selection from leaking across modes.
-    syncGroupRaycastInteractivity(root, visualizerVisible, visualizerRaycastCacheRef.current);
-
-    return () => {
-      syncGroupRaycastInteractivity(root, true, visualizerRaycastCacheRef.current);
-    };
-  }, [mountState.visualizerMounted, visualizerSceneSignature, visualizerVisible]);
-
-  useEffect(() => {
-    if (!pendingViewerToolMode || !isViewerMode) {
-      return;
-    }
-
-    setShowToolbar?.(true);
-    viewerController.handleToolModeChange(pendingViewerToolMode);
-    onConsumePendingViewerToolMode?.();
-  }, [
-    isViewerMode,
-    onConsumePendingViewerToolMode,
-    pendingViewerToolMode,
+    snapshotAction,
+    showToolbar = true,
     setShowToolbar,
-    viewerController,
-  ]);
+    showOptionsPanel = true,
+    setShowOptionsPanel,
+    showVisualizerOptionsPanel = true,
+    setShowVisualizerOptionsPanel,
+    showJointPanel = true,
+    setShowJointPanel,
+    availableFiles,
+    urdfContent,
+    viewerSourceFormat,
+    sourceFilePath,
+    sourceFile,
+    onRobotDataResolved,
+    onDocumentLoadEvent,
+    jointAngleState,
+    jointMotionState,
+    onJointChange,
+    syncJointChangesToApp = false,
+    selection,
+    focusTarget,
+    isMeshPreview = false,
+    onTransformPendingChange,
+    onCollisionTransformPreview,
+    onCollisionTransform,
+    assemblyState,
+    assemblyWorkspaceActive = false,
+    assemblySelection,
+    sourceSceneAssemblyComponentId = null,
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
+    filePreview,
+    onClosePreview,
+    pendingViewerToolMode = null,
+    onConsumePendingViewerToolMode,
+    viewerReloadKey = 0,
+    documentLoadState,
+  }: UnifiedViewerProps) => {
+    const t = translations[lang];
+    const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+    const setGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
+    const [forcedViewerSession, setForcedViewerSession] = React.useState(false);
+    const viewerToolSessionActive = pendingViewerToolMode === 'measure' || forcedViewerSession;
+    const sessionState = React.useMemo(
+      () =>
+        resolveUnifiedViewerSessionState({
+          mode,
+          filePreview,
+          forceViewerSession: viewerToolSessionActive,
+        }),
+      [filePreview, mode, viewerToolSessionActive],
+    );
+    const { activePreview, isPreviewing, isViewerMode } = sessionState;
+    const viewerSceneMode = sessionState.viewerSceneMode;
+    const [mountState, setMountState] = React.useState(() =>
+      createInitialUnifiedViewerMountState({
+        mode,
+        isPreviewing,
+        forceViewerSession: viewerToolSessionActive,
+      }),
+    );
+    const [viewerSceneReady, setViewerSceneReady] = React.useState(!isViewerMode);
+    const effectiveJointAngleState = isPreviewing ? undefined : jointAngleState;
+    const effectiveJointMotionState = isPreviewing ? undefined : jointMotionState;
+    const effectiveSyncJointChangesToApp = isPreviewing ? false : syncJointChangesToApp;
+    const resolvedTheme = useResolvedTheme(theme);
+    const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
+    const visualizerOptionsVisibleRef = React.useRef(showVisualizerOptionsPanel);
+    const viewerUnmountTimerRef = React.useRef<number | null>(null);
+    const visualizerUnmountTimerRef = React.useRef<number | null>(null);
+    const previousIsViewerModeRef = React.useRef(isViewerMode);
+    const viewerPendingLoadScopeRef = React.useRef<string | null>(null);
+    const viewerReleasedLoadScopeRef = React.useRef<string | null>(null);
+    const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
+    const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
+    const optionsVisibleAtPointerDownRef = React.useRef(
+      captureUnifiedViewerOptionsVisibility({
+        showViewerOptions: showOptionsPanel,
+        showVisualizerOptions: showVisualizerOptionsPanel,
+      }),
+    );
 
-  return (
-    <WorkspaceCanvas
-      theme={theme}
-      lang={lang}
-      robotName={activePreview ? activePreview.fileName : (robot.name || 'robot')}
-      containerRef={isViewerMode ? viewerController.containerRef : visualizerController.panel.containerRef}
-      sceneRef={isViewerMode ? undefined : visualizerController.sceneRef}
-      snapshotAction={snapshotAction}
-      onPointerDownCapture={handleWorkspacePointerDownCapture}
-      onPointerMissed={isViewerMode ? handleViewerPointerMissed : handleVisualizerPointerMissed}
-      onMouseMove={isViewerMode ? viewerController.handleMouseMove : visualizerController.panel.handleMouseMove}
-      onMouseUp={isViewerMode ? viewerController.handleMouseUp : visualizerController.panel.handleMouseUp}
-      onMouseLeave={
-        isViewerMode
-          ? viewerController.handleMouseUp
-          : (event) => {
-              void event;
-              visualizerController.panel.handleMouseUp();
-              visualizerController.clearHover();
-            }
+    useEffect(() => {
+      viewerOptionsVisibleRef.current = showOptionsPanel;
+    }, [showOptionsPanel]);
+
+    useEffect(() => {
+      visualizerOptionsVisibleRef.current = showVisualizerOptionsPanel;
+    }, [showVisualizerOptionsPanel]);
+
+    useEffect(() => {
+      setMountState((current) =>
+        resolveUnifiedViewerMountState(current, {
+          mode,
+          isPreviewing,
+          forceViewerSession: viewerToolSessionActive,
+        }),
+      );
+    }, [isPreviewing, mode, viewerToolSessionActive]);
+
+    const visualizerRobot = React.useMemo(
+      () =>
+        resolveUnifiedViewerVisualizerRobot({
+          robot: visualizerRobotInput ?? robot,
+          viewerRobot: robot,
+          assemblyWorkspaceActive,
+        }),
+      [assemblyWorkspaceActive, robot, visualizerRobotInput],
+    );
+    const viewerRobotLinksScopeSignature = React.useMemo(
+      () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
+      [activePreview, robot.links],
+    );
+    const viewerRobotLinksForScope = React.useMemo(
+      () => (activePreview ? undefined : robot.links),
+      [activePreview, viewerRobotLinksScopeSignature],
+    );
+    const visualizerRobotLinksScopeSignature = React.useMemo(
+      () => buildViewerRobotLinksScopeSignature(visualizerRobot.links),
+      [visualizerRobot.links],
+    );
+    const visualizerRobotLinksForScope = React.useMemo(
+      () => visualizerRobot.links,
+      [visualizerRobotLinksScopeSignature],
+    );
+    const {
+      effectiveUrdfContent,
+      effectiveSourceFilePath,
+      effectiveSourceFile,
+      activeViewportFileName,
+      viewerResourceScope,
+      visualizerResourceScope,
+    } = React.useMemo(() => {
+      const next = buildUnifiedViewerResourceScopes({
+        activePreview,
+        urdfContent,
+        sourceFilePath,
+        sourceFile,
+        assets,
+        availableFiles,
+        viewerRobotLinks: viewerRobotLinksForScope,
+        visualizerRobotLinks: visualizerRobotLinksForScope,
+        previousViewerResourceScope: viewerResourceScopeRef.current,
+        previousVisualizerResourceScope: visualizerResourceScopeRef.current,
+      });
+      viewerResourceScopeRef.current = next.viewerResourceScope;
+      visualizerResourceScopeRef.current = next.visualizerResourceScope;
+      return next;
+    }, [
+      activePreview,
+      assets,
+      availableFiles,
+      sourceFile,
+      sourceFilePath,
+      urdfContent,
+      viewerRobotLinksForScope,
+      visualizerRobotLinksForScope,
+    ]);
+
+    React.useEffect(() => {
+      setRegressionViewerResourceScope({
+        sourceFileName: effectiveSourceFile?.name ?? null,
+        sourceFilePath: effectiveSourceFilePath ?? null,
+        assetKeys: Object.keys(viewerResourceScope.assets).sort((left, right) =>
+          left.localeCompare(right),
+        ),
+        availableFileNames: viewerResourceScope.availableFiles
+          .map((file) => file.name)
+          .sort((left, right) => left.localeCompare(right)),
+        signature: viewerResourceScope.signature,
+      });
+
+      return () => {
+        setRegressionViewerResourceScope(null);
+      };
+    }, [effectiveSourceFile?.name, effectiveSourceFilePath, viewerResourceScope]);
+    const sourceSceneAssemblyComponent = React.useMemo(() => {
+      if (!sourceSceneAssemblyComponentId || !assemblyState) {
+        return null;
       }
-      environment={workspaceEnvironment}
-      environmentIntensity={workspaceEnvironmentIntensity}
-      cameraFollowPrimary={isViewerMode}
-      controlLayerKey={controlLayerKey}
-      showWorldOriginAxes={showWorldOriginAxes}
-      orbitControlsProps={
-        isViewerMode
-          ? {
-              minDistance: 0.1,
-              maxDistance: 2000,
-              enabled: !viewerController.isDragging,
-              onStart: () => {
-                viewerController.isOrbitDragging.current = true;
-              },
-              onEnd: () => {
-                viewerController.isOrbitDragging.current = false;
-              },
-            }
-          : undefined
+
+      const component = assemblyState.components[sourceSceneAssemblyComponentId];
+      if (!component || component.visible === false) {
+        return null;
       }
-      background={WORKSPACE_CANVAS_BACKGROUND}
-      contextLostMessage={isViewerMode ? t.webglContextRestoring : undefined}
-      showUsageGuide={showUsageGuidePreference}
-      overlays={
-        activePreview ? (
-          <>
-            <FilePreviewBanner
-              fileName={activePreview.fileName}
-              onClose={() => onClosePreview?.()}
-              lang={lang}
+
+      return component;
+    }, [assemblyState, sourceSceneAssemblyComponentId]);
+    const sourceSceneAssemblyComponentTransform = React.useMemo(
+      () => cloneAssemblyTransform(sourceSceneAssemblyComponent?.transform),
+      [sourceSceneAssemblyComponent?.transform],
+    );
+    const showSourceSceneAssemblyComponentControls = Boolean(
+      sourceSceneAssemblyComponent &&
+      assemblySelection?.type === 'component' &&
+      assemblySelection.id === sourceSceneAssemblyComponent.id,
+    );
+
+    const pendingViewerLoadScopeKey = viewerPendingLoadScopeRef.current;
+    const releasedViewerLoadScopeKey = viewerReleasedLoadScopeRef.current;
+    const {
+      viewerLoadScopeKey,
+      hasPendingViewerHandoffForScope,
+      visualizerAvailableForViewportHandoff,
+      startViewerViewportHandoff,
+      continueViewerViewportHandoff,
+      keepExistingViewerViewportHandoff,
+      displayVisualizerWhileViewerLoads,
+      keepViewerMountedDuringHandoff,
+      viewerVisible,
+      visualizerVisible,
+      shouldRenderViewerScene,
+      shouldRenderVisualizerScene,
+      activeScene,
+      useViewerCanvasPresentation,
+      visualizerRuntimeMode,
+    } = React.useMemo(
+      () =>
+        resolveUnifiedViewerViewportState({
+          mode,
+          isViewerMode,
+          isPreviewing,
+          mountState,
+          previousIsViewerMode: previousIsViewerModeRef.current,
+          viewerSceneReady,
+          activeViewportFileName,
+          viewerReloadKey,
+          pendingViewerLoadScopeKey,
+          releasedViewerLoadScopeKey,
+          documentLoadState,
+          shouldUseVisualizerViewportHandoff: false,
+        }),
+      [
+        activeViewportFileName,
+        documentLoadState,
+        isPreviewing,
+        isViewerMode,
+        mode,
+        mountState,
+        pendingViewerLoadScopeKey,
+        releasedViewerLoadScopeKey,
+        viewerReloadKey,
+        viewerSceneReady,
+      ],
+    );
+
+    const handoffReadyState = React.useMemo(
+      () =>
+        resolveUnifiedViewerHandoffReadyState({
+          isViewerMode,
+          isPreviewing,
+          visualizerAvailableForViewportHandoff,
+          viewerLoadScopeKey,
+          pendingViewerLoadScopeKey,
+          releasedViewerLoadScopeKey,
+          startViewerViewportHandoff,
+          continueViewerViewportHandoff,
+          keepExistingViewerViewportHandoff,
+          hasPendingViewerHandoffForScope,
+        }),
+      [
+        continueViewerViewportHandoff,
+        hasPendingViewerHandoffForScope,
+        isPreviewing,
+        isViewerMode,
+        keepExistingViewerViewportHandoff,
+        pendingViewerLoadScopeKey,
+        releasedViewerLoadScopeKey,
+        startViewerViewportHandoff,
+        viewerLoadScopeKey,
+        visualizerAvailableForViewportHandoff,
+      ],
+    );
+    const viewerGroupRef = React.useRef<ThreeGroup | null>(null);
+    const visualizerGroupRef = React.useRef<ThreeGroup | null>(null);
+    const viewerRaycastCacheRef = React.useRef(
+      new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
+    );
+    const viewerRetainedRobotRef = React.useRef<ThreeObject3D | null>(null);
+    const viewerRetainedRobotReleaseTimerRef = React.useRef<number | null>(null);
+    const visualizerRaycastCacheRef = React.useRef(
+      new WeakMap<RaycastableObject, NonNullable<RaycastableObject['raycast']>>(),
+    );
+    const clearRetainedViewerRobot = React.useCallback(() => {
+      if (viewerRetainedRobotReleaseTimerRef.current !== null) {
+        window.clearTimeout(viewerRetainedRobotReleaseTimerRef.current);
+        viewerRetainedRobotReleaseTimerRef.current = null;
+      }
+
+      viewerRetainedRobotRef.current = null;
+    }, []);
+
+    useEffect(() => {
+      previousIsViewerModeRef.current = isViewerMode;
+    }, [isViewerMode]);
+
+    useEffect(() => {
+      viewerPendingLoadScopeRef.current = handoffReadyState.pendingViewerLoadScopeKey;
+      setViewerSceneReady(handoffReadyState.viewerSceneReady);
+    }, [handoffReadyState.pendingViewerLoadScopeKey, handoffReadyState.viewerSceneReady]);
+
+    // Keep quick mode flips warm, but unmount the inactive scene once the user
+    // settles so hidden useFrame subscriptions stop consuming work in the background.
+    useEffect(() => {
+      if (viewerVisible || keepViewerMountedDuringHandoff) {
+        if (viewerUnmountTimerRef.current !== null) {
+          window.clearTimeout(viewerUnmountTimerRef.current);
+          viewerUnmountTimerRef.current = null;
+        }
+        return;
+      }
+
+      if (!mountState.viewerMounted) {
+        return;
+      }
+
+      viewerUnmountTimerRef.current = window.setTimeout(() => {
+        viewerUnmountTimerRef.current = null;
+        setMountState((current) =>
+          current.viewerMounted ? { ...current, viewerMounted: false } : current,
+        );
+      }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
+
+      return () => {
+        if (viewerUnmountTimerRef.current !== null) {
+          window.clearTimeout(viewerUnmountTimerRef.current);
+          viewerUnmountTimerRef.current = null;
+        }
+      };
+    }, [keepViewerMountedDuringHandoff, mountState.viewerMounted, viewerVisible]);
+
+    useEffect(() => {
+      if (visualizerVisible) {
+        if (visualizerUnmountTimerRef.current !== null) {
+          window.clearTimeout(visualizerUnmountTimerRef.current);
+          visualizerUnmountTimerRef.current = null;
+        }
+        return;
+      }
+
+      if (!mountState.visualizerMounted) {
+        return;
+      }
+
+      visualizerUnmountTimerRef.current = window.setTimeout(() => {
+        visualizerUnmountTimerRef.current = null;
+        setMountState((current) =>
+          current.visualizerMounted ? { ...current, visualizerMounted: false } : current,
+        );
+      }, INACTIVE_SCENE_UNMOUNT_DELAY_MS);
+
+      return () => {
+        if (visualizerUnmountTimerRef.current !== null) {
+          window.clearTimeout(visualizerUnmountTimerRef.current);
+          visualizerUnmountTimerRef.current = null;
+        }
+      };
+    }, [mountState.visualizerMounted, visualizerVisible]);
+
+    useEffect(
+      () => () => {
+        if (viewerUnmountTimerRef.current !== null) {
+          window.clearTimeout(viewerUnmountTimerRef.current);
+          viewerUnmountTimerRef.current = null;
+        }
+        if (visualizerUnmountTimerRef.current !== null) {
+          window.clearTimeout(visualizerUnmountTimerRef.current);
+          visualizerUnmountTimerRef.current = null;
+        }
+        clearRetainedViewerRobot();
+      },
+      [clearRetainedViewerRobot],
+    );
+
+    const visualizerController = useVisualizerController({
+      robot: visualizerRobot,
+      onUpdate,
+      mode: visualizerRuntimeMode,
+      assemblyWorkspaceActive,
+      propShowVisual: showVisual,
+      propSetShowVisual: setShowVisual,
+    });
+    const viewerDefaultToolMode = resolveDefaultViewerToolMode(effectiveSourceFile?.format);
+    const viewerToolModeScopeKey = effectiveSourceFile
+      ? `${effectiveSourceFile.format}:${effectiveSourceFile.name}`
+      : effectiveSourceFilePath
+        ? `inline:${effectiveSourceFilePath}`
+        : 'inline:unified-viewer';
+    const viewerController = useURDFViewerController({
+      onJointChange,
+      syncJointChangesToApp: effectiveSyncJointChangesToApp,
+      showJointPanel,
+      jointAngleState: effectiveJointAngleState,
+      jointMotionState: effectiveJointMotionState,
+      onSelect,
+      onMeshSelect,
+      onHover,
+      selection,
+      showVisual,
+      setShowVisual,
+      onTransformPendingChange,
+      groundPlaneOffset,
+      setGroundPlaneOffset,
+      active: isViewerMode,
+      jointStateScopeKey: resolveViewerJointScopeKey({
+        previewFileName: activePreview?.fileName,
+        sourceFile,
+        sourceFilePath,
+        robotName: robot.name,
+      }),
+      defaultToolMode: viewerDefaultToolMode,
+      toolModeScopeKey: viewerToolModeScopeKey,
+    });
+    const nextForcedViewerSession = resolveUnifiedViewerForcedSessionState({
+      forcedViewerSession,
+      pendingViewerToolMode,
+      viewerToolMode: viewerController.toolMode,
+    });
+
+    useEffect(() => {
+      if (forcedViewerSession === nextForcedViewerSession) {
+        return;
+      }
+
+      setForcedViewerSession(nextForcedViewerSession);
+    }, [forcedViewerSession, nextForcedViewerSession]);
+
+    const handleViewerDocumentLoadEvent = React.useCallback(
+      (event: ViewerDocumentLoadEvent) => {
+        // `ready` means the runtime finished loading, not that the first frame has
+        // already painted. Releasing handoff on `ready` can still expose one blank
+        // frame, so only terminate immediately on hard errors.
+        if (event.status === 'error') {
+          const releaseState = resolveUnifiedViewerLoadReleaseState({
+            pendingViewerLoadScopeKey: viewerPendingLoadScopeRef.current,
+            viewerLoadScopeKey,
+          });
+          if (!releaseState.canReleaseViewerLoadScope) {
+            onDocumentLoadEvent?.(event);
+            return;
+          }
+
+          viewerReleasedLoadScopeRef.current = releaseState.releasedViewerLoadScopeKey;
+          viewerPendingLoadScopeRef.current = releaseState.pendingViewerLoadScopeKey;
+          setViewerSceneReady(releaseState.viewerSceneReady);
+        }
+        onDocumentLoadEvent?.(event);
+      },
+      [onDocumentLoadEvent, viewerLoadScopeKey],
+    );
+    const handleViewerSceneReadyForDisplay = React.useCallback(() => {
+      const releaseState = resolveUnifiedViewerLoadReleaseState({
+        pendingViewerLoadScopeKey: viewerPendingLoadScopeRef.current,
+        viewerLoadScopeKey,
+      });
+      if (!releaseState.canReleaseViewerLoadScope) {
+        return;
+      }
+
+      viewerReleasedLoadScopeRef.current = releaseState.releasedViewerLoadScopeKey;
+      viewerPendingLoadScopeRef.current = releaseState.pendingViewerLoadScopeKey;
+      setViewerSceneReady(releaseState.viewerSceneReady);
+    }, [viewerLoadScopeKey]);
+
+    const controlLayerKey = 'shared';
+    const workspaceEnvironment = 'studio' as const;
+    const workspaceEnvironmentIntensity = useViewerCanvasPresentation
+      ? STUDIO_ENVIRONMENT_INTENSITY.viewer[resolvedTheme]
+      : STUDIO_ENVIRONMENT_INTENSITY.workspace[resolvedTheme];
+    const showWorldOriginAxesPreference = useUIStore((state) => state.viewOptions.showAxes);
+    const showUsageGuidePreference = useUIStore((state) => state.viewOptions.showUsageGuide);
+    const showWorldOriginAxes =
+      showWorldOriginAxesPreference &&
+      (activeScene === 'viewer'
+        ? !viewerController.showOrigins
+        : !visualizerController.state.showOrigin);
+
+    const handleWorkspacePointerDownCapture = React.useCallback(() => {
+      optionsVisibleAtPointerDownRef.current = captureUnifiedViewerOptionsVisibility({
+        showViewerOptions: showOptionsPanel,
+        showVisualizerOptions: showVisualizerOptionsPanel,
+      });
+    }, [showOptionsPanel, showVisualizerOptionsPanel]);
+
+    // Blank-canvas clicks should clear selection, not dismiss an already-open options panel.
+    const restoreOptionsPanelIfNeeded = React.useCallback(
+      (
+        wasVisibleAtPointerDown: boolean,
+        panelVisibleRef: React.MutableRefObject<boolean>,
+        restoreOptionsPanel: ((show: boolean) => void) | undefined,
+      ) => {
+        if (
+          !shouldRestoreUnifiedViewerOptionsPanel({
+            wasVisibleAtPointerDown,
+            isVisibleNow: panelVisibleRef.current,
+            hasRestoreHandler: Boolean(restoreOptionsPanel),
+          }) ||
+          !restoreOptionsPanel
+        ) {
+          return;
+        }
+
+        window.requestAnimationFrame(() => {
+          if (
+            shouldRestoreUnifiedViewerOptionsPanel({
+              wasVisibleAtPointerDown,
+              isVisibleNow: panelVisibleRef.current,
+              hasRestoreHandler: true,
+            })
+          ) {
+            restoreOptionsPanel(true);
+          }
+        });
+      },
+      [],
+    );
+
+    const handleViewerPointerMissed = React.useCallback(() => {
+      viewerController.handlePointerMissed();
+      restoreOptionsPanelIfNeeded(
+        optionsVisibleAtPointerDownRef.current.viewer,
+        viewerOptionsVisibleRef,
+        setShowOptionsPanel,
+      );
+    }, [restoreOptionsPanelIfNeeded, setShowOptionsPanel, viewerController]);
+
+    const handleVisualizerPointerMissed = React.useCallback(() => {
+      visualizerController.clearSelection();
+      restoreOptionsPanelIfNeeded(
+        optionsVisibleAtPointerDownRef.current.visualizer,
+        visualizerOptionsVisibleRef,
+        setShowVisualizerOptionsPanel,
+      );
+    }, [restoreOptionsPanelIfNeeded, setShowVisualizerOptionsPanel, visualizerController]);
+
+    const visualizerSceneSignature = React.useMemo(
+      () =>
+        [
+          visualizerRobot.name,
+          visualizerRobot.rootLinkId,
+          Object.keys(visualizerRobot.links).length,
+          Object.keys(visualizerRobot.joints).length,
+          visualizerRuntimeMode,
+        ].join(':'),
+      [
+        visualizerRobot.joints,
+        visualizerRobot.links,
+        visualizerRobot.name,
+        visualizerRobot.rootLinkId,
+        visualizerRuntimeMode,
+      ],
+    );
+
+    useEffect(() => {
+      const root = viewerGroupRef.current;
+      syncGroupRaycastInteractivity(root, viewerVisible, viewerRaycastCacheRef.current);
+
+      return () => {
+        syncGroupRaycastInteractivity(root, true, viewerRaycastCacheRef.current);
+      };
+    }, [viewerVisible, shouldRenderViewerScene, viewerReloadKey]);
+
+    useEffect(() => {
+      if (
+        viewerVisible ||
+        keepViewerMountedDuringHandoff ||
+        mountState.viewerMounted ||
+        !viewerRetainedRobotRef.current
+      ) {
+        if (viewerRetainedRobotReleaseTimerRef.current !== null) {
+          window.clearTimeout(viewerRetainedRobotReleaseTimerRef.current);
+          viewerRetainedRobotReleaseTimerRef.current = null;
+        }
+        return;
+      }
+
+      // Preserve the last URDF scene only while the viewer is still mounted or
+      // actively handoffing. After the scene has been torn down, release the
+      // retained graph so Three.js resources are no longer pinned by this ref.
+      viewerRetainedRobotReleaseTimerRef.current = window.setTimeout(() => {
+        viewerRetainedRobotReleaseTimerRef.current = null;
+        viewerRetainedRobotRef.current = null;
+      }, 0);
+
+      return () => {
+        if (viewerRetainedRobotReleaseTimerRef.current !== null) {
+          window.clearTimeout(viewerRetainedRobotReleaseTimerRef.current);
+          viewerRetainedRobotReleaseTimerRef.current = null;
+        }
+      };
+    }, [keepViewerMountedDuringHandoff, mountState.viewerMounted, viewerVisible]);
+
+    useEffect(() => {
+      if (effectiveSourceFile?.format === 'usd' || !effectiveSourceFile) {
+        clearRetainedViewerRobot();
+      }
+    }, [clearRetainedViewerRobot, effectiveSourceFile]);
+
+    useEffect(() => {
+      const root = visualizerGroupRef.current;
+      // Hidden R3F groups can still receive pointer raycasts, so explicitly disable
+      // the inactive scene to prevent background hover/selection from leaking across modes.
+      syncGroupRaycastInteractivity(root, visualizerVisible, visualizerRaycastCacheRef.current);
+
+      return () => {
+        syncGroupRaycastInteractivity(root, true, visualizerRaycastCacheRef.current);
+      };
+    }, [shouldRenderVisualizerScene, visualizerSceneSignature, visualizerVisible]);
+
+    useEffect(() => {
+      if (!pendingViewerToolMode || !isViewerMode) {
+        return;
+      }
+
+      setShowToolbar?.(true);
+      viewerController.handleToolModeChange(pendingViewerToolMode);
+      onConsumePendingViewerToolMode?.();
+    }, [
+      isViewerMode,
+      onConsumePendingViewerToolMode,
+      pendingViewerToolMode,
+      setShowToolbar,
+      viewerController,
+    ]);
+
+    return (
+      <WorkspaceCanvas
+        theme={theme}
+        lang={lang}
+        robotName={activePreview ? activePreview.fileName : robot.name || 'robot'}
+        renderKey={`${activeScene}:${displayVisualizerWhileViewerLoads ? 'handoff' : 'stable'}:${viewerReloadKey}`}
+        containerRef={
+          activeScene === 'viewer'
+            ? viewerController.containerRef
+            : visualizerController.panel.containerRef
+        }
+        sceneRef={activeScene === 'viewer' ? undefined : visualizerController.sceneRef}
+        snapshotAction={snapshotAction}
+        onPointerDownCapture={handleWorkspacePointerDownCapture}
+        onPointerMissed={
+          activeScene === 'viewer' ? handleViewerPointerMissed : handleVisualizerPointerMissed
+        }
+        onMouseMove={
+          activeScene === 'viewer'
+            ? viewerController.handleMouseMove
+            : visualizerController.panel.handleMouseMove
+        }
+        onMouseUp={
+          activeScene === 'viewer'
+            ? viewerController.handleMouseUp
+            : visualizerController.panel.handleMouseUp
+        }
+        onMouseLeave={
+          activeScene === 'viewer'
+            ? viewerController.handleMouseUp
+            : (event) => {
+                void event;
+                visualizerController.panel.handleMouseUp();
+                visualizerController.clearHover();
+              }
+        }
+        environment={workspaceEnvironment}
+        environmentIntensity={workspaceEnvironmentIntensity}
+        cameraFollowPrimary={useViewerCanvasPresentation}
+        controlLayerKey={controlLayerKey}
+        showWorldOriginAxes={showWorldOriginAxes}
+        orbitControlsProps={
+          activeScene === 'viewer'
+            ? {
+                minDistance: 0.05,
+                maxDistance: 2000,
+                enabled: !viewerController.isDragging,
+                onStart: () => {
+                  viewerController.isOrbitDragging.current = true;
+                },
+                onEnd: () => {
+                  viewerController.isOrbitDragging.current = false;
+                },
+              }
+            : undefined
+        }
+        background={WORKSPACE_CANVAS_BACKGROUND}
+        contextLostMessage={activeScene === 'viewer' ? t.webglContextRestoring : undefined}
+        showUsageGuide={showUsageGuidePreference}
+        overlays={
+          activePreview ? (
+            <>
+              <FilePreviewBanner
+                fileName={activePreview.fileName}
+                onClose={() => onClosePreview?.()}
+                lang={lang}
+              />
+              {!activePreview.urdfContent && <FilePreviewError lang={lang} />}
+            </>
+          ) : activeScene === 'viewer' ? (
+            <>
+              <URDFViewerPanels
+                lang={lang}
+                controller={viewerController}
+                onUpdate={onUpdate}
+                showToolbar={showToolbar}
+                setShowToolbar={setShowToolbar}
+                showOptionsPanel={showOptionsPanel}
+                setShowOptionsPanel={setShowOptionsPanel}
+                showJointPanel={false} // Handled outside now
+              />
+              {showJointPanel && (
+                <URDFViewerJointsPanel
+                  controller={viewerController}
+                  showJointPanel={true}
+                  setShowJointPanel={setShowJointPanel}
+                  lang={lang}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              <VisualizerPanels
+                lang={lang}
+                showOptionsPanel={showVisualizerOptionsPanel}
+                setShowOptionsPanel={setShowVisualizerOptionsPanel}
+                controller={visualizerController}
+              />
+              {showJointPanel && isViewerMode && (
+                <URDFViewerJointsPanel
+                  controller={viewerController}
+                  showJointPanel={true}
+                  setShowJointPanel={setShowJointPanel}
+                  lang={lang}
+                />
+              )}
+            </>
+          )
+        }
+      >
+        {shouldRenderViewerScene ? (
+          // Keep stable identities for the viewer/visualizer scene roots. When the
+          // viewer root is inserted ahead of an already-mounted visualizer root,
+          // unkeyed sibling groups can be reused by R3F and end up carrying the
+          // wrong `visible` state, which presents as a blank white stage.
+          <group key="viewer-scene-root" ref={viewerGroupRef} visible={viewerVisible}>
+            <ViewerSceneConnector
+              controller={viewerController}
+              active={viewerVisible}
+              activePreview={activePreview}
+              viewerResourceScope={viewerResourceScope}
+              retainedRobot={viewerRetainedRobotRef.current}
+              effectiveSourceFile={effectiveSourceFile}
+              effectiveSourceFilePath={effectiveSourceFilePath}
+              effectiveUrdfContent={effectiveUrdfContent}
+              effectiveSourceFormat={viewerSourceFormat}
+              onRobotDataResolved={onRobotDataResolved}
+              onDocumentLoadEvent={handleViewerDocumentLoadEvent}
+              onSceneReadyForDisplay={handleViewerSceneReadyForDisplay}
+              onRuntimeRobotLoaded={(loadedRobot) => {
+                viewerRetainedRobotRef.current = loadedRobot;
+              }}
+              mode={viewerSceneMode}
+              selection={selection}
+              onHover={onHover}
+              onMeshSelect={onMeshSelect}
+              robot={robot}
+              focusTarget={focusTarget}
+              onCollisionTransformPreview={onCollisionTransformPreview}
+              onCollisionTransform={onCollisionTransform}
+              isMeshPreview={isMeshPreview}
+              viewerReloadKey={viewerReloadKey}
+              sourceSceneAssemblyComponentId={sourceSceneAssemblyComponent?.id ?? null}
+              sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
+              showSourceSceneAssemblyComponentControls={showSourceSceneAssemblyComponentControls}
+              onSourceSceneAssemblyComponentTransform={onComponentTransform}
+              t={t}
             />
-            {!activePreview.urdfContent && <FilePreviewError lang={lang} />}
-          </>
-        ) : isViewerMode ? (
-          <URDFViewerPanels
-            lang={lang}
-            mode={mode as 'detail' | 'hardware'}
-            controller={viewerController}
-            onUpdate={onUpdate}
-            showToolbar={showToolbar}
-            setShowToolbar={setShowToolbar}
-            showOptionsPanel={showOptionsPanel}
-            setShowOptionsPanel={setShowOptionsPanel}
-            showJointPanel={showJointPanel}
-            setShowJointPanel={setShowJointPanel}
-          />
-        ) : (
-          <VisualizerPanels
-            mode={mode}
-            lang={lang}
-            showOptionsPanel={showSkeletonOptionsPanel}
-            setShowOptionsPanel={setShowSkeletonOptionsPanel}
-            controller={visualizerController}
-          />
-        )
-      }
-    >
-      {mountState.viewerMounted ? (
-        <group ref={viewerGroupRef} visible={viewerVisible}>
-          <ViewerSceneConnector
-            controller={viewerController}
-            active={viewerVisible}
-            activePreview={activePreview}
-            viewerResourceScope={viewerResourceScope}
-            effectiveSourceFile={effectiveSourceFile}
-            effectiveSourceFilePath={effectiveSourceFilePath}
-            effectiveUrdfContent={effectiveUrdfContent}
-            onRobotDataResolved={onRobotDataResolved}
-            onDocumentLoadEvent={onDocumentLoadEvent}
-            mode={viewerSceneMode}
-            selection={selection}
-            onHover={onHover}
-            onMeshSelect={onMeshSelect}
-            robot={robot}
-            focusTarget={focusTarget}
-            onCollisionTransformPreview={onCollisionTransformPreview}
-            onCollisionTransform={onCollisionTransform}
-            isMeshPreview={isMeshPreview}
-            viewerReloadKey={viewerReloadKey}
-            t={t}
-          />
-        </group>
-      ) : null}
-      {mountState.visualizerMounted ? (
-        <group ref={visualizerGroupRef} visible={visualizerVisible}>
-          <VisualizerScene
-            robot={robot}
-            onSelect={onSelect}
-            onUpdate={onUpdate}
-            mode={mode}
-            assets={visualizerResourceScope.assets}
-            lang={lang}
-            controller={visualizerController}
-            active={visualizerVisible}
-          />
-        </group>
-      ) : null}
-    </WorkspaceCanvas>
-  );
-});
+          </group>
+        ) : null}
+        {shouldRenderVisualizerScene ? (
+          <group key="visualizer-scene-root" ref={visualizerGroupRef} visible={visualizerVisible}>
+            <VisualizerScene
+              robot={visualizerRobot}
+              onSelect={onSelect}
+              onUpdate={onUpdate}
+              mode={visualizerRuntimeMode}
+              assets={visualizerResourceScope.assets}
+              lang={lang}
+              controller={visualizerController}
+              active={visualizerVisible}
+              onDocumentLoadEvent={!isViewerMode ? handleViewerDocumentLoadEvent : undefined}
+              assemblyState={assemblyState}
+              assemblyWorkspaceActive={assemblyWorkspaceActive}
+              assemblySelection={assemblySelection}
+              sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
+              onAssemblyTransform={onAssemblyTransform}
+              onComponentTransform={onComponentTransform}
+              onBridgeTransform={onBridgeTransform}
+              onTransformPendingChange={onTransformPendingChange}
+            />
+          </group>
+        ) : null}
+      </WorkspaceCanvas>
+    );
+  },
+);

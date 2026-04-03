@@ -43,3 +43,18 @@ test('reports missing required attributes defined by the URDF schema', () => {
 
   assert.ok(errors.some((error) => error.message.includes('missing required "filename" attribute')));
 });
+
+test('accepts optional visual name metadata from the URDF schema', () => {
+  const errors = validateUrdfDocument(`<?xml version="1.0"?>
+<robot name="demo" version="1.1">
+  <link name="base" type="rigid">
+    <visual name="base_visual">
+      <geometry>
+        <box size="1 1 1" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`);
+
+  assert.equal(errors.length, 0);
+});

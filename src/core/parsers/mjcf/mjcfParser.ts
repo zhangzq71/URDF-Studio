@@ -6,9 +6,15 @@
 import * as THREE from 'three';
 import { RobotState, UrdfLink, UrdfJoint, DEFAULT_LINK, DEFAULT_JOINT, GeometryType, JointType, UrdfVisual } from '@/types';
 import { computeLinkWorldMatrices, createRobotClosedLoopConstraint, resolveLinkKey } from '@/core/robot';
-import { looksLikeMJCFDocument, type MJCFCompilerSettings, type MJCFMaterial, type MJCFMesh, type MJCFTexture } from './mjcfUtils';
+import { looksLikeMJCFDocument, type MJCFCompilerSettings, type MJCFHfield, type MJCFMaterial, type MJCFMesh, type MJCFTexture } from './mjcfUtils';
 import { assignMJCFBodyGeomRoles, classifyMJCFGeom } from './mjcfGeomClassification';
-import { normalizeMultiJointBodies, parseMJCFModel, type MJCFModelConnectConstraint } from './mjcfModel';
+import {
+    clearParsedMJCFModelCache,
+    normalizeMultiJointBodies,
+    parseMJCFModel,
+    type MJCFModelConnectConstraint,
+    type ParsedMJCFModel,
+} from './mjcfModel';
 
 interface MJCFBody {
     name: string;
@@ -29,6 +35,7 @@ interface MJCFGeom {
     size?: number[];
     mass?: number;
     mesh?: string;
+    hfield?: string;
     material?: string;
     rgba?: number[];
     hasExplicitRgba?: boolean;
@@ -72,6 +79,27 @@ interface MJCFInertial {
     fullinertia?: number[]; // ixx iyy izz ixy ixz iyz
 }
 
+function buildHfieldDimensions(
+    hfieldAsset: MJCFHfield | undefined,
+    geomSize: number[] | undefined,
+): { x: number; y: number; z: number } {
+    const size = hfieldAsset?.size && hfieldAsset.size.length >= 4
+        ? hfieldAsset.size
+        : (geomSize && geomSize.length >= 4
+            ? [geomSize[0] ?? 1, geomSize[1] ?? 1, geomSize[2] ?? 0, geomSize[3] ?? 0] as [number, number, number, number]
+            : undefined);
+
+    if (!size) {
+        return { x: 1, y: 1, z: 0 };
+    }
+
+    return {
+        x: (size[0] ?? 1) * 2,
+        y: (size[1] ?? 1) * 2,
+        z: (size[2] ?? 0) + (size[3] ?? 0),
+    };
+}
+
 const tempRPYQuaternion = new THREE.Quaternion();
 const tempRPYEuler = new THREE.Euler(0, 0, 0, 'ZYX');
 
@@ -88,13 +116,15 @@ function convertJointType(mjcfType: string, range?: [number, number], limited?: 
 function convertGeomType(mjcfType: string): GeometryType {
     switch (mjcfType.toLowerCase()) {
         case 'box': return GeometryType.BOX;
+        case 'plane': return GeometryType.PLANE;
         case 'sphere': return GeometryType.SPHERE;
         case 'cylinder': return GeometryType.CYLINDER;
         case 'capsule': return GeometryType.CAPSULE;
-        case 'ellipsoid': return GeometryType.SPHERE;
+        case 'ellipsoid': return GeometryType.ELLIPSOID;
+        case 'hfield': return GeometryType.HFIELD;
+        case 'sdf': return GeometryType.SDF;
         case 'mesh': return GeometryType.MESH;
-        case 'plane': return GeometryType.NONE;
-        default: return GeometryType.BOX;
+        default: return GeometryType.NONE;
     }
 }
 
@@ -490,6 +520,7 @@ function toParserBody(sharedBody: any, settings: MJCFCompilerSettings): MJCFBody
             size: geom.size,
             mass: typeof geom.mass === 'number' ? geom.mass : undefined,
             mesh: geom.mesh,
+            hfield: geom.hfield,
             material: geom.material,
             rgba: geom.rgba,
             hasExplicitRgba: geom.hasExplicitRgba,
@@ -609,11 +640,64 @@ function buildClosedLoopConstraints(
     return closedLoopConstraints.length > 0 ? closedLoopConstraints : undefined;
 }
 
+function buildMjcfInspectionContext(parsedModel: ParsedMJCFModel): NonNullable<RobotState['inspectionContext']> {
+    const bodiesWithSites: NonNullable<RobotState['inspectionContext']>['mjcf']['bodiesWithSites'] = [];
+    let siteCount = 0;
+
+    const visitBody = (body: ParsedMJCFModel['worldBody']): void => {
+        const bodySites = body.sites || [];
+        if (bodySites.length > 0) {
+            bodiesWithSites.push({
+                bodyId: body.name,
+                siteCount: bodySites.length,
+                siteNames: bodySites.map((site) => site.name),
+            });
+            siteCount += bodySites.length;
+        }
+
+        (body.children || []).forEach(visitBody);
+    };
+
+    visitBody(parsedModel.worldBody);
+
+    const tendonActuatorNamesByTendon = new Map<string, string[]>();
+    parsedModel.tendonActuators.forEach((actuator) => {
+        if (!actuator.tendon) {
+            return;
+        }
+
+        const names = tendonActuatorNamesByTendon.get(actuator.tendon) || [];
+        names.push(actuator.name);
+        tendonActuatorNamesByTendon.set(actuator.tendon, names);
+    });
+
+    return {
+        sourceFormat: 'mjcf',
+        mjcf: {
+            siteCount,
+            tendonCount: parsedModel.tendonMap.size,
+            tendonActuatorCount: parsedModel.tendonActuators.length,
+            bodiesWithSites,
+            tendons: Array.from(parsedModel.tendonMap.values()).map((tendon) => ({
+                name: tendon.name,
+                type: tendon.type,
+                limited: tendon.limited,
+                range: tendon.range,
+                attachmentRefs: tendon.attachments
+                    .map((attachment) => attachment.ref || attachment.sidesite)
+                    .filter((value): value is string => typeof value === 'string' && value.length > 0),
+                actuatorNames: tendonActuatorNamesByTendon.get(tendon.name) || [],
+            })),
+        },
+    };
+}
+
 // Convert parsed MJCF to RobotState
 function mjcfToRobotState(
     robotName: string,
     bodies: MJCFBody[],
     meshMap: Map<string, MJCFMesh>,
+    hfieldMap: Map<string, MJCFHfield>,
     materialMap: Map<string, MJCFMaterial>,
     textureMap: Map<string, MJCFTexture>,
     actuatorMap: Map<string, MJCFActuator[]>,
@@ -675,12 +759,45 @@ function mjcfToRobotState(
         materials[linkId] = materialState;
     }
 
+    function buildImplicitFixedJointId(parentLinkId: string, childLinkId: string): string {
+        const baseId = `${parentLinkId}_to_${childLinkId}`;
+        let candidate = baseId;
+        let suffix = 2;
+
+        while (joints[candidate]) {
+            candidate = `${baseId}_${suffix++}`;
+        }
+
+        return candidate;
+    }
+
     function processGeometry(
         geom: MJCFGeom,
         linkFrameOffsetLocal: { x: number, y: number, z: number } | null = null,
     ): UrdfVisual {
         const result: UrdfVisual = { ...DEFAULT_LINK.visual };
-        result.type = geom.mesh ? GeometryType.MESH : convertGeomType(geom.type);
+        const convertedType = convertGeomType(geom.type);
+        const hasExplicitPrimitiveParams = Boolean(
+            (geom.size && geom.size.length > 0)
+            || (geom.fromto && geom.fromto.length >= 6),
+        );
+        const isMeshBackedPrimitiveWithoutResolvedFit = Boolean(
+            geom.mesh
+            && !hasExplicitPrimitiveParams
+            && (
+                convertedType === GeometryType.BOX
+                || convertedType === GeometryType.SPHERE
+                || convertedType === GeometryType.PLANE
+                || convertedType === GeometryType.ELLIPSOID
+                || convertedType === GeometryType.CYLINDER
+                || convertedType === GeometryType.CAPSULE
+            ),
+        );
+        result.type = convertedType === GeometryType.NONE && geom.mesh
+            ? GeometryType.MESH
+            : isMeshBackedPrimitiveWithoutResolvedFit
+                ? GeometryType.MESH
+                : convertedType;
 
         if (geom.mesh && meshMap.has(geom.mesh)) {
             result.meshPath = meshMap.get(geom.mesh)!.file;
@@ -695,6 +812,31 @@ function mjcfToRobotState(
             result.dimensions = { x: 1, y: 1, z: 1 };
         }
 
+        if (result.type === GeometryType.HFIELD) {
+            result.assetRef = geom.hfield;
+            const hfieldAsset = geom.hfield ? hfieldMap.get(geom.hfield) : undefined;
+            if (hfieldAsset) {
+                result.mjcfHfield = {
+                    name: hfieldAsset.name,
+                    file: hfieldAsset.file,
+                    contentType: hfieldAsset.contentType,
+                    nrow: hfieldAsset.nrow,
+                    ncol: hfieldAsset.ncol,
+                    size: hfieldAsset.size
+                        ? {
+                            radiusX: hfieldAsset.size[0] ?? 0,
+                            radiusY: hfieldAsset.size[1] ?? 0,
+                            elevationZ: hfieldAsset.size[2] ?? 0,
+                            baseZ: hfieldAsset.size[3] ?? 0,
+                        }
+                        : undefined,
+                    elevation: hfieldAsset.elevation ? [...hfieldAsset.elevation] : undefined,
+                };
+            }
+        } else if (result.type === GeometryType.SDF) {
+            result.assetRef = geom.mesh;
+        }
+
         if (geom.size && geom.size.length > 0) {
             const geomType = geom.type?.toLowerCase() || 'sphere';
             switch (geomType) {
@@ -707,6 +849,13 @@ function mjcfToRobotState(
                     break;
                 case 'sphere':
                     result.dimensions = { x: geom.size[0] || 0.1, y: 0, z: 0 };
+                    break;
+                case 'plane':
+                    result.dimensions = {
+                        x: ((geom.size[0] ?? 1) || 1) * 2,
+                        y: ((geom.size[1] ?? geom.size[0] ?? 1) || 1) * 2,
+                        z: 0,
+                    };
                     break;
                 case 'ellipsoid':
                     result.dimensions = {
@@ -723,15 +872,41 @@ function mjcfToRobotState(
                         z: 0
                     };
                     break;
-                case 'plane':
-                    result.dimensions = { x: 0, y: 0, z: 0 };
+                case 'hfield':
+                    result.dimensions = buildHfieldDimensions(
+                        geom.hfield ? hfieldMap.get(geom.hfield) : undefined,
+                        geom.size,
+                    );
+                    break;
+                case 'sdf':
+                    result.dimensions = {
+                        x: geom.size[0] || 1,
+                        y: (geom.size[1] ?? geom.size[0]) || 1,
+                        z: (geom.size[2] ?? 0) || 0,
+                    };
                     break;
                 default:
                     result.dimensions = { x: geom.size[0] || 0.1, y: 0, z: 0 };
                     break;
             }
         } else if (!geom.mesh) {
-            result.dimensions = { x: 0.05, y: 0, z: 0 };
+            switch (result.type) {
+                case GeometryType.PLANE:
+                    result.dimensions = { x: 2, y: 2, z: 0 };
+                    break;
+                case GeometryType.HFIELD:
+                    result.dimensions = buildHfieldDimensions(
+                        geom.hfield ? hfieldMap.get(geom.hfield) : undefined,
+                        geom.size,
+                    );
+                    break;
+                case GeometryType.SDF:
+                    result.dimensions = { x: 1, y: 1, z: 0 };
+                    break;
+                default:
+                    result.dimensions = { x: 0.05, y: 0, z: 0 };
+                    break;
+            }
         }
 
         const materialState = resolveGeomMaterialState(geom);
@@ -860,7 +1035,8 @@ function mjcfToRobotState(
                 type: colGeo.type,
                 dimensions: colGeo.dimensions,
                 origin: colGeo.origin,
-                meshPath: colGeo.meshPath
+                meshPath: colGeo.meshPath,
+                assetRef: colGeo.assetRef,
             };
             if (colGeo.color) {
                 collision.color = colGeo.color;
@@ -919,7 +1095,7 @@ function mjcfToRobotState(
 
         // Create Main Joint
         if (parentLinkId) {
-            const jointId = mjcfJoint?.name || `fixed_${mainLinkId}`;
+            const jointId = mjcfJoint?.name || buildImplicitFixedJointId(parentLinkId, mainLinkId);
             const jointType = mjcfJoint
                 ? convertJointType(mjcfJoint.type, mjcfJoint.range, mjcfJoint.limited)
                 : JointType.FIXED;
@@ -979,6 +1155,7 @@ function mjcfToRobotState(
                     dimensions: colGeo.dimensions,
                     origin: colGeo.origin,
                     meshPath: colGeo.meshPath,
+                    assetRef: colGeo.assetRef,
                 };
 
                 if (colGeo.color) {
@@ -993,7 +1170,7 @@ function mjcfToRobotState(
             }
 
             const subLinkId = `${mainLinkId}_geom_${virtualLinkIndex++}`;
-            const subJointId = `fixed_${subLinkId}`;
+            const subJointId = buildImplicitFixedJointId(mainLinkId, subLinkId);
 
             // Virtual Link Visual
             let subVisual = { ...DEFAULT_LINK.visual };
@@ -1013,7 +1190,8 @@ function mjcfToRobotState(
                     type: colGeo.type,
                     dimensions: colGeo.dimensions,
                     origin: colGeo.origin,
-                    meshPath: colGeo.meshPath
+                    meshPath: colGeo.meshPath,
+                    assetRef: colGeo.assetRef,
                 };
                 if (colGeo.color) {
                     subCollision.color = colGeo.color;
@@ -1072,28 +1250,37 @@ function mjcfToRobotState(
 }
 
 export function parseMJCF(xmlContent: string): RobotState | null {
-    const parsedModel = parseMJCFModel(xmlContent);
-    if (!parsedModel) {
-        return null;
+    try {
+        const parsedModel = parseMJCFModel(xmlContent);
+        if (!parsedModel) {
+            return null;
+        }
+
+        const parserModelWorldBody = normalizeMultiJointBodies(parsedModel.worldBody);
+        const worldBody = toParserBody(parserModelWorldBody, parsedModel.compilerSettings);
+        const rootBodies = shouldPreserveSyntheticWorldRoot(worldBody)
+            ? [worldBody]
+            : worldBody.children;
+
+        const robot = mjcfToRobotState(
+            parsedModel.modelName,
+            rootBodies,
+            parsedModel.meshMap,
+            parsedModel.hfieldMap,
+            parsedModel.materialMap,
+            parsedModel.textureMap,
+            toParserActuatorMap(parsedModel.actuatorMap),
+        );
+
+        robot.closedLoopConstraints = buildClosedLoopConstraints(robot, parsedModel.connectConstraints);
+        robot.inspectionContext = buildMjcfInspectionContext(parsedModel);
+        return robot;
+    } finally {
+        // The parsed model cache is only needed within a single top-level parse
+        // call; retaining entire MJCF model trees across file switches keeps
+        // old robots alive in memory for no runtime benefit.
+        clearParsedMJCFModelCache(xmlContent);
     }
-
-    const parserModelWorldBody = normalizeMultiJointBodies(parsedModel.worldBody);
-    const worldBody = toParserBody(parserModelWorldBody, parsedModel.compilerSettings);
-    const rootBodies = shouldPreserveSyntheticWorldRoot(worldBody)
-        ? [worldBody]
-        : worldBody.children;
-
-    const robot = mjcfToRobotState(
-        parsedModel.modelName,
-        rootBodies,
-        parsedModel.meshMap,
-        parsedModel.materialMap,
-        parsedModel.textureMap,
-        toParserActuatorMap(parsedModel.actuatorMap),
-    );
-
-    robot.closedLoopConstraints = buildClosedLoopConstraints(robot, parsedModel.connectConstraints);
-    return robot;
 }
 
 export function isMJCF(xmlContent: string): boolean {

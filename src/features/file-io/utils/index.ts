@@ -36,12 +36,27 @@ export {
   remapImportedPath,
 } from './libraryImportPathCollisions';
 
-export { exportProject } from './projectExport';
+export {
+  exportProject,
+  exportProjectWithWorker,
+} from './projectExport';
 export { importProject } from './projectImport';
 export { prepareMjcfMeshExportAssets } from './mjcfMeshExport';
-export { exportRobotToUsd } from './usdExport';
+export {
+  disposeUsdExportWorker,
+  exportRobotToUsd,
+  exportRobotToUsdWithWorker,
+  assertUsdExportWorkerSupport,
+  getUsdExportWorkerUnsupportedMeshPaths,
+  isUsdExportWorkerSupportedMeshPath,
+  USD_EXPORT_WORKER_SUPPORTED_MESH_EXTENSIONS,
+} from './usdExport';
 export type { ImportResult } from './projectImport';
-export type { ProjectManifest } from './projectExport';
+export type {
+  ProjectManifest,
+  ProjectExportProgress,
+  ProjectExportProgressPhase,
+} from './projectExport';
 export type {
   ExportRobotToUsdOptions,
   ExportRobotToUsdPayload,

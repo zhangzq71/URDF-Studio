@@ -1,244 +1,254 @@
 /**
- * Generate PDF from HTML using browser's print functionality
- * This ensures proper Chinese character support without needing external fonts
+ * Generate PDF from HTML without using the browser print dialog.
+ * This avoids default browser headers/footers and keeps the exported report stable.
  */
 
-interface PrintElementAsPdfOptions {
+import type html2canvas from 'html2canvas'
+import type jsPDF from 'jspdf'
+
+interface ExportElementAsPdfOptions {
   element: HTMLElement
   title?: string
-  bodyStyle?: string
-  extraCss?: string
 }
 
-function clonePrintableHead(targetDocument: Document) {
-  const headNodes = Array.from(document.head.children)
-  headNodes.forEach(node => {
-    if (node instanceof HTMLTitleElement) return
-    targetDocument.head.appendChild(node.cloneNode(true))
+interface CanvasLike {
+  width: number
+  height: number
+  getContext(contextId: '2d'): Pick<CanvasRenderingContext2D, 'drawImage' | 'fillRect' | 'fillStyle'> | null
+  toDataURL(type?: string): string
+}
+
+interface PdfDocumentLike {
+  internal: {
+    pageSize: {
+      getWidth(): number
+      getHeight(): number
+    }
+  }
+  addImage(
+    imageData: string,
+    format: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    alias?: string,
+    compression?: string
+  ): void
+  addPage(): void
+  save(fileName: string): void
+  setProperties?(properties: Record<string, string>): void
+}
+
+type Html2CanvasFn = typeof html2canvas
+type JsPdfConstructor = typeof jsPDF
+
+interface PdfGenerationDeps {
+  html2canvas: Html2CanvasFn
+  jsPDF: JsPdfConstructor
+}
+
+type CanvasFactory = (width: number, height: number, document: Document) => CanvasLike
+
+let testDepsLoader: (() => Promise<PdfGenerationDeps>) | null = null
+let testCanvasFactory: CanvasFactory | null = null
+
+async function loadPdfGenerationDeps(): Promise<PdfGenerationDeps> {
+  if (testDepsLoader) {
+    return testDepsLoader()
+  }
+
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
+    import('jspdf')
+  ])
+
+  return { html2canvas, jsPDF }
+}
+
+function createCanvas(width: number, height: number, document: Document): CanvasLike {
+  if (testCanvasFactory) {
+    return testCanvasFactory(width, height, document)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return canvas
+}
+
+function waitForAnimationFrame(document: Document): Promise<void> {
+  const frameWindow = document.defaultView
+  if (!frameWindow?.requestAnimationFrame) {
+    return new Promise(resolve => setTimeout(resolve, 0))
+  }
+
+  return new Promise(resolve => {
+    frameWindow.requestAnimationFrame(() => resolve())
   })
+}
+
+async function waitForStablePdfLayout(document: Document): Promise<void> {
+  const fonts = document.fonts
+  if (fonts?.ready) {
+    try {
+      await fonts.ready
+    } catch {
+      // Ignore font readiness failures and continue with the current layout.
+    }
+  }
+
+  await waitForAnimationFrame(document)
+  await waitForAnimationFrame(document)
+}
+
+function getCaptureDimensions(element: HTMLElement) {
+  const rect = element.getBoundingClientRect()
+  return {
+    width: Math.max(1, Math.ceil(element.scrollWidth || rect.width)),
+    height: Math.max(1, Math.ceil(element.scrollHeight || rect.height))
+  }
+}
+
+function createCanvasPageSlice(
+  sourceCanvas: CanvasLike,
+  startY: number,
+  sliceHeight: number,
+  document: Document
+): CanvasLike {
+  const pageCanvas = createCanvas(sourceCanvas.width, sliceHeight, document)
+  const context = pageCanvas.getContext('2d')
+
+  if (!context) {
+    throw new Error('Unable to create PDF page canvas')
+  }
+
+  context.fillStyle = '#ffffff'
+  context.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
+  context.drawImage(
+    sourceCanvas as unknown as CanvasImageSource,
+    0,
+    startY,
+    sourceCanvas.width,
+    sliceHeight,
+    0,
+    0,
+    pageCanvas.width,
+    pageCanvas.height
+  )
+
+  return pageCanvas
 }
 
 export async function printElementAsPdf({
   element,
-  title,
-  bodyStyle,
-  extraCss
-}: PrintElementAsPdfOptions): Promise<void> {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('aria-hidden', 'true')
-  iframe.style.cssText = `
-    position: fixed;
-    width: 0;
-    height: 0;
-    right: 0;
-    bottom: 0;
-    border: 0;
-    visibility: hidden;
-    pointer-events: none;
-  `
+  title
+}: ExportElementAsPdfOptions): Promise<void> {
+  const document = element.ownerDocument
+  const view = document.defaultView
 
-  document.body.appendChild(iframe)
-
-  const iframeWindow = iframe.contentWindow
-  const iframeDocument = iframe.contentDocument
-
-  if (!iframeWindow || !iframeDocument) {
-    iframe.remove()
-    throw new Error('Unable to create print document')
+  if (!document || !view) {
+    throw new Error('Unable to access document context for PDF export')
   }
 
-  iframeDocument.open()
-  iframeDocument.write('<!doctype html><html><head></head><body></body></html>')
-  iframeDocument.close()
+  await waitForStablePdfLayout(document)
 
-  clonePrintableHead(iframeDocument)
+  const { html2canvas, jsPDF } = await loadPdfGenerationDeps()
+  const { width, height } = getCaptureDimensions(element)
+  const devicePixelRatio = view.devicePixelRatio || 1
+  const scale = Math.min(Math.max(devicePixelRatio, 1), 2)
 
-  if (title) {
-    iframeDocument.title = title
-    const titleElement = iframeDocument.createElement('title')
-    titleElement.textContent = title
-    iframeDocument.head.appendChild(titleElement)
-  }
-
-  const printStyle = iframeDocument.createElement('style')
-  printStyle.textContent = `
-    @page {
-      size: A4;
-      margin: 10mm;
-    }
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #ffffff;
-    }
-    ${bodyStyle ? `body { ${bodyStyle} }` : ''}
-    ${extraCss ?? ''}
-  `
-  iframeDocument.head.appendChild(printStyle)
-
-  iframeDocument.body.appendChild(element.cloneNode(true))
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false
-    let printStarted = false
-
-    const cleanup = () => {
-      iframeWindow.removeEventListener('afterprint', handleAfterPrint)
-      iframe.remove()
-    }
-
-    const finalize = (error?: Error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (error) {
-        reject(error)
-        return
-      }
-      resolve()
-    }
-
-    const handleAfterPrint = () => finalize()
-
-    iframeWindow.addEventListener('afterprint', handleAfterPrint, { once: true })
-
-    const startPrint = () => {
-      if (settled || printStarted) return
-      printStarted = true
-
-      try {
-        iframeWindow.focus()
-        iframeWindow.print()
-      } catch (error) {
-        finalize(error instanceof Error ? error : new Error('Print failed'))
-        return
-      }
-
-      // Some browsers do not reliably fire afterprint when the dialog is cancelled.
-      setTimeout(() => finalize(), 1000)
-    }
-
-    iframe.onload = () => {
-      setTimeout(startPrint, 100)
-    }
-
-    // srcdoc-like manual write can complete before onload is attached, so keep a fallback.
-    setTimeout(startPrint, 300)
+  const sourceCanvas = await html2canvas(element, {
+    backgroundColor: '#ffffff',
+    logging: false,
+    scale,
+    useCORS: true,
+    width,
+    height,
+    windowWidth: width,
+    windowHeight: height,
+    scrollX: 0,
+    scrollY: 0
   })
+
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+    compress: true
+  }) as PdfDocumentLike
+
+  const pageWidthMm = pdf.internal.pageSize.getWidth()
+  const pageHeightMm = pdf.internal.pageSize.getHeight()
+  const pixelsPerMm = sourceCanvas.width / pageWidthMm
+  const pageHeightPx = Math.max(1, Math.floor(pageHeightMm * pixelsPerMm))
+
+  if (title && pdf.setProperties) {
+    pdf.setProperties({ title })
+  }
+
+  let offsetY = 0
+  let pageIndex = 0
+
+  while (offsetY < sourceCanvas.height) {
+    const sliceHeight = Math.min(pageHeightPx, sourceCanvas.height - offsetY)
+    const pageCanvas = createCanvasPageSlice(sourceCanvas, offsetY, sliceHeight, document)
+    const sliceHeightMm = sliceHeight / pixelsPerMm
+
+    if (pageIndex > 0) {
+      pdf.addPage()
+    }
+
+    pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', 0, 0, pageWidthMm, sliceHeightMm, undefined, 'FAST')
+
+    offsetY += sliceHeight
+    pageIndex += 1
+  }
+
+  pdf.save(title || 'report.pdf')
 }
 
 export async function generatePdfFromHtml(
   elementId: string,
   title?: string
 ): Promise<void> {
-  const element = document.getElementById(elementId);
+  const element = document.getElementById(elementId)
   if (!element) {
-    throw new Error(`Element with id "${elementId}" not found`);
+    throw new Error(`Element with id "${elementId}" not found`)
   }
+
   await printElementAsPdf({
     element,
-    title,
-    bodyStyle: `
-      display: flex;
-      justify-content: center;
-    `,
-    extraCss: `
-      body > * {
-        width: 100%;
-        max-width: 210mm;
-        padding: 20mm;
-        box-sizing: border-box;
-      }
-    `
+    title
   })
 }
 
 /**
- * Alternative: Generate PDF using jsPDF with autoTable plugin
- * This requires jsPDF to have Chinese font support
+ * Legacy compatibility wrapper for older callers.
+ * The current report flow renders HTML first and then exports it through `printElementAsPdf`.
  */
 export async function generatePdfWithJsPDF(
-  inspectionReport: any,
-  robotName: string,
+  _inspectionReport: unknown,
+  _robotName: string,
   fileName: string
 ): Promise<void> {
-  // This is a fallback implementation that uses html2canvas + jsPDF
-  // For now, we'll use the print-based approach which is more reliable for Chinese
+  const element = document.getElementById('inspection-report-pdf')
+  if (!element) {
+    throw new Error('Inspection report element not found')
+  }
 
-  // Import jsPDF dynamically
-  const { default: jsPDF } = await import('jspdf');
+  await printElementAsPdf({
+    element,
+    title: fileName
+  })
+}
 
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
+export function __setPdfGenerationDepsLoaderForTests(
+  loader: (() => Promise<PdfGenerationDeps>) | null
+): void {
+  testDepsLoader = loader
+}
 
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 20;
-  let yPos = margin;
-
-  // Title (English only for jsPDF - fallback)
-  doc.setFontSize(20);
-  doc.setTextColor(50, 50, 50);
-  doc.text('URDF Robot Inspection Report', pageWidth / 2, yPos, { align: 'center' });
-  yPos += 15;
-
-  // Robot name
-  doc.setFontSize(14);
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Robot Name: ${robotName}`, margin, yPos);
-  yPos += 10;
-
-  // Date
-  const now = new Date();
-  const dateStr = now.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-  doc.text(`Inspection Date: ${dateStr}`, margin, yPos);
-  yPos += 15;
-
-  // Overall score
-  const overallScore = inspectionReport.overallScore ?? 0;
-  const maxScore = inspectionReport.maxScore ?? 100;
-  doc.setFontSize(16);
-  doc.setTextColor(50, 50, 50);
-  doc.text(`Overall Score: ${overallScore.toFixed(1)}/${maxScore}`, margin, yPos);
-  yPos += 10;
-
-  // Progress bar
-  const scorePercentage = (overallScore / maxScore) * 100;
-  const barWidth = pageWidth - 2 * margin;
-  const barHeight = 5;
-  doc.setFillColor(200, 200, 200);
-  doc.rect(margin, yPos, barWidth, barHeight, 'F');
-
-  let barColor: [number, number, number] = [239, 68, 68]; // red
-  if (scorePercentage >= 90) barColor = [34, 197, 94]; // green
-  else if (scorePercentage >= 60) barColor = [234, 179, 8]; // yellow
-  doc.setFillColor(...barColor);
-  doc.rect(margin, yPos, (barWidth * scorePercentage) / 100, barHeight, 'F');
-  yPos += 15;
-
-  // Summary
-  doc.setFontSize(12);
-  doc.setTextColor(50, 50, 50);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Inspection Summary', margin, yPos);
-  yPos += 8;
-  doc.setFont('helvetica', 'normal');
-  const summaryLines = doc.splitTextToSize(inspectionReport.summary, pageWidth - 2 * margin);
-  doc.text(summaryLines, margin, yPos);
-  yPos += summaryLines.length * 6 + 10;
-
-  // Issues
-  doc.setFontSize(10);
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Total Issues: ${inspectionReport.issues.length}`, margin, yPos);
-
-  doc.save(fileName);
+export function __setPdfCanvasFactoryForTests(factory: CanvasFactory | null): void {
+  testCanvasFactory = factory
 }

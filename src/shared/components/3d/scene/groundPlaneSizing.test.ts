@@ -43,6 +43,19 @@ test('resolveGroundPlaneLayout does not enlarge until the model exceeds the defa
   assert.equal(layout.size, DEFAULT_GROUND_PLANE_SIZE);
 });
 
+test('resolveGroundPlaneLayout recenters the ground plane when the model footprint is far from the world origin', () => {
+  const bounds = new THREE.Box3(
+    new THREE.Vector3(26, 41, -1),
+    new THREE.Vector3(34, 49, 2),
+  );
+
+  const layout = resolveGroundPlaneLayout(bounds);
+
+  assert.equal(layout.centerX, 30);
+  assert.equal(layout.centerY, 46);
+  assert.equal(layout.size, 146);
+});
+
 test('resolveGroundPlaneLayout caps oversized scenes', () => {
   const bounds = new THREE.Box3(
     new THREE.Vector3(-200, -200, 0),

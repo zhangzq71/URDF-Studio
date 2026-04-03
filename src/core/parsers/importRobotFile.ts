@@ -32,6 +32,7 @@ export type RobotImportResult =
     status: 'error';
     format: RobotFile['format'];
     reason: RobotImportErrorReason;
+    message?: string;
   };
 
 function toRobotData(robot: RobotState | RobotData): RobotData {
@@ -137,11 +138,29 @@ function createReadyImportResult(
   };
 }
 
-function createErrorImportResult(file: RobotFile, reason: RobotImportErrorReason): RobotImportResult {
+function buildImportFailureMessage(
+  file: RobotFile,
+  detail?: string | null,
+): string {
+  const baseMessage = `Failed to import ${file.format.toUpperCase()} file "${file.name}".`;
+  const trimmedDetail = detail?.trim();
+  if (!trimmedDetail) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} ${trimmedDetail}`;
+}
+
+function createErrorImportResult(
+  file: RobotFile,
+  reason: RobotImportErrorReason,
+  message?: string,
+): RobotImportResult {
   return {
     status: 'error',
     format: file.format,
     reason,
+    message,
   };
 }
 
@@ -210,6 +229,20 @@ export function isSourceOnlyXacroDocument(urdfContent: string): boolean {
   return /<robot\b/i.test(urdfContent) && !/<link\b/i.test(urdfContent);
 }
 
+function isSourceOnlyMJCFDocument(xmlContent: string): boolean {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlContent, 'text/xml');
+    if (doc.querySelector('parsererror')) {
+      return false;
+    }
+
+    return Boolean(doc.querySelector('mujoco')) && !doc.querySelector('worldbody');
+  } catch {
+    return false;
+  }
+}
+
 export function resolveRobotFileData(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
@@ -227,14 +260,22 @@ export function resolveRobotFileData(
         const parsed = parseURDF(file.content);
         return parsed
           ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed');
+          : createErrorImportResult(
+            file,
+            'parse_failed',
+            buildImportFailureMessage(file),
+          );
       }
       case 'mjcf': {
         const resolved = resolveMJCFSource(file, availableFiles);
         const parsed = parseMJCF(resolved.content);
         return parsed
           ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed');
+          : createErrorImportResult(
+            file,
+            isSourceOnlyMJCFDocument(resolved.content) ? 'source_only_fragment' : 'parse_failed',
+            buildImportFailureMessage(file),
+          );
       }
       case 'sdf': {
         const parsed = parseSDF(file.content, {
@@ -243,7 +284,11 @@ export function resolveRobotFileData(
         });
         return parsed
           ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed');
+          : createErrorImportResult(
+            file,
+            'parse_failed',
+            buildImportFailureMessage(file),
+          );
       }
       case 'usd':
         return usdRobotData
@@ -291,15 +336,27 @@ export function resolveRobotFileData(
         return createErrorImportResult(
           file,
           isSourceOnlyXacroDocument(urdfContent) ? 'source_only_fragment' : 'parse_failed',
+          buildImportFailureMessage(file),
         );
       }
       case 'mesh':
         return createReadyImportResult(file, createMeshRobotData(file));
       default:
-        return createErrorImportResult(file, 'unsupported_format');
+        return createErrorImportResult(
+          file,
+          'unsupported_format',
+          buildImportFailureMessage(file, 'Unsupported robot file format.'),
+        );
     }
   } catch (error) {
-    console.error('[importRobotFile] Failed to resolve robot file:', error);
-    return createErrorImportResult(file, 'parse_failed');
+    console.error(`[importRobotFile] Failed to resolve robot file "${file.name}":`, error);
+    return createErrorImportResult(
+      file,
+      'parse_failed',
+      buildImportFailureMessage(
+        file,
+        error instanceof Error ? error.message : 'Unexpected import error.',
+      ),
+    );
   }
 }

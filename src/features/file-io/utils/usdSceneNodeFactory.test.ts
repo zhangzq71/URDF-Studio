@@ -37,6 +37,20 @@ const createUvObjBlob = () => {
   ].join('\n')], { type: 'text/plain;charset=utf-8' });
 };
 
+const createTriangleStlBlob = () => {
+  return new Blob([[
+    'solid triangle',
+    'facet normal 0 0 1',
+    'outer loop',
+    'vertex 0 0 0',
+    'vertex 1 0 0',
+    'vertex 0 1 0',
+    'endloop',
+    'endfacet',
+    'endsolid triangle',
+  ].join('\n')], { type: 'model/stl' });
+};
+
 const createTriangleGltfBlob = () => {
   const positions = new Float32Array([
     0, 0, 0,
@@ -152,6 +166,35 @@ test('buildUsdVisualSceneNode loads mesh visuals with anchor transforms and expl
     assert.ok(mesh.material instanceof THREE.MeshStandardMaterial);
     assert.equal(mesh.material.side, THREE.FrontSide);
   } finally {
+    tempObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  }
+});
+
+test('buildUsdVisualSceneNode parses STL meshes inline when browser Worker support is unavailable', async () => {
+  const meshPath = 'meshes/triangle.stl';
+  const { registry, tempObjectUrls } = createUsdAssetRegistry({}, new Map([[meshPath, createTriangleStlBlob()]]));
+  const workerSnapshot = (globalThis as typeof globalThis & { Worker?: typeof Worker }).Worker;
+
+  delete (globalThis as typeof globalThis & { Worker?: typeof Worker }).Worker;
+
+  try {
+    const node = await buildUsdVisualSceneNode({
+      visual: createMeshVisual(meshPath),
+      role: 'visual',
+      registry,
+      materialState: { color: '#12ab34' },
+    });
+
+    const mesh = node?.getObjectByProperty('isMesh', true);
+    assert.ok(mesh instanceof THREE.Mesh);
+    assert.equal(mesh.geometry.getAttribute('position')?.count, 3);
+    assert.equal(mesh.userData.usdDisplayColor, '#12ab34');
+  } finally {
+    if (workerSnapshot) {
+      (globalThis as typeof globalThis & { Worker?: typeof Worker }).Worker = workerSnapshot;
+    } else {
+      delete (globalThis as typeof globalThis & { Worker?: typeof Worker }).Worker;
+    }
     tempObjectUrls.forEach((url) => URL.revokeObjectURL(url));
   }
 });

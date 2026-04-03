@@ -1,4 +1,13 @@
-import { ChevronDown, ChevronRight, Eye, EyeOff, FileCode, Plus, Shapes, Shield } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  FileCode,
+  Plus,
+  Shapes,
+  Shield,
+} from 'lucide-react';
 import { AssemblyTreeView } from './AssemblyTreeView';
 import { TreeNode } from './TreeNode';
 import type { TreeEditorTranslations } from './treeEditorTypes';
@@ -21,7 +30,11 @@ interface TreeEditorStructureSectionProps {
   onRemoveComponent?: (id: string) => void;
   onRenameComponent?: (id: string, name: string) => void;
   onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
-  onSelectGeometry?: (linkId: string, subType: 'visual' | 'collision', objectIndex?: number) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+  ) => void;
   onToggleComponentVisibility: (componentId: string) => void;
   onToggleGeometryDetails: () => void;
   onToggleOpen: () => void;
@@ -70,7 +83,10 @@ export function TreeEditorStructureSection({
   treeRootLinkIds,
 }: TreeEditorStructureSectionProps) {
   return (
-    <div className="flex flex-col min-h-0 transition-all flex-1" style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}>
+    <div
+      className="flex flex-col min-h-0 transition-all flex-1"
+      style={{ flex: isOpen ? '1 1 0%' : '0 0 auto' }}
+    >
       <div
         className="flex items-center justify-between px-3 py-2 bg-element-bg dark:bg-element-bg cursor-pointer select-none border-b border-border-black dark:border-border-black"
         onClick={onToggleOpen}
@@ -81,7 +97,7 @@ export function TreeEditorStructureSection({
           ) : (
             <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
           )}
-          <span className="shrink-0 text-xs font-bold text-text-secondary uppercase tracking-wider">
+          <span className="shrink-0 text-xs font-semibold text-text-secondary tracking-[0.02em]">
             {isAssemblyView ? t.assemblyTree : t.structureTree}
           </span>
           {showStructureFilePath && (
@@ -116,15 +132,15 @@ export function TreeEditorStructureSection({
             <Shield size={11} />
           </button>
 
-                {mode === 'skeleton' && sidebarTab === 'structure' && (
-                  <button
-                    className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAddSelectedOrRootChild();
-                    }}
-                    title={t.addChildLink}
-                  >
+          {sidebarTab === 'structure' && (
+            <button
+              className="p-1 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-md transition-colors shadow-sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAddSelectedOrRootChild();
+              }}
+              title={t.addChildLink}
+            >
               <Plus className="w-3.5 h-3.5" />
             </button>
           )}

@@ -7,11 +7,19 @@ type ViewerSelection = {
 };
 
 type ViewerJointLike = {
+  childLinkId?: string;
+  childName?: string;
   name?: string;
+  type?: string;
+  jointType?: string;
   child?: {
     name?: string;
   };
 };
+
+function resolveViewerJointChildLinkIdentity(joint: ViewerJointLike | null | undefined): string | null {
+  return joint?.child?.name ?? joint?.childLinkId ?? joint?.childName ?? null;
+}
 
 export function resolveActiveViewerJointKeyFromSelection(
   joints: Record<string, ViewerJointLike> | null | undefined,
@@ -28,7 +36,7 @@ export function resolveActiveViewerJointKeyFromSelection(
   }
 
   const resolvedEntry = Object.entries(joints).find(([, joint]) =>
-    joint?.child?.name === selection.id && isSingleDofJoint(joint)
+    resolveViewerJointChildLinkIdentity(joint) === selection.id && isSingleDofJoint(joint)
   );
 
   return resolvedEntry?.[0] ?? null;

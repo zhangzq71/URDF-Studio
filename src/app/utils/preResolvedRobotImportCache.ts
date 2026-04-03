@@ -46,6 +46,18 @@ export function primePreResolvedRobotImports(entries: readonly PreResolvedImport
 export function consumePreResolvedRobotImport(
   file: Pick<RobotFile, 'name' | 'format' | 'content'>,
 ): RobotImportResult | null {
+  const cachedEntry = peekPreResolvedRobotImport(file);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  preResolvedRobotImportCache.delete(buildCacheKey(file));
+  return cachedEntry;
+}
+
+export function peekPreResolvedRobotImport(
+  file: Pick<RobotFile, 'name' | 'format' | 'content'>,
+): RobotImportResult | null {
   const cacheKey = buildCacheKey(file);
   const cachedEntry = preResolvedRobotImportCache.get(cacheKey) ?? null;
   if (!cachedEntry) {
@@ -57,7 +69,6 @@ export function consumePreResolvedRobotImport(
     return null;
   }
 
-  preResolvedRobotImportCache.delete(cacheKey);
   return cachedEntry.result;
 }
 

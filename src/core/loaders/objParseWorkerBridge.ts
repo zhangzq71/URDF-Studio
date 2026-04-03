@@ -1,4 +1,8 @@
-import { createObjectFromSerializedObjData, parseObjModelData, type SerializedObjModelData } from './objModelData';
+import {
+    createObjectFromSerializedObjData,
+    parseObjModelData,
+    type SerializedObjModelData,
+} from './objModelData';
 import type { ObjParseWorkerResponse, ParseObjWorkerRequest } from './objParseWorkerProtocol';
 
 interface WorkerLike {
@@ -27,19 +31,20 @@ interface CreateObjParseWorkerPoolClientOptions {
 }
 
 interface ObjParseWorkerPoolClient {
+    clearCache: () => void;
     dispose: (rejectPendingWith?: unknown) => void;
     load: (assetUrl: string) => Promise<SerializedObjModelData>;
 }
 
 const DEFAULT_CACHE_LIMIT = 24;
 
-async function fetchAssetText(assetUrl: string): Promise<string> {
+async function loadSerializedObjModelDataInline(assetUrl: string): Promise<SerializedObjModelData> {
     const response = await fetch(assetUrl);
     if (!response.ok) {
         throw new Error(`Failed to fetch OBJ asset: ${response.status} ${response.statusText}`);
     }
 
-    return await response.text();
+    return parseObjModelData(await response.text());
 }
 
 function createWorkerError(event: ErrorEvent | { error?: unknown; message?: string }): Error {
@@ -50,115 +55,22 @@ function createWorkerError(event: ErrorEvent | { error?: unknown; message?: stri
     return new Error(event.message || 'OBJ parse worker failed');
 }
 
-function invokeWorkerListener(
-    listener: EventListenerOrEventListenerObject,
-    event: Event,
-): void {
-    if (typeof listener === 'function') {
-        listener(event);
-        return;
-    }
-
-    listener.handleEvent(event);
-}
-
-function createInlineObjParseWorker(): WorkerLike {
-    const messageListeners = new Set<EventListenerOrEventListenerObject>();
-    const errorListeners = new Set<EventListenerOrEventListenerObject>();
-    let terminated = false;
-
-    const emitMessage = (payload: ObjParseWorkerResponse): void => {
-        const event = { data: payload } as MessageEvent<ObjParseWorkerResponse>;
-        messageListeners.forEach((listener) => {
-            invokeWorkerListener(listener, event as unknown as Event);
-        });
-    };
-
-    const emitError = (requestId: number, error: unknown): void => {
-        const workerError = createWorkerError({
-            error,
-            message: error instanceof Error ? error.message : 'OBJ parse worker failed',
-        });
-        emitMessage({
-            type: 'parse-obj-error',
-            requestId,
-            error: workerError.message,
-        });
-    };
-
-    return {
-        addEventListener(type, listener) {
-            if (type === 'message') {
-                messageListeners.add(listener);
-                return;
-            }
-
-            errorListeners.add(listener);
-        },
-        removeEventListener(type, listener) {
-            if (type === 'message') {
-                messageListeners.delete(listener);
-                return;
-            }
-
-            errorListeners.delete(listener);
-        },
-        postMessage(message) {
-            queueMicrotask(() => {
-                void (async () => {
-                    if (terminated || message.type !== 'parse-obj') {
-                        return;
-                    }
-
-                    try {
-                        const assetText = await fetchAssetText(message.assetUrl);
-                        if (terminated) {
-                            return;
-                        }
-
-                        emitMessage({
-                            type: 'parse-obj-result',
-                            requestId: message.requestId,
-                            result: parseObjModelData(assetText),
-                        });
-                    } catch (error) {
-                        if (terminated) {
-                            return;
-                        }
-
-                        emitError(message.requestId, error);
-                    }
-                })();
-            });
-        },
-        terminate() {
-            terminated = true;
-            messageListeners.clear();
-            errorListeners.clear();
-        },
-    };
-}
-
 function resolveDefaultWorkerCount(): number {
     if (typeof navigator === 'undefined') {
         return 1;
     }
 
     const hardwareConcurrency = Number(navigator.hardwareConcurrency || 2);
-    return Math.max(1, Math.min(4, hardwareConcurrency - 1));
+    return Math.max(1, Math.min(10, Math.floor(hardwareConcurrency / 2)));
 }
 
 export function createObjParseWorkerPoolClient(
     {
         cacheLimit = DEFAULT_CACHE_LIMIT,
-        canUseWorker = () => typeof Worker !== 'undefined' || typeof window === 'undefined',
-        createWorker = () => (
-            typeof Worker !== 'undefined'
-                ? new Worker(
-                    new URL('./workers/objParse.worker.ts', import.meta.url),
-                    { type: 'module' },
-                )
-                : createInlineObjParseWorker()
+        canUseWorker = () => typeof Worker !== 'undefined',
+        createWorker = () => new Worker(
+            new URL('./workers/objParse.worker.ts', import.meta.url),
+            { type: 'module' },
         ),
         getWorkerCount = resolveDefaultWorkerCount,
     }: CreateObjParseWorkerPoolClientOptions = {},
@@ -213,6 +125,10 @@ export function createObjParseWorkerPoolClient(
         }
     };
 
+    const clearCache = (): void => {
+        resolvedCache.clear();
+    };
+
     const handleWorkerMessage = (event: MessageEvent<ObjParseWorkerResponse>): void => {
         const message = event.data;
         if (!message) {
@@ -261,10 +177,6 @@ export function createObjParseWorkerPoolClient(
             throw new Error('OBJ parse worker is unavailable');
         }
 
-        if (!canUseWorker()) {
-            throw new Error('OBJ parse worker is unavailable in this environment');
-        }
-
         const pool = ensureWorkerPool();
         const workerEntry = pool.reduce((bestEntry, entry) => (
             entry.pendingCount < bestEntry.pendingCount ? entry : bestEntry
@@ -306,7 +218,9 @@ export function createObjParseWorkerPoolClient(
             return await pendingLoad;
         }
 
-        const nextLoad = dispatchToWorkerPool(assetUrl)
+        const nextLoad = (canUseWorker()
+            ? dispatchToWorkerPool(assetUrl)
+            : loadSerializedObjModelDataInline(assetUrl))
             .then((result) => {
                 touchResolvedCache(assetUrl, result);
                 return result;
@@ -320,6 +234,7 @@ export function createObjParseWorkerPoolClient(
     };
 
     return {
+        clearCache,
         dispose: disposeWorkerPool,
         load,
     };
@@ -329,6 +244,10 @@ const sharedObjParseWorkerPoolClient = createObjParseWorkerPoolClient();
 
 export async function loadSerializedObjModelData(assetUrl: string): Promise<SerializedObjModelData> {
     return await sharedObjParseWorkerPoolClient.load(assetUrl);
+}
+
+export function clearObjParseWorkerPoolClientCache(): void {
+    sharedObjParseWorkerPoolClient.clearCache();
 }
 
 export function disposeObjParseWorkerPoolClient(rejectPendingWith?: unknown): void {

@@ -8,6 +8,7 @@ import { JSDOM } from 'jsdom';
 import { useUIStore } from '@/store';
 import { NumberInput, ReadonlyVectorStatRow } from './FormControls.tsx';
 import { TransformFields } from './TransformFields.tsx';
+import type { EulerRadiansValue } from '../utils/rotationFormat.ts';
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -113,6 +114,31 @@ function NumberInputHarness({
   );
 }
 
+function TransformFieldsHarness({
+  initialRotationValue,
+}: {
+  initialRotationValue: EulerRadiansValue;
+}) {
+  const [rotationValue, setRotationValue] = React.useState(initialRotationValue);
+
+  return React.createElement(
+    'div',
+    null,
+    React.createElement(TransformFields, {
+      lang: 'en',
+      positionValue: { x: 1, y: 2, z: 3 },
+      rotationValue,
+      onPositionChange: () => {},
+      onRotationChange: setRotationValue,
+    }),
+    React.createElement(
+      'output',
+      { 'data-testid': 'rotation-value' },
+      JSON.stringify(rotationValue),
+    ),
+  );
+}
+
 async function renderHarness(
   root: Root,
   props: {
@@ -137,6 +163,18 @@ function getTextInput(container: Element): HTMLInputElement {
   const input = container.querySelector('input[type="text"]');
   assert.ok(input, 'text input should exist');
   return input as HTMLInputElement;
+}
+
+function getTextInputByLabel(container: Element, label: string): HTMLInputElement {
+  const input = container.querySelector(`input[aria-label="${label}"]`);
+  assert.ok(input, `text input "${label}" should exist`);
+  return input as HTMLInputElement;
+}
+
+function getRotationValue(container: Element): EulerRadiansValue {
+  const output = container.querySelector('[data-testid="rotation-value"]');
+  assert.ok(output, 'rotation value output should exist');
+  return JSON.parse(output.textContent ?? '{}') as EulerRadiansValue;
 }
 
 function getStepperButton(container: Element, label: string): HTMLButtonElement {
@@ -284,6 +322,152 @@ test('TransformFields defaults to inline axis labels for position and rotation r
       /max-content/,
       'rotation labels should share the same row as their inputs',
     );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TransformFields renders per-axis rotation rows with compact +/-90 shortcuts when enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    await act(async () => {
+      useUIStore.setState({ rotationDisplayMode: 'euler_deg' });
+      root.render(
+        React.createElement(TransformFields, {
+          lang: 'en',
+          positionValue: { x: 1, y: 2, z: 3 },
+          rotationValue: { r: 0.1, p: 0.2, y: 0.3 },
+          onPositionChange: () => {},
+          onRotationChange: () => {},
+          rotationQuickStepDegrees: 90,
+        }),
+      );
+    });
+
+    assert.equal(container.querySelectorAll('button[aria-label$="increase 90°"]').length, 3);
+    assert.equal(container.querySelectorAll('button[aria-label$="decrease 90°"]').length, 3);
+    assert.equal(container.querySelector('button[aria-label="Roll increase 180°"]'), null);
+    assert.equal(container.querySelector('button[aria-label="Roll reset 0°"]'), null);
+    const rollInput = container.querySelector('input[aria-label="Roll"]') as HTMLInputElement | null;
+    const pitchInput = container.querySelector('input[aria-label="Pitch"]') as HTMLInputElement | null;
+    const yawInput = container.querySelector('input[aria-label="Yaw"]') as HTMLInputElement | null;
+    assert.ok(rollInput);
+    assert.ok(pitchInput);
+    assert.ok(yawInput);
+    assert.equal(rollInput.value, '05.73');
+    assert.equal(pitchInput.value, '11.46');
+    assert.equal(yawInput.value, '17.19');
+    assert.equal(container.textContent?.includes('-90'), true);
+    assert.equal(container.textContent?.includes('+90'), true);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TransformFields renders radian values with symbolic pi formatting', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    await act(async () => {
+      useUIStore.setState({ rotationDisplayMode: 'euler_rad' });
+      root.render(
+        React.createElement(TransformFieldsHarness, {
+          initialRotationValue: {
+            r: -Math.PI / 2,
+            p: Math.PI / 4,
+            y: Math.PI,
+          },
+        }),
+      );
+    });
+
+    assert.equal(getTextInputByLabel(container, 'Roll').value, '-π/2');
+    assert.equal(getTextInputByLabel(container, 'Pitch').value, 'π/4');
+    assert.equal(getTextInputByLabel(container, 'Yaw').value, 'π');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TransformFields accepts pai-style radian edits and normalizes them into symbolic pi values', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    await act(async () => {
+      useUIStore.setState({ rotationDisplayMode: 'euler_rad' });
+      root.render(
+        React.createElement(TransformFieldsHarness, {
+          initialRotationValue: { r: 0, p: 0, y: 0 },
+        }),
+      );
+    });
+
+    const rollInput = getTextInputByLabel(container, 'Roll');
+    await act(async () => {
+      rollInput.focus();
+      dispatchReactChange(rollInput, '-pai/2');
+    });
+
+    const nextRotationValue = getRotationValue(container);
+    assert.ok(Math.abs(nextRotationValue.r + Math.PI / 2) < 1e-7);
+    assert.equal(nextRotationValue.p, 0);
+    assert.equal(nextRotationValue.y, 0);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TransformFields renders quaternion inputs in a compact two-column grid', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    await act(async () => {
+      useUIStore.setState({ rotationDisplayMode: 'quaternion' });
+      root.render(
+        React.createElement(TransformFieldsHarness, {
+          initialRotationValue: { r: 0, p: 0, y: 0 },
+        }),
+      );
+    });
+
+    assert.equal(container.querySelectorAll('input[aria-label^="Quaternion "]').length, 4);
+    assert.ok(container.textContent?.includes('X'));
+    assert.ok(container.textContent?.includes('Y'));
+    assert.ok(container.textContent?.includes('Z'));
+    assert.ok(container.textContent?.includes('W'));
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TransformFields renders per-axis radian rotation rows with compact +/-π/2 shortcuts when enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    await act(async () => {
+      useUIStore.setState({ rotationDisplayMode: 'euler_rad' });
+      root.render(
+        React.createElement(TransformFields, {
+          lang: 'en',
+          positionValue: { x: 1, y: 2, z: 3 },
+          rotationValue: { r: 0, p: Math.PI / 4, y: -Math.PI / 2 },
+          onPositionChange: () => {},
+          onRotationChange: () => {},
+          rotationQuickStepDegrees: 90,
+        }),
+      );
+    });
+
+    assert.equal(container.querySelectorAll('button[aria-label$="increase π/2"]').length, 3);
+    assert.equal(container.querySelectorAll('button[aria-label$="decrease π/2"]').length, 3);
+    assert.equal(container.textContent?.includes('-π/2'), true);
+    assert.equal(container.textContent?.includes('+π/2'), true);
+
+    const rollInput = container.querySelector('input[aria-label="Roll"]') as HTMLInputElement | null;
+    const pitchInput = container.querySelector('input[aria-label="Pitch"]') as HTMLInputElement | null;
+    const yawInput = container.querySelector('input[aria-label="Yaw"]') as HTMLInputElement | null;
+    assert.ok(rollInput);
+    assert.ok(pitchInput);
+    assert.ok(yawInput);
+    assert.equal(rollInput.value, '0');
+    assert.equal(pitchInput.value, 'π/4');
+    assert.equal(yawInput.value, '-π/2');
   } finally {
     await destroyComponentRoot(dom, root);
   }

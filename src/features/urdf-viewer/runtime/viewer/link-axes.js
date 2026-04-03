@@ -155,6 +155,11 @@ export class LinkAxesController {
                 continue;
             const originAxes = createOriginAxes(options.axisSize);
             originAxes.name = `origin:${linkPath}`;
+            originAxes.userData = {
+                ...originAxes.userData,
+                viewerHelperKind: "origin-axes",
+                usdLinkPath: linkPath,
+            };
             applyOverlayMaterialState(originAxes, options.overlay);
             originAxes.matrixAutoUpdate = false;
             originAxes.matrix.copy(matrix);

@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import type { ViewerInteractiveLayer } from '../types';
 import { isGizmoObject } from './raycast.ts';
 import {
   hasPickableMaterial,
   isInternalHelperObject,
   isPickableMeshObject,
+  isSelectableHelperObject,
   isVisibleInHierarchy,
 } from './pickFilter.ts';
 
@@ -23,6 +25,134 @@ export function isCollisionPickObject(object: THREE.Object3D | null): boolean {
     current = current.parent;
   }
   return false;
+}
+
+function getEffectiveRenderOrder(object: THREE.Object3D | null): number {
+  let current: THREE.Object3D | null = object;
+  let renderOrder = 0;
+
+  while (current) {
+    if (typeof current.renderOrder === 'number' && current.renderOrder > renderOrder) {
+      renderOrder = current.renderOrder;
+    }
+    current = current.parent;
+  }
+
+  return renderOrder;
+}
+
+function hasOverlayPresentation(object: THREE.Object3D | null): boolean {
+  let current: THREE.Object3D | null = object;
+
+  while (current) {
+    if ((typeof current.renderOrder === 'number' && current.renderOrder > 0)) {
+      return true;
+    }
+
+    if ((current as THREE.Mesh).isMesh) {
+      const meshMaterial = (current as THREE.Mesh).material;
+      const materials: THREE.Material[] = Array.isArray(meshMaterial)
+        ? [...meshMaterial]
+        : [meshMaterial];
+      if (materials.some((material) => material && material.depthTest === false)) {
+        return true;
+      }
+    }
+
+    current = current.parent;
+  }
+
+  return false;
+}
+
+function resolveSelectableHelperLayer(object: THREE.Object3D | null): ViewerInteractiveLayer | null {
+  let current: THREE.Object3D | null = object;
+
+  while (current) {
+    switch (current.name) {
+      case '__origin_axes__':
+        return 'origin-axes';
+      case '__joint_axis__':
+      case '__joint_axis_helper__':
+        return 'joint-axis';
+      case '__com_visual__':
+        return 'center-of-mass';
+      case '__inertia_box__':
+        return 'inertia';
+      default:
+        break;
+    }
+
+    current = current.parent;
+  }
+
+  return null;
+}
+
+function resolveInteractionLayer(hit: THREE.Intersection): ViewerInteractiveLayer | null {
+  const helperLayer = resolveSelectableHelperLayer(hit.object);
+  if (helperLayer) {
+    return helperLayer;
+  }
+
+  if (isCollisionPickObject(hit.object)) {
+    return 'collision';
+  }
+
+  return 'visual';
+}
+
+function getInteractionLayerPriorityScore(
+  hit: THREE.Intersection,
+  interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
+): number {
+  if (!interactionLayerPriority || interactionLayerPriority.length === 0) {
+    return 0;
+  }
+
+  const layer = resolveInteractionLayer(hit);
+  if (!layer) {
+    return 0;
+  }
+
+  const layerIndex = interactionLayerPriority.indexOf(layer);
+  if (layerIndex === -1) {
+    return 0;
+  }
+
+  return (interactionLayerPriority.length - layerIndex) * 1_000_000;
+}
+
+function getInteractionLayerScore(
+  hit: THREE.Intersection,
+  interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
+): number {
+  const renderOrderScore = getEffectiveRenderOrder(hit.object);
+  const layerPriorityScore = getInteractionLayerPriorityScore(hit, interactionLayerPriority);
+  const helperBias = layerPriorityScore === 0 && isSelectableHelperObject(hit.object) ? 100_000 : 0;
+  const overlayBias = hasOverlayPresentation(hit.object) ? 10_000 : 0;
+
+  return layerPriorityScore + helperBias + overlayBias + renderOrderScore;
+}
+
+function sortByInteractionPriority(
+  hits: THREE.Intersection[],
+  interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
+): THREE.Intersection[] {
+  return hits.sort((left, right) => {
+    const leftScore = getInteractionLayerScore(left, interactionLayerPriority);
+    const rightScore = getInteractionLayerScore(right, interactionLayerPriority);
+
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore;
+    }
+
+    if (left.distance !== right.distance) {
+      return left.distance - right.distance;
+    }
+
+    return left.object.id - right.object.id;
+  });
 }
 
 function matchesIntersectionMode(hit: THREE.Intersection, mode: PickTargetMode): boolean {
@@ -60,12 +190,41 @@ export function collectPickTargets(
   return targets;
 }
 
+export function collectSelectableHelperTargets(
+  root: THREE.Object3D | null,
+): THREE.Object3D[] {
+  if (!root) {
+    return [];
+  }
+
+  const targets: THREE.Object3D[] = [];
+  const seen = new Set<number>();
+
+  root.traverse((child) => {
+    if (seen.has(child.id)) return;
+    if (!isSelectableHelperObject(child)) return;
+    if (!isVisibleInHierarchy(child)) return;
+    if (typeof (child as unknown as { raycast?: unknown }).raycast !== 'function') return;
+
+    const material = (child as THREE.Mesh & { material?: THREE.Material | THREE.Material[] }).material;
+    if (material !== undefined && !hasPickableMaterial(material)) {
+      return;
+    }
+
+    seen.add(child.id);
+    targets.push(child);
+  });
+
+  return targets;
+}
+
 export function findPickIntersections(
   robot: THREE.Object3D | null,
   raycaster: THREE.Raycaster,
   pickTargets: THREE.Object3D[],
   mode: PickTargetMode,
   fallbackOnMiss = true,
+  interactionLayerPriority?: readonly ViewerInteractiveLayer[],
 ): THREE.Intersection[] {
   const directHits = pickTargets.length > 0
     ? raycaster
@@ -73,11 +232,26 @@ export function findPickIntersections(
         .filter((hit) => matchesIntersectionMode(hit, mode))
     : [];
 
-  if (directHits.length > 0 || !fallbackOnMiss || !robot) {
-    return directHits;
+  if (!robot) {
+    return sortByInteractionPriority(directHits, interactionLayerPriority);
   }
 
-  return raycaster
+  const helperHits = raycaster
     .intersectObject(robot, true)
-    .filter((hit) => matchesIntersectionMode(hit, mode));
+    .filter((hit) => (
+      isSelectableHelperObject(hit.object)
+      && matchesIntersectionMode(hit, mode)
+    ));
+
+  if (helperHits.length > 0) {
+    return sortByInteractionPriority(directHits.concat(helperHits), interactionLayerPriority);
+  }
+
+  if (directHits.length > 0 || !fallbackOnMiss) {
+    return sortByInteractionPriority(directHits, interactionLayerPriority);
+  }
+
+  return sortByInteractionPriority(raycaster
+    .intersectObject(robot, true)
+    .filter((hit) => matchesIntersectionMode(hit, mode)), interactionLayerPriority);
 }

@@ -3,6 +3,12 @@ import test from 'node:test';
 
 import { patchVisiblePointerDownFallback } from './visibleHitTesting.ts';
 
+type VisibleAxisCacheEntry = {
+  axis: 'X' | 'Y' | 'Z' | null;
+  x: number;
+  y: number;
+};
+
 function createControls() {
   let pointerDownCalls = 0;
 
@@ -11,9 +17,12 @@ function createControls() {
       object: {},
       dragging: false,
       mode: 'translate',
-      axis: null,
-      userData: {},
-      pointerDown: () => {
+      axis: null as 'X' | 'Y' | 'Z' | null,
+      userData: {} as {
+        urdfLastVisibleAxisHit?: VisibleAxisCacheEntry;
+        urdfVisiblePointerDownFallbackPatched?: boolean;
+      },
+      pointerDown: (_pointer?: { x: number; y: number; button?: number }) => {
         pointerDownCalls += 1;
       },
     },

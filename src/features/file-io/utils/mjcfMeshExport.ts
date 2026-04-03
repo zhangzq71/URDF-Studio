@@ -5,9 +5,15 @@ import {
   createLoadingManager,
   createMeshLoader,
   buildColladaRootNormalizationHints,
+  findAssetByPath,
   isCoplanarOffsetMaterial,
+  postProcessColladaScene,
 } from '@/core/loaders';
 import { collectExplicitlyScaledMeshPaths } from '@/core/loaders/meshScaleHints';
+import {
+  createSceneFromSerializedColladaData,
+  parseColladaSceneData,
+} from '@/core/loaders/colladaWorkerSceneData';
 import { normalizeMeshPathForExport } from '@/core/parsers/meshPathUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
 import { GeometryType, type RobotState } from '@/types';
@@ -80,6 +86,8 @@ interface PendingVisualMeshVariant {
 }
 
 const COPLANAR_ANCHOR_BAKE_OFFSET = 1e-4;
+type GeometryGroup = THREE.BufferGeometry['groups'][number];
+type GeometryAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 
 function sanitizeVariantSegment(value: string | undefined): string {
   return String(value || '')
@@ -122,9 +130,10 @@ function colorToHex(color: THREE.Color | undefined): string | undefined {
     return undefined;
   }
 
-  const toChannel = (value: number) => (
-    Math.max(0, Math.min(255, Math.round(value * 255))).toString(16).padStart(2, '0')
-  );
+  const toChannel = (value: number) =>
+    Math.max(0, Math.min(255, Math.round(value * 255)))
+      .toString(16)
+      .padStart(2, '0');
 
   return `#${toChannel(color.r)}${toChannel(color.g)}${toChannel(color.b)}`;
 }
@@ -135,16 +144,16 @@ function isColorLike(color: unknown): color is THREE.Color {
   }
 
   const candidate = color as Partial<THREE.Color> & { isColor?: boolean };
-  return (candidate.isColor === true || typeof candidate.getHexString === 'function')
-    && typeof candidate.r === 'number'
-    && typeof candidate.g === 'number'
-    && typeof candidate.b === 'number';
+  return (
+    (candidate.isColor === true || typeof candidate.getHexString === 'function') &&
+    typeof candidate.r === 'number' &&
+    typeof candidate.g === 'number' &&
+    typeof candidate.b === 'number'
+  );
 }
 
 function getMaterialColor(material: THREE.Material): THREE.Color | undefined {
-  return 'color' in material && isColorLike(material.color)
-    ? material.color
-    : undefined;
+  return 'color' in material && isColorLike(material.color) ? material.color : undefined;
 }
 
 function isBufferGeometryLike(geometry: unknown): geometry is THREE.BufferGeometry {
@@ -153,24 +162,38 @@ function isBufferGeometryLike(geometry: unknown): geometry is THREE.BufferGeomet
   }
 
   const candidate = geometry as Partial<THREE.BufferGeometry> & { isBufferGeometry?: boolean };
-  return Boolean(candidate.isBufferGeometry)
-    && typeof candidate.clone === 'function'
-    && typeof candidate.getAttribute === 'function'
-    && typeof candidate.getIndex === 'function';
+  return (
+    Boolean(candidate.isBufferGeometry) &&
+    typeof candidate.clone === 'function' &&
+    typeof candidate.getAttribute === 'function' &&
+    typeof candidate.getIndex === 'function'
+  );
+}
+
+function getAttributeArray(attribute: GeometryAttribute): ArrayLike<number> {
+  return attribute instanceof THREE.InterleavedBufferAttribute
+    ? attribute.data.array
+    : attribute.array;
 }
 
 function cloneAttributeSubset(
-  attribute: THREE.BufferAttribute,
+  attribute: GeometryAttribute,
   vertexIndexes: readonly number[],
 ): THREE.BufferAttribute {
   const itemSize = attribute.itemSize;
-  const ArrayCtor = attribute.array.constructor as new (length: number) => ArrayLike<number>;
+  const sourceArray = getAttributeArray(attribute);
+  const ArrayCtor = sourceArray.constructor as new (length: number) => ArrayLike<number>;
   const values = new ArrayCtor(vertexIndexes.length * itemSize) as THREE.TypedArray;
 
   vertexIndexes.forEach((vertexIndex, nextVertexIndex) => {
-    const sourceOffset = vertexIndex * itemSize;
     const targetOffset = nextVertexIndex * itemSize;
     for (let componentIndex = 0; componentIndex < itemSize; componentIndex += 1) {
+      if (attribute instanceof THREE.InterleavedBufferAttribute) {
+        values[targetOffset + componentIndex] = attribute.getComponent(vertexIndex, componentIndex);
+        continue;
+      }
+
+      const sourceOffset = vertexIndex * itemSize;
       values[targetOffset + componentIndex] = attribute.array[sourceOffset + componentIndex];
     }
   });
@@ -179,16 +202,16 @@ function cloneAttributeSubset(
   if (attribute.name) {
     cloned.name = attribute.name;
   }
-  cloned.usage = attribute.usage;
-  if (attribute.gpuType != null) {
-    cloned.gpuType = attribute.gpuType;
+  if (attribute instanceof THREE.BufferAttribute) {
+    cloned.usage = attribute.usage;
+    if (attribute.gpuType != null) {
+      cloned.gpuType = attribute.gpuType;
+    }
   }
   return cloned;
 }
 
-function getUsableGeometryIndex(
-  geometry: THREE.BufferGeometry,
-): THREE.BufferAttribute | null {
+function getUsableGeometryIndex(geometry: THREE.BufferGeometry): GeometryAttribute | null {
   const index = geometry.getIndex();
   return index && index.count > 0 ? index : null;
 }
@@ -296,9 +319,9 @@ function buildDuplicateTriangleOwnerMap(
       return;
     }
 
-    const hasCoplanarAdjustedOwner = Array.from(owners).some((materialIndex) => (
-      isCoplanarOffsetMaterial(materials[materialIndex])
-    ));
+    const hasCoplanarAdjustedOwner = Array.from(owners).some((materialIndex) =>
+      isCoplanarOffsetMaterial(materials[materialIndex]),
+    );
     if (!hasCoplanarAdjustedOwner) {
       return;
     }
@@ -314,7 +337,7 @@ function buildDuplicateTriangleOwnerMap(
 
 function buildIndexedGeometrySubset(
   sourceGeometry: THREE.BufferGeometry,
-  relevantGroups: readonly THREE.Group[],
+  relevantGroups: readonly GeometryGroup[],
   preferredTriangleOwners: ReadonlyMap<string, number>,
   targetMaterialIndex: number,
 ): THREE.BufferGeometry | null {
@@ -375,14 +398,17 @@ function buildIndexedGeometrySubset(
 
   const subsetGeometry = new THREE.BufferGeometry();
   Object.entries(sourceGeometry.attributes).forEach(([attributeName, attribute]) => {
-    subsetGeometry.setAttribute(attributeName, cloneAttributeSubset(attribute, sourceVertexIndexes));
+    subsetGeometry.setAttribute(
+      attributeName,
+      cloneAttributeSubset(attribute, sourceVertexIndexes),
+    );
   });
 
   if (sourceGeometry.morphAttributes) {
     Object.entries(sourceGeometry.morphAttributes).forEach(([attributeName, morphAttributes]) => {
-      subsetGeometry.morphAttributes[attributeName] = morphAttributes.map((attribute) => (
-        cloneAttributeSubset(attribute, sourceVertexIndexes)
-      ));
+      subsetGeometry.morphAttributes[attributeName] = morphAttributes.map((attribute) =>
+        cloneAttributeSubset(attribute, sourceVertexIndexes),
+      );
     });
   }
   subsetGeometry.morphTargetsRelative = sourceGeometry.morphTargetsRelative;
@@ -393,7 +419,7 @@ function buildIndexedGeometrySubset(
 
 function buildNonIndexedGeometrySubset(
   sourceGeometry: THREE.BufferGeometry,
-  relevantGroups: readonly THREE.Group[],
+  relevantGroups: readonly GeometryGroup[],
   preferredTriangleOwners: ReadonlyMap<string, number>,
   targetMaterialIndex: number,
 ): THREE.BufferGeometry | null {
@@ -441,9 +467,9 @@ function buildNonIndexedGeometrySubset(
 
   if (sourceGeometry.morphAttributes) {
     Object.entries(sourceGeometry.morphAttributes).forEach(([attributeName, morphAttributes]) => {
-      subsetGeometry.morphAttributes[attributeName] = morphAttributes.map((attribute) => (
-        cloneAttributeSubset(attribute, vertexIndexes)
-      ));
+      subsetGeometry.morphAttributes[attributeName] = morphAttributes.map((attribute) =>
+        cloneAttributeSubset(attribute, vertexIndexes),
+      );
     });
   }
   subsetGeometry.morphTargetsRelative = sourceGeometry.morphTargetsRelative;
@@ -456,7 +482,9 @@ function extractGeometryForMaterial(
   materials: readonly THREE.Material[],
   materialIndex: number,
 ): THREE.BufferGeometry | null {
-  const relevantGroups = sourceGeometry.groups.filter((group) => (group.materialIndex ?? 0) === materialIndex);
+  const relevantGroups = sourceGeometry.groups.filter(
+    (group) => (group.materialIndex ?? 0) === materialIndex,
+  );
   if (relevantGroups.length === 0) {
     return null;
   }
@@ -464,10 +492,20 @@ function extractGeometryForMaterial(
   const preferredTriangleOwners = buildDuplicateTriangleOwnerMap(sourceGeometry, materials);
 
   if (getUsableGeometryIndex(sourceGeometry)) {
-    return buildIndexedGeometrySubset(sourceGeometry, relevantGroups, preferredTriangleOwners, materialIndex);
+    return buildIndexedGeometrySubset(
+      sourceGeometry,
+      relevantGroups,
+      preferredTriangleOwners,
+      materialIndex,
+    );
   }
 
-  return buildNonIndexedGeometrySubset(sourceGeometry, relevantGroups, preferredTriangleOwners, materialIndex);
+  return buildNonIndexedGeometrySubset(
+    sourceGeometry,
+    relevantGroups,
+    preferredTriangleOwners,
+    materialIndex,
+  );
 }
 
 function buildSceneVariantTriangleOwnerMap(
@@ -506,9 +544,9 @@ function buildSceneVariantTriangleOwnerMap(
       return;
     }
 
-    const hasCoplanarAdjustedOwner = Array.from(owners).some((variantIndex) => (
-      isCoplanarOffsetMaterial(variants[variantIndex]?.material)
-    ));
+    const hasCoplanarAdjustedOwner = Array.from(owners).some((variantIndex) =>
+      isCoplanarOffsetMaterial(variants[variantIndex]?.material),
+    );
     if (!hasCoplanarAdjustedOwner) {
       return;
     }
@@ -590,7 +628,10 @@ function buildSceneVariantGeometrySubset(
 
     const subsetGeometry = new THREE.BufferGeometry();
     Object.entries(sourceGeometry.attributes).forEach(([attributeName, attribute]) => {
-      subsetGeometry.setAttribute(attributeName, cloneAttributeSubset(attribute, sourceVertexIndexes));
+      subsetGeometry.setAttribute(
+        attributeName,
+        cloneAttributeSubset(attribute, sourceVertexIndexes),
+      );
     });
     subsetGeometry.setIndex(nextIndexes);
     subsetGeometry.computeBoundingBox();
@@ -648,14 +689,13 @@ function shouldBakeCoplanarAnchorOffset(
     return false;
   }
 
-  return materials.some((candidateMaterial) => isCoplanarOffsetMaterial(candidateMaterial))
-    && !isCoplanarOffsetMaterial(targetMaterial);
+  return (
+    materials.some((candidateMaterial) => isCoplanarOffsetMaterial(candidateMaterial)) &&
+    !isCoplanarOffsetMaterial(targetMaterial)
+  );
 }
 
-function applyGeometryNormalOffset(
-  geometry: THREE.BufferGeometry,
-  distance: number,
-): void {
+function applyGeometryNormalOffset(geometry: THREE.BufferGeometry, distance: number): void {
   if (!Number.isFinite(distance) || Math.abs(distance) < 1e-9) {
     return;
   }
@@ -674,9 +714,9 @@ function applyGeometryNormalOffset(
   for (let vertexIndex = 0; vertexIndex < positionAttribute.count; vertexIndex += 1) {
     positionAttribute.setXYZ(
       vertexIndex,
-      positionAttribute.getX(vertexIndex) + (normalAttribute.getX(vertexIndex) * distance),
-      positionAttribute.getY(vertexIndex) + (normalAttribute.getY(vertexIndex) * distance),
-      positionAttribute.getZ(vertexIndex) + (normalAttribute.getZ(vertexIndex) * distance),
+      positionAttribute.getX(vertexIndex) + normalAttribute.getX(vertexIndex) * distance,
+      positionAttribute.getY(vertexIndex) + normalAttribute.getY(vertexIndex) * distance,
+      positionAttribute.getZ(vertexIndex) + normalAttribute.getZ(vertexIndex) * distance,
     );
   }
 
@@ -749,14 +789,13 @@ function extractVisualMeshVariants(
     }
 
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    const materialIndexes = Array.isArray(mesh.material) && mesh.geometry?.groups?.length
-      ? Array.from(new Set(mesh.geometry.groups.map((group) => group.materialIndex ?? 0)))
-      : [undefined];
+    const materialIndexes =
+      Array.isArray(mesh.material) && mesh.geometry?.groups?.length
+        ? Array.from(new Set(mesh.geometry.groups.map((group) => group.materialIndex ?? 0)))
+        : [undefined];
 
     materialIndexes.forEach((materialIndex) => {
-      const material = materialIndex == null
-        ? materials[0]
-        : materials[materialIndex];
+      const material = materialIndex == null ? materials[0] : materials[materialIndex];
       if (!material) {
         return;
       }
@@ -989,6 +1028,42 @@ function getInlineMeshBlob(
   return null;
 }
 
+function shouldParseColladaInProcessForMjcfExport(meshPath: string): boolean {
+  return /\.dae$/i.test(meshPath) && typeof Worker === 'undefined' && typeof window === 'undefined';
+}
+
+async function loadColladaMeshInProcessForMjcfExport(
+  meshPath: string,
+  assets: Record<string, string>,
+  manager: THREE.LoadingManager,
+  explicitScaleMeshPaths: ReadonlySet<string>,
+): Promise<THREE.Object3D> {
+  const assetUrl = findAssetByPath(meshPath, assets, '');
+  if (!assetUrl) {
+    throw new Error(`Mesh asset could not be resolved for ${meshPath}`);
+  }
+
+  const response = await fetch(assetUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Collada asset: ${response.status} ${response.statusText}`);
+  }
+
+  const colladaText = await response.text();
+  const serializedScene = parseColladaSceneData(colladaText, assetUrl);
+  const scene = createSceneFromSerializedColladaData(serializedScene, { manager });
+  const maxDimension = postProcessColladaScene(scene);
+  const normalizedMeshPath = normalizeMeshPathForExport(meshPath);
+  const hasExplicitScale =
+    explicitScaleMeshPaths.has(meshPath) ||
+    Boolean(normalizedMeshPath && explicitScaleMeshPaths.has(normalizedMeshPath));
+
+  if (!hasExplicitScale && maxDimension > 10) {
+    scene.scale.setScalar(0.001);
+  }
+
+  return scene;
+}
+
 async function hashMeshBytes(bytes: Uint8Array): Promise<string> {
   if (globalThis.crypto?.subtle) {
     const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
@@ -1006,10 +1081,7 @@ async function hashMeshBytes(bytes: Uint8Array): Promise<string> {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-async function buildNativeMeshFingerprint(
-  meshPath: string,
-  meshBlob: Blob,
-): Promise<string> {
+async function buildNativeMeshFingerprint(meshPath: string, meshBlob: Blob): Promise<string> {
   const normalizedPath = normalizeMeshPathForExport(meshPath) || meshPath;
   const extensionMatch = normalizedPath.match(/\.([^.]+)$/);
   const extension = extensionMatch?.[1]?.toLowerCase() || '';
@@ -1063,24 +1135,14 @@ async function prepareSharedNativeMeshReuse(
       continue;
     }
 
-    markSharedMeshReuse(
-      meshPath,
-      canonicalMeshPath,
-      meshPathOverrides,
-      convertedSourceMeshPaths,
-    );
+    markSharedMeshReuse(meshPath, canonicalMeshPath, meshPathOverrides, convertedSourceMeshPaths);
   }
 }
 
 export async function prepareMjcfMeshExportAssets(
   options: PrepareMjcfMeshExportAssetsOptions,
 ): Promise<PreparedMjcfMeshExportAssets> {
-  const {
-    robot,
-    assets,
-    extraMeshFiles,
-    preferSharedMeshReuse = true,
-  } = options;
+  const { robot, assets, extraMeshFiles, preferSharedMeshReuse = true } = options;
   const meshPathOverrides = new Map<string, string>();
   const archiveFiles = new Map<string, Blob>();
   const convertedSourceMeshPaths = new Set<string>();
@@ -1092,15 +1154,10 @@ export async function prepareMjcfMeshExportAssets(
   const colladaRootNormalizationHints = buildColladaRootNormalizationHints(robot.links);
   const explicitScaleMeshPaths = collectExplicitlyScaledMeshPaths(robot);
   const loadingManager = createLoadingManager(resolvedAssets);
-  const loadMesh = createMeshLoader(
-    resolvedAssets,
-    loadingManager,
-    '',
-    {
-      colladaRootNormalizationHints,
-      explicitScaleMeshPaths,
-    },
-  );
+  const loadMesh = createMeshLoader(resolvedAssets, loadingManager, '', {
+    colladaRootNormalizationHints,
+    explicitScaleMeshPaths,
+  });
   const objExporter = new OBJExporter();
 
   try {
@@ -1119,19 +1176,28 @@ export async function prepareMjcfMeshExportAssets(
       }
 
       try {
-        const meshObject = await new Promise<any>((resolve, reject) => {
-          loadMesh(meshPath, loadingManager, (result, err) => {
-            if (err) {
-              reject(err);
-              return;
-            }
+        const meshObject = shouldParseColladaInProcessForMjcfExport(meshPath)
+          ? await loadColladaMeshInProcessForMjcfExport(
+              meshPath,
+              resolvedAssets,
+              loadingManager,
+              explicitScaleMeshPaths,
+            )
+          : await new Promise<any>((resolve, reject) => {
+              loadMesh(meshPath, loadingManager, (result, err) => {
+                if (err) {
+                  reject(err);
+                  return;
+                }
 
-            resolve(result);
-          });
-        });
+                resolve(result);
+              });
+            });
 
         if (containsPlaceholderMesh(meshObject)) {
-          console.error(`[MJCF export] Skipping mesh override for "${meshPath}" because the source asset resolved to a placeholder.`);
+          console.error(
+            `[MJCF export] Skipping mesh override for "${meshPath}" because the source asset resolved to a placeholder.`,
+          );
           disposeObject3D(meshObject, true);
           continue;
         }
@@ -1143,12 +1209,14 @@ export async function prepareMjcfMeshExportAssets(
           objExporter,
         );
         const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
-        const sourceUsage = referencedMeshUsage.get(meshPath)
-          || (normalizedSourcePath ? referencedMeshUsage.get(normalizedSourcePath) : undefined);
+        const sourceUsage =
+          referencedMeshUsage.get(meshPath) ||
+          (normalizedSourcePath ? referencedMeshUsage.get(normalizedSourcePath) : undefined);
         const hasSplitVisualVariants = extractedVariantFiles.length > 1;
-        const shouldPreferVisualVariants = hasSplitVisualVariants
-          && Boolean(sourceUsage?.hasVisualMultiMaterialUsage)
-          && !sourceUsage?.hasNonVisualUsage;
+        const shouldPreferVisualVariants =
+          hasSplitVisualVariants &&
+          Boolean(sourceUsage?.hasVisualMultiMaterialUsage) &&
+          !sourceUsage?.hasNonVisualUsage;
         const needsFullMeshExport = !shouldPreferVisualVariants;
 
         if (needsFullMeshExport) {
@@ -1188,7 +1256,10 @@ export async function prepareMjcfMeshExportAssets(
 
         disposeObject3D(meshObject, true);
       } catch (error) {
-        console.error(`[MJCF export] Failed to convert mesh "${meshPath}" to OBJ. Keeping original path.`, error);
+        console.error(
+          `[MJCF export] Failed to convert mesh "${meshPath}" to OBJ. Keeping original path.`,
+          error,
+        );
       }
     }
   } finally {

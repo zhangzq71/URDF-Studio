@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { RobotFile } from '@/types';
 
 import {
   buildEditableRobotSourceWorkerDispatch,
   buildEditableRobotSourceWorkerOptions,
+  buildPrepareAssemblyComponentWorkerDispatch,
   buildResolveRobotImportWorkerDispatch,
   buildResolveRobotImportWorkerOptions,
 } from './robotImportWorkerPayload.ts';
@@ -22,55 +24,62 @@ test('buildResolveRobotImportWorkerOptions strips unused context for usd imports
     rootLinkId: 'usd_root',
   };
 
-  const result = buildResolveRobotImportWorkerOptions({
-    name: 'robots/demo/usd/demo.usd',
-    format: 'usd',
-    content: '#usda 1.0',
-  }, {
-    availableFiles: [
-      demoUrdfFile,
-      {
-        name: 'robots/demo/xacro/demo.xacro',
-        format: 'xacro',
-        content: '<robot />',
+  const result = buildResolveRobotImportWorkerOptions(
+    {
+      name: 'robots/demo/usd/demo.usd',
+      format: 'usd',
+      content: '#usda 1.0',
+    },
+    {
+      availableFiles: [
+        demoUrdfFile,
+        {
+          name: 'robots/demo/xacro/demo.xacro',
+          format: 'xacro',
+          content: '<robot />',
+        },
+      ],
+      assets: {
+        'robots/demo/meshes/base.stl': 'blob:mesh',
       },
-    ],
-    assets: {
-      'robots/demo/meshes/base.stl': 'blob:mesh',
+      allFileContents: {
+        'robots/demo/materials/demo.material': 'material Demo {}',
+      },
+      usdRobotData,
     },
-    allFileContents: {
-      'robots/demo/materials/demo.material': 'material Demo {}',
-    },
-    usdRobotData,
-  });
+  );
 
   assert.deepEqual(result, { usdRobotData });
 });
 
 test('buildResolveRobotImportWorkerOptions keeps only mjcf sources for mjcf imports', () => {
-  const result = buildResolveRobotImportWorkerOptions({
-    name: 'robots/demo/mjcf/demo.xml',
-    format: 'mjcf',
-    content: '<mujoco />',
-  }, {
-    availableFiles: [
-      demoUrdfFile,
-      {
-        name: 'robots/demo/mjcf/demo.xml',
-        format: 'mjcf',
-        content: '<mujoco />',
-      },
-      {
-        name: 'robots/demo/meshes/base.stl',
-        format: 'mesh',
-        content: 'solid demo',
-      },
-    ],
-  });
+  const result = buildResolveRobotImportWorkerOptions(
+    {
+      name: 'robots/demo/mjcf/demo.xml',
+      format: 'mjcf',
+      content: '<mujoco />',
+    },
+    {
+      availableFiles: [
+        demoUrdfFile,
+        {
+          name: 'robots/demo/mjcf/demo.xml',
+          format: 'mjcf',
+          content: '<mujoco />',
+        },
+        {
+          name: 'robots/demo/meshes/base.stl',
+          format: 'mesh',
+          content: 'solid demo',
+        },
+      ],
+    },
+  );
 
-  assert.deepEqual(result.availableFiles?.map((file) => ({ name: file.name, format: file.format })), [
-    { name: 'robots/demo/mjcf/demo.xml', format: 'mjcf' },
-  ]);
+  assert.deepEqual(
+    result.availableFiles?.map((file) => ({ name: file.name, format: file.format })),
+    [{ name: 'robots/demo/mjcf/demo.xml', format: 'mjcf' }],
+  );
 });
 
 test('buildResolveRobotImportWorkerDispatch moves mjcf context into a reusable worker snapshot', () => {
@@ -88,18 +97,24 @@ test('buildResolveRobotImportWorkerDispatch moves mjcf context into a reusable w
     },
   ] as const;
 
-  const result = buildResolveRobotImportWorkerDispatch({
-    name: 'robots/demo/mjcf/demo.xml',
-    format: 'mjcf',
-    content: '<mujoco />',
-  }, {
-    availableFiles: [...availableFiles],
-  });
+  const result = buildResolveRobotImportWorkerDispatch(
+    {
+      name: 'robots/demo/mjcf/demo.xml',
+      format: 'mjcf',
+      content: '<mujoco />',
+    },
+    {
+      availableFiles: [...availableFiles],
+    },
+  );
 
   assert.deepEqual(result.options, {});
   assert.equal(typeof result.contextCacheKey, 'string');
   assert.deepEqual(
-    result.contextSnapshot?.availableFiles?.map((file) => ({ name: file.name, format: file.format })),
+    result.contextSnapshot?.availableFiles?.map((file) => ({
+      name: file.name,
+      format: file.format,
+    })),
     [{ name: 'robots/demo/mjcf/demo.xml', format: 'mjcf' }],
   );
 });
@@ -149,7 +164,7 @@ test('buildEditableRobotSourceWorkerOptions keeps only source-relevant files for
 });
 
 test('buildEditableRobotSourceWorkerDispatch omits repeated xacro context from the per-request payload', () => {
-  const availableFiles = [
+  const availableFiles: RobotFile[] = [
     demoUrdfFile,
     {
       name: 'robots/demo/xacro/demo.xacro',
@@ -181,11 +196,68 @@ test('buildEditableRobotSourceWorkerDispatch omits repeated xacro context from t
   assert.deepEqual(result.options.availableFiles, undefined);
   assert.deepEqual(result.options.allFileContents, undefined);
   assert.deepEqual(
-    result.contextSnapshot?.availableFiles?.map((file) => ({ name: file.name, format: file.format })),
+    result.contextSnapshot?.availableFiles?.map((file) => ({
+      name: file.name,
+      format: file.format,
+    })),
     [
       { name: demoUrdfFile.name, format: demoUrdfFile.format },
       { name: 'robots/demo/xacro/demo.xacro', format: 'xacro' },
     ],
   );
   assert.deepEqual(result.contextSnapshot?.allFileContents, allFileContents);
+});
+
+test('buildPrepareAssemblyComponentWorkerDispatch keeps placement snapshots in the request payload', () => {
+  const result = buildPrepareAssemblyComponentWorkerDispatch(
+    {
+      name: 'robots/demo/urdf/demo.urdf',
+      format: 'urdf',
+      content: '<robot />',
+    },
+    {
+      availableFiles: [
+        demoUrdfFile,
+        {
+          name: 'robots/demo/meshes/base.stl',
+          format: 'mesh',
+          content: 'solid demo',
+        },
+      ],
+      assets: {
+        'robots/demo/meshes/base.stl': 'blob:mesh',
+      },
+      existingPlacementComponents: [
+        {
+          renderableBounds: {
+            min: { x: -0.5, y: -0.5, z: 0 },
+            max: { x: 0.5, y: 0.5, z: 1 },
+          },
+          transform: {
+            position: { x: 1.25, y: 0, z: 0 },
+            rotation: { r: 0, p: 0, y: 0 },
+          },
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(result.options, {
+    existingPlacementComponents: [
+      {
+        renderableBounds: {
+          min: { x: -0.5, y: -0.5, z: 0 },
+          max: { x: 0.5, y: 0.5, z: 1 },
+        },
+        transform: {
+          position: { x: 1.25, y: 0, z: 0 },
+          rotation: { r: 0, p: 0, y: 0 },
+        },
+      },
+    ],
+  });
+  assert.equal(typeof result.contextCacheKey, 'string');
+  assert.deepEqual(result.contextSnapshot?.assets, {
+    'robots/demo/meshes/base.stl': 'blob:mesh',
+  });
 });
