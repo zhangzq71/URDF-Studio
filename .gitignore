@@ -28,6 +28,7 @@ scripts/versioning/*
 !.github/workflows/
 .github/workflows/*
 !.github/workflows/quality.yml
+!.github/dependabot.yml
 output/
 tmp/
 .playwright-mcp/
