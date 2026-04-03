@@ -81,6 +81,7 @@ export const en: TranslationKeys = {
   add: "Add",
   bridgedComponent: "Connected",
   bridgedComponentLockedHint: "This component is already part of a bridge and cannot move independently.",
+  bridgeLimitRangeInvalid: "Lower limit must be less than or equal to upper limit.",
 
   // Property Editor
   properties: "Properties",
@@ -218,6 +219,10 @@ export const en: TranslationKeys = {
   clickToSelect: "Click objects to select.",
   enableLabels: "Enable labels to select.",
   clickLabels: "Click labels to select.",
+  workspaceAssemblyRenderFailedMergedData:
+    "Workspace rendering failed because the merged assembly data is unavailable.",
+  workspaceAssemblyRenderFailedViewerData:
+    "Workspace rendering failed because the viewer assembly data is unavailable.",
   confirmTransformation: "Confirm Transformation?",
   apply: "Apply",
 
@@ -405,9 +410,11 @@ export const en: TranslationKeys = {
   edit: "Edit",
   view: "View",
   toolbar: "Toolbar",
+  codeEditor: "Code Editor",
   sourceCode: "Source Code",
   snapshot: "Snapshot",
   settings: "Settings",
+  general: "General",
   language: "Language",
   theme: "Theme",
   about: "About",
@@ -421,10 +428,17 @@ export const en: TranslationKeys = {
   importWarning: "Import Warning",
   sourceCodeAutoApply: "Automatically apply valid code edits",
   fontSize: "Font Size",
+  interfaceFontSize: "Interface Font Size",
+  fontFamily: "Font Family",
+  codeEditorFontSize: "Code Editor Font Size",
   small: "Small",
   medium: "Medium",
   large: "Large",
   resetFontSize: "Reset Font Size",
+  resetCodeEditorTypography: "Reset Editor Typography",
+  systemMonospace: "System Monospace",
+  version: "Version",
+  resources: "Resources",
   documentTitle: "URDF Studio - Professional Robot Design & Visualization Tool",
   loadingPanel: "Loading panel…",
   loadingEditor: "Loading editor…",

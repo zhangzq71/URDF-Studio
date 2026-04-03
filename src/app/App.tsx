@@ -7,7 +7,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
-import { AboutModal } from './components/AboutModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import { useAppShellState, useFileImport, useFileExport, useImportInputBinding, useUnsavedChangesPrompt } from './hooks';
@@ -403,8 +402,6 @@ function AppContent() {
     toast,
     closeToast,
     showToast,
-    isAboutOpen,
-    setIsAboutOpen,
     isAIInspectionOpen,
     setIsAIInspectionOpen,
     isAIConversationOpen,
@@ -961,7 +958,6 @@ function AppContent() {
         isCodeViewerOpen={isCodeViewerOpen}
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
-        onOpenAbout={() => setIsAboutOpen(true)}
         viewConfig={viewConfig}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
@@ -970,7 +966,6 @@ function AppContent() {
 
       {/* Modals */}
       <SettingsModal />
-      <AboutModal isOpen={isAboutOpen} onClose={() => setIsAboutOpen(false)} />
       {shouldRenderAIInspectionModal && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
           <AIInspectionConnector
