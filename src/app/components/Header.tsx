@@ -20,7 +20,8 @@ interface HeaderProps {
   onOpenExport: () => void;
   onExportProject: () => void;
   // Modal actions
-  onOpenAI: () => void;
+  onOpenAIInspection: () => void;
+  onOpenAIConversation: () => void;
   onOpenMeasureTool: () => void;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
@@ -45,7 +46,8 @@ export function Header({
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAI,
+  onOpenAIInspection,
+  onOpenAIConversation,
   onOpenMeasureTool,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
@@ -82,7 +84,6 @@ export function Header({
   );
   const responsive = useHeaderResponsiveLayout(headerRef, responsiveOptions);
   const t = translations[lang];
-
   React.useEffect(() => {
     if (activeMenu === null) {
       return undefined;
@@ -130,7 +131,8 @@ export function Header({
           onImportFolder={onImportFolder}
           onOpenExport={onOpenExport}
           onExportProject={onExportProject}
-          onOpenAI={onOpenAI}
+          onOpenAIInspection={onOpenAIInspection}
+          onOpenAIConversation={onOpenAIConversation}
           onOpenMeasureTool={onOpenMeasureTool}
           onOpenCollisionOptimizer={onOpenCollisionOptimizer}
           onOpenCodeViewer={onOpenCodeViewer}

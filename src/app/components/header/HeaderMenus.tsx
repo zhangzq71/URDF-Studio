@@ -19,7 +19,8 @@ interface HeaderMenusProps {
   onImportFolder: () => void;
   onOpenExport: () => void;
   onExportProject: () => void;
-  onOpenAI: () => void;
+  onOpenAIInspection: () => void;
+  onOpenAIConversation: () => void;
   onOpenMeasureTool: () => void;
   onOpenCollisionOptimizer: () => void;
   onOpenCodeViewer: () => void;
@@ -48,7 +49,8 @@ export function HeaderMenus({
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAI,
+  onOpenAIInspection,
+  onOpenAIConversation,
   onOpenMeasureTool,
   onOpenCollisionOptimizer,
   onOpenCodeViewer,
@@ -209,7 +211,8 @@ export function HeaderMenus({
           <ToolboxMenu
             t={t}
             onClose={() => setActiveMenu(null)}
-            onOpenAI={onOpenAI}
+            onOpenAIInspection={onOpenAIInspection}
+            onOpenAIConversation={onOpenAIConversation}
             onOpenMeasureTool={onOpenMeasureTool}
             onOpenCollisionOptimizer={onOpenCollisionOptimizer}
           />

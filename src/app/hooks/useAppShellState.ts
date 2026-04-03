@@ -15,6 +15,8 @@ export interface AppViewConfig {
   showJointPanel: boolean;
 }
 
+export type AILaunchMode = 'inspection' | 'conversation' | null;
+
 const DEFAULT_TOAST_STATE: AppToastState = {
   show: false,
   message: '',
@@ -30,13 +32,14 @@ const DEFAULT_VIEW_CONFIG: AppViewConfig = {
 
 export function useAppShellState() {
   const [toast, setToast] = useState<AppToastState>(DEFAULT_TOAST_STATE);
-  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [isAIInspectionOpen, setIsAIInspectionOpen] = useState(false);
+  const [isAIConversationOpen, setIsAIConversationOpen] = useState(false);
+  const [aiLaunchMode, setAILaunchMode] = useState<AILaunchMode>(null);
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(
-    null,
-  );
+  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(null);
   const [viewConfig, setViewConfig] = useState<AppViewConfig>(DEFAULT_VIEW_CONFIG);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,6 +59,35 @@ export function useAppShellState() {
     setToast((prev) => ({ ...prev, show: false }));
   }, []);
 
+  const openAIInspection = useCallback(() => {
+    setIsAIInspectionOpen(true);
+    setIsAIConversationOpen(false);
+    setAILaunchMode('inspection');
+  }, []);
+
+  const openAIConversation = useCallback(() => {
+    setIsAIConversationOpen(true);
+    setIsAIInspectionOpen(false);
+    setAILaunchMode('conversation');
+  }, []);
+
+  const closeAIEntryPoints = useCallback(() => {
+    setIsAIInspectionOpen(false);
+    setIsAIConversationOpen(false);
+    setAILaunchMode(null);
+  }, []);
+
+  const isAIModalOpen = isAIInspectionOpen || isAIConversationOpen;
+
+  const setIsAIModalOpen = useCallback((open: boolean) => {
+    if (open) {
+      openAIInspection();
+      return;
+    }
+
+    closeAIEntryPoints();
+  }, [closeAIEntryPoints, openAIInspection]);
+
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) {
@@ -69,6 +101,17 @@ export function useAppShellState() {
     setToast,
     closeToast,
     showToast,
+    isAboutOpen,
+    setIsAboutOpen,
+    isAIInspectionOpen,
+    setIsAIInspectionOpen,
+    isAIConversationOpen,
+    setIsAIConversationOpen,
+    aiLaunchMode,
+    setAILaunchMode,
+    openAIInspection,
+    openAIConversation,
+    closeAIEntryPoints,
     isAIModalOpen,
     setIsAIModalOpen,
     isCodeViewerOpen,

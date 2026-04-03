@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Loader2, Minus, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Minus } from 'lucide-react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { Language, TranslationKeys } from '@/shared/i18n'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
@@ -9,23 +9,37 @@ interface InspectionSidebarProps {
   lang: Language
   t: TranslationKeys
   isGeneratingAI: boolean
+  focusedCategoryId: string
   expandedCategories: Set<string>
   selectedItems: SelectedInspectionItems
   setExpandedCategories: Dispatch<SetStateAction<Set<string>>>
   setSelectedItems: Dispatch<SetStateAction<SelectedInspectionItems>>
-  onRunInspection: () => void
+  onFocusCategory: (categoryId: string) => void
 }
 
 export function InspectionSidebar({
   lang,
   t,
   isGeneratingAI,
+  focusedCategoryId,
   expandedCategories,
   selectedItems,
   setExpandedCategories,
   setSelectedItems,
-  onRunInspection
+  onFocusCategory,
 }: InspectionSidebarProps) {
+  const totalItemCount = INSPECTION_CRITERIA.reduce((sum, category) => sum + category.items.length, 0)
+  let totalSelectedCount = 0
+  let selectedCategoryCount = 0
+
+  INSPECTION_CRITERIA.forEach((category) => {
+    const count = selectedItems[category.id]?.size ?? 0
+    totalSelectedCount += count
+    if (count > 0) {
+      selectedCategoryCount += 1
+    }
+  })
+
   const toggleCategorySelection = (categoryId: string) => {
     setSelectedItems(prev => {
       const newItems = { ...prev }
@@ -71,98 +85,164 @@ export function InspectionSidebar({
     })
   }
 
+  const resolveCategoryImpactLabel = (weight: number) => {
+    if (weight >= 0.2) {
+      return t.inspectionCategoryImpactHigh
+    }
+    if (weight >= 0.15) {
+      return t.inspectionCategoryImpactMedium
+    }
+    return t.inspectionCategoryImpactBaseline
+  }
+
   return (
-    <div className="w-56 border-r border-border-black bg-panel-bg dark:bg-element-bg flex flex-col shrink-0">
-      <div className="p-3 border-b border-border-black bg-element-bg">
-        <h3 className="text-[10px] font-medium text-text-tertiary tracking-wide mb-2 px-1">
-          {t.inspectionItems}
-        </h3>
-        <button
-          onClick={onRunInspection}
-          disabled={isGeneratingAI}
-          className="w-full h-8 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
-        >
-          {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          {isGeneratingAI ? t.thinking : t.runInspection}
-        </button>
+    <div className="flex w-72 shrink-0 flex-col border-r border-border-black bg-panel-bg dark:bg-element-bg">
+      <div className="border-b border-border-black bg-element-bg p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="px-1 text-[10px] font-medium tracking-wide text-text-tertiary">
+              {t.inspectionItems}
+            </h3>
+            <p className="mt-1 px-1 text-[11px] leading-4 text-text-secondary">
+              {t.inspectionScopeDescription}
+            </p>
+          </div>
+          {isGeneratingAI && (
+            <span className="rounded-lg border border-border-black bg-panel-bg px-2 py-1 text-[10px] font-medium text-text-secondary">
+              {t.checking}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-3 rounded-xl border border-border-black bg-panel-bg p-2.5">
+          <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+            <span>{t.runInspection}</span>
+            <span>{selectedCategoryCount}/{INSPECTION_CRITERIA.length}</span>
+          </div>
+          <div className="mt-1 text-xs font-semibold text-text-primary">
+            {t.inspectionSelectedChecksSummary
+              .replace('{selected}', String(totalSelectedCount))
+              .replace('{total}', String(totalItemCount))}
+          </div>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+      <div className={`custom-scrollbar flex-1 overflow-y-auto p-2 space-y-2 ${isGeneratingAI ? 'pointer-events-none opacity-70' : ''}`}>
         {INSPECTION_CRITERIA.map(category => {
           const categoryName = lang === 'zh' ? category.nameZh : category.name
           const selectedItemIds = selectedItems[category.id] || new Set()
+          const selectedCount = selectedItemIds.size
           const allSelected = category.items.every(item => selectedItemIds.has(item.id))
           const someSelected = category.items.some(item => selectedItemIds.has(item.id))
           const isExpanded = expandedCategories.has(category.id)
+          const isFocused = focusedCategoryId === category.id
 
           return (
             <div
               key={category.id}
               className={`rounded-xl transition-colors ${
-                isExpanded
-                  ? 'bg-panel-bg dark:bg-panel-bg border border-border-black shadow-sm'
-                  : 'hover:bg-element-hover'
+                isFocused
+                  ? 'border border-system-blue/35 bg-system-blue/10 shadow-sm'
+                  : someSelected || isExpanded
+                    ? 'border border-border-black bg-panel-bg shadow-sm'
+                    : 'border border-transparent hover:border-border-black hover:bg-element-hover'
               }`}
             >
-              <div className="flex items-center p-2.5 group">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <div
-                    className={`w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer ${
-                      allSelected
-                        ? 'bg-system-blue-solid border-system-blue-solid'
-                      : someSelected
-                          ? 'bg-system-blue/80 border-system-blue'
-                          : 'border-border-strong hover:border-system-blue'
-                    }`}
-                    onClick={() => toggleCategorySelection(category.id)}
-                  >
-                    {allSelected ? (
-                      <Check className="w-3 h-3 text-white" />
-                    ) : someSelected ? (
-                      <Minus className="w-2.5 h-2.5 text-white" />
-                    ) : null}
-                  </div>
+              <div className="flex items-start gap-2 p-2.5">
+                <button
+                  type="button"
+                  aria-label={categoryName}
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                    isGeneratingAI
+                      ? 'border-border-strong bg-element-bg'
+                      : allSelected
+                        ? 'border-system-blue-solid bg-system-blue-solid'
+                        : someSelected
+                          ? 'border-system-blue bg-system-blue/80'
+                          : 'border-border-strong bg-panel-bg hover:border-system-blue'
+                  }`}
+                  onClick={() => {
+                    toggleCategorySelection(category.id)
+                    onFocusCategory(category.id)
+                  }}
+                >
+                  {allSelected ? (
+                    <Check className="h-3 w-3 text-white" />
+                  ) : someSelected ? (
+                    <Minus className="h-2.5 w-2.5 text-white" />
+                  ) : null}
+                </button>
+
+                <div className="min-w-0 flex-1">
                   <button
-                    className="flex-1 text-left truncate text-xs font-semibold text-text-primary"
-                    onClick={() => toggleCategoryExpand(category.id)}
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() => onFocusCategory(category.id)}
                   >
-                    {categoryName}
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-xs font-semibold text-text-primary">
+                        {categoryName}
+                      </span>
+                      <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                        {Math.round(category.weight * 100)}%
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                      <span>{selectedCount}/{category.items.length}</span>
+                      <span aria-hidden="true">•</span>
+                      <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                    </div>
                   </button>
                 </div>
+
                 <button
-                  className="p-1 hover:bg-element-hover rounded-md transition-colors"
-                  onClick={() => toggleCategoryExpand(category.id)}
+                  type="button"
+                  className="rounded-md p-1 transition-colors hover:bg-element-hover"
+                  onClick={() => {
+                    onFocusCategory(category.id)
+                    toggleCategoryExpand(category.id)
+                  }}
                 >
                   {isExpanded ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
+                    <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" />
                   ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
+                    <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" />
                   )}
                 </button>
               </div>
 
               {isExpanded && (
-                <div className="px-2 pb-2 space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {category.items.map(item => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-2 p-1.5 hover:bg-element-hover rounded-lg cursor-pointer group/item transition-colors"
-                      onClick={() => toggleItemSelection(category.id, item.id)}
-                    >
-                      <div
-                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
+                <div className="animate-in fade-in slide-in-from-top-1 border-t border-border-black/80 px-2 pb-2 pt-2 duration-200">
+                  <div className="space-y-1">
+                    {category.items.map(item => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors ${
                           selectedItemIds.has(item.id)
-                            ? 'bg-system-blue-solid border-system-blue-solid'
-                            : 'border-border-strong group-hover/item:border-system-blue'
+                            ? 'bg-element-bg'
+                            : 'hover:bg-element-hover'
                         }`}
+                        onClick={() => {
+                          toggleItemSelection(category.id, item.id)
+                          onFocusCategory(category.id)
+                        }}
                       >
-                        {selectedItemIds.has(item.id) && <Check className="w-2.5 h-2.5 text-white" />}
-                      </div>
-                      <span className="text-[11px] text-text-secondary font-medium truncate">
-                        {lang === 'zh' ? item.nameZh : item.name}
-                      </span>
-                    </div>
-                  ))}
+                        <div
+                          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                            selectedItemIds.has(item.id)
+                              ? 'border-system-blue-solid bg-system-blue-solid'
+                              : 'border-border-strong bg-panel-bg'
+                          }`}
+                        >
+                          {selectedItemIds.has(item.id) && <Check className="h-2.5 w-2.5 text-white" />}
+                        </div>
+                        <span className="truncate text-[11px] font-medium text-text-secondary">
+                          {lang === 'zh' ? item.nameZh : item.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

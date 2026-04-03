@@ -9,6 +9,8 @@ export interface TranslationKeys {
   appName: string;
   editor: string;
   aiAssistant: string;
+  aiInspection: string;
+  aiConversation: string;
   file: string;
   import: string;
   importFolder: string;
@@ -253,6 +255,31 @@ export interface TranslationKeys {
   minimize: string;
   maximize: string;
   restore: string;
+  inspectionScopeDescription: string;
+  inspectionSelectedChecksSummary: string;
+  inspectionRobotSnapshot: string;
+  inspectionRunSummary: string;
+  inspectionRunSummaryDescription: string;
+  inspectionSelectedCategories: string;
+  inspectionMaxPossibleScore: string;
+  inspectionWeightedCoverage: string;
+  inspectionEstimatedDuration: string;
+  inspectionRootLink: string;
+  inspectionLinks: string;
+  inspectionSource: string;
+  inspectionCurrentCategory: string;
+  inspectionCurrentCategoryDescription: string;
+  inspectionScoringReference: string;
+  inspectionSourceEvidenceHint: string;
+  inspectionSourceEvidenceEmpty: string;
+  inspectionCategoryImpactHigh: string;
+  inspectionCategoryImpactMedium: string;
+  inspectionCategoryImpactBaseline: string;
+  inspectionCategoryExcluded: string;
+  inspectionIncluded: string;
+  inspectionSkipped: string;
+  inspectionNoChecksSelected: string;
+  inspectionNormalizedModel: string;
 
   // Additional UI
   collapseSidebar: string;
@@ -300,6 +327,8 @@ export interface TranslationKeys {
 
   // Toolbox Descriptions
   aiAssistantDesc: string;
+  aiInspectionDesc: string;
+  aiConversationDesc: string;
   measureToolboxDesc: string;
   motionTrackingDesc: string;
   motrixDesc: string;
@@ -651,9 +680,33 @@ export interface TranslationKeys {
   aiAnalysis: string;
   examples: string;
   sendOnEnterHint: string;
+  conversationSuggestionsHint: string;
+  conversationSuggestionGeneralSelectedEntity: string;
+  conversationSuggestionGeneralSelectedEntityFallback: string;
+  conversationSuggestionGeneralSimulation: string;
+  conversationSuggestionReportPrioritize: string;
+  conversationSuggestionReportFocusedIssueReason: string;
+  conversationSuggestionReportFocusedIssueFix: string;
+  conversationSuggestionReportSelectedEntity: string;
+  conversationSuggestionReportSelectedEntityFallback: string;
+  conversationSuggestionReportRetest: string;
+  newConversation: string;
+  clearConversationHistory: string;
+  newConversationConfirmTitle: string;
+  newConversationConfirmMessage: string;
+  newConversationDividerLabel: string;
+  clearConversationHistoryConfirmTitle: string;
+  clearConversationHistoryConfirmMessage: string;
+  stopGenerating: string;
+  retryLastResponse: string;
   discussReportWithAI: string;
   actionable: string;
   applyChangesHintTitle: string;
+  inspectionPreparingContext: string;
+  inspectionRequestingModel: string;
+  inspectionProcessingResponse: string;
+  inspectionFinalizingReport: string;
+  inspectionSelectedChecks: string;
   inspectionMayTake30Seconds: string;
   aiAnalyzing: string;
   issueError: string;
@@ -674,6 +727,11 @@ export interface TranslationKeys {
   itemsNeedAttention: string;
   allPassedShort: string;
   allChecksPassedForCategory: string;
+  topBlockersTitle: string;
+  topBlockersSubtitle: string;
+  askAboutThisIssue: string;
+  locateInModel: string;
+  focusedIssue: string;
   retestThisItem: string;
   reportChatNoReply: string;
   reportChatSendError: string;

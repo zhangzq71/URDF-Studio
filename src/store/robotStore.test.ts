@@ -120,6 +120,52 @@ test('setRobot syncs link visual colors from tracked materials during load', () 
   assert.equal(nextState.materials?.base_link?.color, '#12ab34');
 });
 
+test('setRobot preserves inspection context for AI inspection and follow-up chat', () => {
+  resetRobotStore();
+
+  const state = useRobotStore.getState();
+  state.setRobot({
+    name: 'inspection_context_robot',
+    links: {
+      base_link: {
+        ...state.links.base_link,
+      },
+    },
+    joints: {},
+    rootLinkId: 'base_link',
+    inspectionContext: {
+      sourceFormat: 'mjcf',
+      mjcf: {
+        siteCount: 3,
+        tendonCount: 1,
+        tendonActuatorCount: 1,
+        bodiesWithSites: [
+          {
+            bodyId: 'torso',
+            siteCount: 2,
+            siteNames: ['imu', 'camera'],
+          },
+        ],
+        tendons: [
+          {
+            name: 'hip_tendon',
+            type: 'fixed',
+            attachmentRefs: ['torso', 'leg'],
+            actuatorNames: ['hip_motor'],
+          },
+        ],
+      },
+    },
+  }, {
+    skipHistory: true,
+  });
+
+  const nextState = useRobotStore.getState();
+  assert.equal(nextState.inspectionContext?.sourceFormat, 'mjcf');
+  assert.equal(nextState.inspectionContext?.mjcf?.siteCount, 3);
+  assert.equal(nextState.inspectionContext?.mjcf?.tendons[0]?.name, 'hip_tendon');
+});
+
 test('updateLink keeps robot materials in sync with visual color edits', () => {
   resetRobotStore();
 

@@ -5,10 +5,12 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Crosshair,
   FileText,
   Info,
   LayoutGrid,
   Loader2,
+  MessageCircle,
   RefreshCw,
   Sparkles
 } from 'lucide-react'
@@ -35,6 +37,7 @@ interface InspectionReportProps {
   onRetestItem: (categoryId: string, itemId: string) => void
   onDownloadPDF: () => void
   onSelectItem: (type: 'link' | 'joint', id: string) => void
+  onAskAboutIssue: (issue: InspectionReport['issues'][number]) => void
 }
 
 const ISSUE_PRIORITY: Record<string, number> = {
@@ -42,6 +45,34 @@ const ISSUE_PRIORITY: Record<string, number> = {
   warning: 1,
   suggestion: 2,
   pass: 3
+}
+
+function compareIssuesByPriority(
+  a: InspectionReport['issues'][number],
+  b: InspectionReport['issues'][number],
+) {
+  const priorityDelta = (ISSUE_PRIORITY[a.type] ?? 99) - (ISSUE_PRIORITY[b.type] ?? 99)
+  if (priorityDelta !== 0) {
+    return priorityDelta
+  }
+
+  return (a.score ?? 10) - (b.score ?? 10)
+}
+
+function resolveIssueSelectionTarget(
+  robot: RobotState,
+  issue: InspectionReport['issues'][number],
+): { type: 'link' | 'joint'; id: string } | null {
+  for (const id of issue.relatedIds || []) {
+    if (robot.links[id]) {
+      return { type: 'link', id }
+    }
+    if (robot.joints[id]) {
+      return { type: 'joint', id }
+    }
+  }
+
+  return null
 }
 
 function getCategoryIcon(categoryId: string) {
@@ -122,7 +153,8 @@ export function InspectionReportView({
   onToggleCategory,
   onRetestItem,
   onDownloadPDF,
-  onSelectItem
+  onSelectItem,
+  onAskAboutIssue,
 }: InspectionReportProps) {
   const overallScore = report.overallScore ?? 0
   const maxScore = report.maxScore ?? 100
@@ -199,6 +231,10 @@ export function InspectionReportView({
     }
   ]
   const evidenceSummary = buildInspectionEvidenceSummary(robot.inspectionContext, lang)
+  const topBlockers = report.issues
+    .filter((issue) => issue.type !== 'pass')
+    .sort(compareIssuesByPriority)
+    .slice(0, 3)
 
   return (
     <div className="space-y-6">
@@ -279,6 +315,91 @@ export function InspectionReportView({
         </div>
       </div>
 
+      {topBlockers.length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-border-black bg-panel-bg shadow-sm">
+          <div className="border-b border-border-black bg-element-bg px-5 py-4">
+            <div className="text-[10px] font-medium tracking-wide text-text-tertiary">{t.actionable}</div>
+            <h3 className="mt-1 text-base font-semibold text-text-primary">{t.topBlockersTitle}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t.topBlockersSubtitle}</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 p-4">
+            {topBlockers.map((issue, index) => {
+              const meta = getIssueMeta(issue.type, lang)
+              const Icon = meta.Icon
+              const selectionTarget = resolveIssueSelectionTarget(robot, issue)
+              const relatedNames = (issue.relatedIds || [])
+                .map((id) => robot.links[id]?.name || robot.joints[id]?.name || id)
+                .slice(0, 3)
+
+              return (
+                <div
+                  key={`top-blocker-${issue.category || 'unknown'}-${issue.itemId || index}-${index}`}
+                  className={`rounded-xl border bg-white dark:bg-panel-bg ${meta.rowClass}`}
+                >
+                  <div className={`h-0.5 ${meta.stripeClass}`} />
+                  <div className="space-y-3 p-4">
+                    <div className="flex items-start gap-3">
+                      <div className={`shrink-0 rounded-lg border p-2 ${meta.iconClass}`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-sm font-semibold text-text-primary">{issue.title}</h4>
+                          <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${meta.badgeClass}`}>
+                            {meta.label}
+                          </span>
+                          {issue.score !== undefined && (
+                            <span className="rounded border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                              {issue.score.toFixed(1)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-text-secondary">{issue.description}</p>
+                      </div>
+                    </div>
+
+                    {relatedNames.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {relatedNames.map((name) => (
+                          <span
+                            key={`${issue.title}:${name}`}
+                            className="rounded-md border border-border-black bg-element-bg px-2 py-1 text-[10px] font-medium text-text-secondary"
+                          >
+                            {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onAskAboutIssue(issue)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border-black bg-panel-bg px-3 py-1.5 text-[11px] font-medium text-system-blue transition-colors hover:bg-element-bg dark:bg-element-bg"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {t.askAboutThisIssue}
+                      </button>
+                      {selectionTarget && (
+                        <button
+                          type="button"
+                          onClick={() => onSelectItem(selectionTarget.type, selectionTarget.id)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-border-black bg-element-bg px-3 py-1.5 text-[11px] font-medium text-text-secondary transition-colors hover:bg-element-hover"
+                        >
+                          <Crosshair className="h-3.5 w-3.5" />
+                          {t.locateInModel}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4">
         {INSPECTION_CRITERIA.map(category => {
           const categoryIssues = issuesByCategory[category.id] || []
@@ -287,9 +408,7 @@ export function InspectionReportView({
           const categoryName = lang === 'zh' ? category.nameZh : category.name
           const hasProblems = categoryIssues.some(issue => issue.type !== 'pass')
           const nonPassCount = categoryIssues.filter(issue => issue.type !== 'pass').length
-          const orderedIssues = [...categoryIssues].sort(
-            (a, b) => (ISSUE_PRIORITY[a.type] ?? 99) - (ISSUE_PRIORITY[b.type] ?? 99)
-          )
+          const orderedIssues = [...categoryIssues].sort(compareIssuesByPriority)
           const CategoryIcon = getCategoryIcon(category.id)
 
           return (
@@ -406,6 +525,16 @@ export function InspectionReportView({
                                       <div className={`text-xs font-semibold ${getScoreColor(issueScore)}`}>
                                         {issueScore.toFixed(1)}
                                       </div>
+                                      {issue.type !== 'pass' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => onAskAboutIssue(issue)}
+                                          className="p-1.5 bg-element-bg border border-border-black hover:bg-element-hover hover:text-system-blue rounded-lg transition-colors"
+                                          title={t.askAboutThisIssue}
+                                        >
+                                          <MessageCircle className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                       {issue.category && issue.itemId && issue.type !== 'pass' && (
                                       <button
                                           onClick={() => onRetestItem(issue.category!, issue.itemId!)}

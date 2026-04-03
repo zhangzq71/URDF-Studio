@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowUpRight,
   Box,
+  MessageSquare,
   RefreshCw,
   Ruler,
   ScanSearch,
@@ -13,7 +14,8 @@ import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
 interface ToolboxMenuProps {
   t: TranslationKeys;
   onClose: () => void;
-  onOpenAI: () => void;
+  onOpenAIInspection: () => void;
+  onOpenAIConversation: () => void;
   onOpenMeasureTool: () => void;
   onOpenCollisionOptimizer: () => void;
 }
@@ -92,7 +94,8 @@ function ToolboxItemCard({
 export function ToolboxMenu({
   t,
   onClose,
-  onOpenAI,
+  onOpenAIInspection,
+  onOpenAIConversation,
   onOpenMeasureTool,
   onOpenCollisionOptimizer,
 }: ToolboxMenuProps) {
@@ -107,10 +110,15 @@ export function ToolboxMenu({
     window.open(url, '_blank', 'noopener,noreferrer');
   }, [onClose]);
 
-  const openAI = React.useCallback(() => {
+  const openAIInspection = React.useCallback(() => {
     onClose();
-    onOpenAI();
-  }, [onClose, onOpenAI]);
+    onOpenAIInspection();
+  }, [onClose, onOpenAIInspection]);
+
+  const openAIConversation = React.useCallback(() => {
+    onClose();
+    onOpenAIConversation();
+  }, [onClose, onOpenAIConversation]);
 
   const openCollisionOptimizer = React.useCallback(() => {
     onClose();
@@ -124,11 +132,19 @@ export function ToolboxMenu({
 
   const items: ToolboxItem[] = [
     {
-      key: 'ai',
-      title: t.aiAssistant,
-      description: t.aiAssistantDesc,
+      key: 'ai-inspection',
+      title: t.aiInspection,
+      description: t.aiInspectionDesc,
       icon: <ScanSearch className="h-[18px] w-[18px]" />,
-      onClick: openAI,
+      onClick: openAIInspection,
+      tone: 'primary',
+    },
+    {
+      key: 'ai-conversation',
+      title: t.aiConversation,
+      description: t.aiConversationDesc,
+      icon: <MessageSquare className="h-[18px] w-[18px]" />,
+      onClick: openAIConversation,
       tone: 'primary',
     },
     {

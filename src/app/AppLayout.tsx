@@ -143,7 +143,8 @@ interface AppLayoutProps {
   // Toast handler
   showToast: (message: string, type?: 'info' | 'success') => void;
   // Modal handlers
-  onOpenAI: () => void;
+  onOpenAIInspection: () => void;
+  onOpenAIConversation: () => void;
   isCodeViewerOpen: boolean;
   setIsCodeViewerOpen: (open: boolean) => void;
   onOpenSettings: () => void;
@@ -177,7 +178,8 @@ export function AppLayout({
   onOpenLibraryExport,
   onExportProject,
   showToast,
-  onOpenAI,
+  onOpenAIInspection,
+  onOpenAIConversation,
   isCodeViewerOpen,
   setIsCodeViewerOpen,
   onOpenSettings,
@@ -2419,7 +2421,8 @@ export function AppLayout({
         onImportFolder={() => importFolderInputRef.current?.click()}
         onOpenExport={onOpenExport}
         onExportProject={onExportProject}
-        onOpenAI={onOpenAI}
+        onOpenAIInspection={onOpenAIInspection}
+        onOpenAIConversation={onOpenAIConversation}
         onOpenMeasureTool={handleOpenMeasureTool}
         onOpenCodeViewer={handleOpenCodeViewer}
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
