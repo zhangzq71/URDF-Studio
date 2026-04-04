@@ -244,6 +244,7 @@ export const zh: TranslationKeys = {
   overallScore: "总分",
   downloadReport: "下载",
   downloadReportPDF: "下载报告 PDF",
+  saveReport: "保存报告",
   inspectorSummary: "总结",
   retestItem: "重新检查",
   chatTitle: "与 AI 对话",
@@ -286,6 +287,8 @@ export const zh: TranslationKeys = {
   inspectionSkipped: "未纳入",
   inspectionNoChecksSelected: "请至少选择 1 项检查后再运行。",
   inspectionNormalizedModel: "当前模型",
+  inspectionRegenerateConfirmTitle: "重新生成前先保存当前报告？",
+  inspectionRegenerateConfirmMessage: "重新生成会覆盖当前审阅结果。若需要保留这份报告，请先保存；你也可以直接选择重新生成覆盖当前结果。",
 
   // Additional UI
   collapseSidebar: "收起侧栏",
@@ -334,7 +337,7 @@ export const zh: TranslationKeys = {
   // 工具箱描述
   aiAssistantDesc: "使用 AI 分析机器人结构和物理合理性",
   aiInspectionDesc: "按审阅标准执行结构与物理合理性检查。",
-  aiConversationDesc: "围绕模型修改、审阅结果与修复路径进行对话。",
+  aiConversationDesc: "围绕模型修改与优化路径进行对话。",
   measureToolboxDesc: "打开可移动测量面板，在 3D 视图中按可选锚点测量 link 之间的距离",
   motionTrackingDesc: "分析和跟踪运动轨迹",
   motrixDesc: "在线仿真器",

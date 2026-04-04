@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, MessageCircle, ScanSearch } from 'lucide-react';
+import { MessageCircle, ScanSearch } from 'lucide-react';
 import type { InspectionReport, RobotState } from '@/types';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { DraggableWindow } from '@/shared/components';
+import { Button } from '@/shared/components/ui/Button';
+import { Dialog } from '@/shared/components/ui/Dialog';
 import { useDraggableWindow } from '@/shared/hooks';
 import { runRobotInspection } from '../services/aiService';
 import { calculateOverallScore, INSPECTION_CRITERIA } from '../utils/inspectionCriteria';
@@ -121,6 +123,8 @@ export function AIInspectionModal({
   const [inspectionRunContext, setInspectionRunContext] = useState<InspectionRunContext | null>(
     null,
   );
+  const [isRegenerateConfirmOpen, setIsRegenerateConfirmOpen] = useState(false);
+  const [isSavingReportBeforeRegenerate, setIsSavingReportBeforeRegenerate] = useState(false);
   const [retestingItem, setRetestingItem] = useState<RetestingItemState | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(INSPECTION_CRITERIA.map((category) => category.id)),
@@ -164,17 +168,6 @@ export function AIInspectionModal({
     }
   }, []);
 
-  const resetTransientInspectionState = useCallback(() => {
-    clearInspectionTimer();
-    setInspectionProgress(null);
-    setInspectionElapsedSeconds(0);
-    setInspectionRunContext(null);
-    setInspectionReport(null);
-    setPendingReportScrollTarget(null);
-    setRetestingItem(null);
-    setIsInspecting(false);
-  }, [clearInspectionTimer]);
-
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -187,6 +180,8 @@ export function AIInspectionModal({
   }, [clearInspectionTimer]);
 
   const handleClose = useCallback(() => {
+    setIsRegenerateConfirmOpen(false);
+    setIsSavingReportBeforeRegenerate(false);
     onClose();
   }, [onClose]);
 
@@ -201,7 +196,10 @@ export function AIInspectionModal({
 
     clearInspectionTimer();
     setIsInspecting(true);
+    setIsRegenerateConfirmOpen(false);
+    setIsSavingReportBeforeRegenerate(false);
     setInspectionReport(null);
+    setPendingReportScrollTarget(null);
     setRetestingItem(null);
     setInspectionElapsedSeconds(0);
 
@@ -398,12 +396,30 @@ export function AIInspectionModal({
   }, [expandedCategories, inspectionReport, pendingReportScrollTarget, scrollToReportAnchor]);
 
   const handleDownloadPDF = () => {
-    exportInspectionReportPdf({
+    return exportInspectionReportPdf({
       inspectionReport,
       robotName: robot.name,
       lang,
       inspectionContext: robot.inspectionContext,
     });
+  };
+
+  const handleSaveReportFromConfirmDialog = async () => {
+    setIsSavingReportBeforeRegenerate(true);
+
+    try {
+      await handleDownloadPDF();
+    } finally {
+      if (isMountedRef.current) {
+        setIsSavingReportBeforeRegenerate(false);
+      }
+    }
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setIsRegenerateConfirmOpen(false);
   };
 
   const handleAskAboutIssue = useCallback(
@@ -548,18 +564,6 @@ export function AIInspectionModal({
         {!inspectionProgress && (
           <div className="flex min-h-14 items-center justify-between gap-3 border-t border-border-black bg-element-bg px-4 py-2 shrink-0">
             <div className="flex min-w-0 items-center gap-2">
-              {inspectionReport && (
-                <button
-                  onClick={() => {
-                    inspectionRunIdRef.current += 1;
-                    resetTransientInspectionState();
-                  }}
-                  className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-text-secondary transition-colors hover:bg-element-hover hover:text-text-primary"
-                >
-                  <ArrowRight className="w-3.5 h-3.5 rotate-180" />
-                  {t.back}
-                </button>
-              )}
               {!inspectionReport && (
                 <div className="min-w-0 rounded-lg border border-border-black bg-panel-bg px-3 py-1.5 shadow-sm">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -584,7 +588,16 @@ export function AIInspectionModal({
             </div>
 
             <div className="flex items-center gap-2">
-              {!inspectionReport && (
+              {inspectionReport ? (
+                <button
+                  type="button"
+                  onClick={() => setIsRegenerateConfirmOpen(true)}
+                  disabled={isSavingReportBeforeRegenerate}
+                  className="h-8 rounded-lg bg-system-blue-solid px-5 text-xs font-semibold text-white transition-colors hover:bg-system-blue-hover disabled:opacity-30"
+                >
+                  {t.retryLastResponse}
+                </button>
+              ) : (
                 <>
                   <button
                     onClick={handleClose}
@@ -612,6 +625,53 @@ export function AIInspectionModal({
           </div>
         )}
       </DraggableWindow>
+
+      <Dialog
+        isOpen={isRegenerateConfirmOpen}
+        onClose={() => {
+          if (!isSavingReportBeforeRegenerate) {
+            setIsRegenerateConfirmOpen(false);
+          }
+        }}
+        title={t.inspectionRegenerateConfirmTitle}
+        width="w-[460px]"
+        zIndexClassName="z-[130]"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsRegenerateConfirmOpen(false)}
+              disabled={isSavingReportBeforeRegenerate}
+            >
+              {t.back}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                void handleSaveReportFromConfirmDialog();
+              }}
+              isLoading={isSavingReportBeforeRegenerate}
+            >
+              {t.saveReport}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                void handleRunInspection();
+              }}
+              disabled={isSavingReportBeforeRegenerate}
+            >
+              {t.retryLastResponse}
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-6 text-text-secondary">
+          {t.inspectionRegenerateConfirmMessage}
+        </p>
+      </Dialog>
     </>
   );
 }

@@ -244,6 +244,7 @@ export const en: TranslationKeys = {
   overallScore: "Overall Score",
   downloadReport: "Download",
   downloadReportPDF: "Download Report as PDF",
+  saveReport: "Save Report",
   inspectionItems: "Inspection Items",
   retestItem: "Retest",
   chatTitle: "Chat with AI",
@@ -286,6 +287,8 @@ export const en: TranslationKeys = {
   inspectionSkipped: "Skipped",
   inspectionNoChecksSelected: "Select at least one inspection item to start the run.",
   inspectionNormalizedModel: "Normalized Model",
+  inspectionRegenerateConfirmTitle: "Save the current report before regenerating?",
+  inspectionRegenerateConfirmMessage: "Regenerating will replace the current inspection result. Save this report first if you need to keep it; after saving you will return to the current result view, or you can regenerate now and overwrite it.",
 
   // Additional UI
   collapseSidebar: "Collapse sidebar",

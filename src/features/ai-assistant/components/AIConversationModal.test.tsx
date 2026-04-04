@@ -309,3 +309,93 @@ test('transparent AI conversation backdrop does not intercept pointer events', a
     dom.window.close()
   }
 })
+
+test('suggested prompts expose hover and focus border highlight styles', async () => {
+  const dom = installDom()
+  const container = dom.window.document.getElementById('root')
+  assert.ok(container, 'root container should exist')
+
+  const { AIConversationModal } = await import('./AIConversationModal.tsx')
+  const root = createRoot(container)
+
+  try {
+    await act(async () => {
+      root.render(
+        <AIConversationModal
+          isOpen
+          onClose={() => {}}
+          lang="zh"
+          launchContext={createLaunchContext()}
+          onStartNewConversation={() => {}}
+        />,
+      )
+    })
+    await flush()
+
+    const [firstPrompt] = buildConversationPromptSuggestions({
+      lang: 'zh',
+      isReportFollowup: false,
+      selectedEntityName: null,
+    })
+    assert.ok(firstPrompt, 'expected at least one prompt suggestion')
+
+    const promptButton = findButtonByText(container, firstPrompt)
+    const newConversationButton = findButtonByText(container, '新开对话')
+    const promptLabel = Array.from(promptButton.querySelectorAll('span')).find((span) =>
+      span.className.includes('group-hover:text-text-primary') &&
+      span.textContent?.trim().includes(firstPrompt),
+    )
+
+    assert.equal(
+      newConversationButton.className.includes('hover:border-system-blue/35'),
+      true,
+      'new conversation button should highlight its border on hover',
+    )
+    assert.equal(
+      newConversationButton.className.includes('focus:border-system-blue/35'),
+      true,
+      'new conversation button should preserve border emphasis on keyboard focus',
+    )
+    assert.equal(
+      newConversationButton.className.includes('hover:text-system-blue'),
+      true,
+      'new conversation button should highlight its label and icon on hover',
+    )
+    assert.equal(
+      newConversationButton.className.includes('focus:text-system-blue'),
+      true,
+      'new conversation button should preserve label and icon emphasis on keyboard focus',
+    )
+    assert.equal(
+      promptButton.className.includes('hover:border-system-blue/35'),
+      true,
+      'suggested prompt should highlight its border on hover',
+    )
+    assert.equal(
+      promptButton.className.includes('focus:border-system-blue/35'),
+      true,
+      'suggested prompt should preserve border emphasis on keyboard focus',
+    )
+    assert.equal(
+      promptButton.className.includes('hover:-translate-y-0.5'),
+      true,
+      'suggested prompt should feel more interactive on hover',
+    )
+    assert.ok(promptLabel, 'expected suggested prompt label to render')
+    assert.equal(
+      promptLabel.className.includes('group-hover:text-text-primary'),
+      true,
+      'suggested prompt label should highlight together with the card on hover',
+    )
+    assert.equal(
+      promptLabel.className.includes('group-focus-visible:text-text-primary'),
+      true,
+      'suggested prompt label should stay emphasized for keyboard focus',
+    )
+  } finally {
+    await act(async () => {
+      root.unmount()
+    })
+    dom.window.close()
+  }
+})

@@ -457,6 +457,7 @@ export function AIConversationModal({
     ? t.newConversation
     : t.clearConversationHistory
   const headerActionButtonClassName = 'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border-black bg-panel-bg px-2.5 text-[11px] font-semibold text-text-secondary transition-colors hover:bg-element-hover focus:outline-none focus:ring-2 focus:ring-system-blue/30 dark:bg-panel-bg'
+  const newConversationButtonClassName = `${headerActionButtonClassName} hover:border-system-blue/35 hover:text-system-blue focus:border-system-blue/35 focus:text-system-blue`
   const clearHistoryButtonClassName = `${headerActionButtonClassName} hover:border-danger-border hover:bg-danger-soft hover:text-danger-hover focus:ring-danger/20`
 
   return (
@@ -487,7 +488,7 @@ export function AIConversationModal({
               data-window-control
               type="button"
               onClick={() => setPendingResetAction('new-conversation')}
-              className={headerActionButtonClassName}
+              className={newConversationButtonClassName}
               aria-label={t.newConversation}
               title={t.newConversation}
             >
@@ -545,12 +546,17 @@ export function AIConversationModal({
                       {isReportFollowup ? t.askAboutReport : t.aiConversationDesc}
                     </p>
                     <div className="space-y-3 rounded-2xl border border-border-black bg-panel-bg/80 px-4 py-4 text-left shadow-sm dark:bg-element-bg/70">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
-                          {t.examples}
+                      <div className="flex items-start gap-3 rounded-xl border border-border-black/60 bg-element-bg/70 px-3 py-3 dark:bg-element-bg">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-system-blue/20 bg-system-blue/10 text-system-blue">
+                          <MessageCircle className="h-4 w-4" />
                         </div>
-                        <div className="text-[10px] text-text-tertiary">
-                          {t.conversationSuggestionsHint}
+                        <div className="min-w-0 space-y-1">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                            {t.examples}
+                          </div>
+                          <div className="text-[10px] leading-relaxed text-text-tertiary">
+                            {t.conversationSuggestionsHint}
+                          </div>
                         </div>
                       </div>
                       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -561,12 +567,16 @@ export function AIConversationModal({
                             onClick={() => {
                               void handleSuggestedPromptSelect(prompt)
                             }}
-                            className="group flex items-start gap-2 rounded-xl border border-border-black bg-panel-bg px-3 py-3 text-left transition-colors hover:bg-element-hover focus:outline-none focus:ring-2 focus:ring-system-blue/30 dark:bg-panel-bg"
+                            className="group flex items-start gap-3 rounded-xl border border-border-black bg-panel-bg px-3.5 py-3 text-left shadow-sm transition-all duration-100 hover:-translate-y-0.5 hover:border-system-blue/35 hover:bg-element-hover focus:border-system-blue/35 focus:bg-element-hover focus:outline-none focus:ring-2 focus:ring-system-blue/30 dark:bg-panel-bg"
                             title={prompt}
                           >
-                            <Send className="mt-0.5 h-3.5 w-3.5 shrink-0 text-system-blue transition-colors group-hover:text-system-blue-hover" />
-                            <span className="text-xs leading-relaxed text-text-secondary">
-                              {prompt}
+                            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-system-blue/20 bg-system-blue/10 text-system-blue transition-colors group-hover:border-system-blue/35 group-hover:bg-system-blue/15 group-hover:text-system-blue-hover group-focus-visible:border-system-blue/35 group-focus-visible:bg-system-blue/15 group-focus-visible:text-system-blue-hover">
+                              <Send className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs leading-relaxed text-text-secondary transition-colors group-hover:text-text-primary group-focus-visible:text-text-primary">
+                                {prompt}
+                              </span>
                             </span>
                           </button>
                         ))}

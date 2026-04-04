@@ -242,6 +242,7 @@ export interface TranslationKeys {
   overallScore: string;
   downloadReport: string;
   downloadReportPDF: string;
+  saveReport: string;
   inspectionItems: string;
   retestItem: string;
   chatTitle: string;
@@ -284,6 +285,8 @@ export interface TranslationKeys {
   inspectionSkipped: string;
   inspectionNoChecksSelected: string;
   inspectionNormalizedModel: string;
+  inspectionRegenerateConfirmTitle: string;
+  inspectionRegenerateConfirmMessage: string;
 
   // Additional UI
   collapseSidebar: string;
