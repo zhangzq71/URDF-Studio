@@ -1,5 +1,9 @@
 import type { ConversationHistoryTurn } from '../services/conversationService'
-import type { AIConversationChatMessage, AIConversationMessage } from '../types'
+import type {
+  AIConversationChatMessage,
+  AIConversationDivider,
+  AIConversationMessage,
+} from '../types'
 
 export function createConversationMessage(
   role: 'user' | 'assistant',
@@ -25,7 +29,9 @@ export function isConversationChatMessage(
   return message.kind === 'message'
 }
 
-export function isConversationDivider(message: AIConversationMessage): boolean {
+export function isConversationDivider(
+  message: AIConversationMessage,
+): message is AIConversationDivider {
   return message.kind === 'divider'
 }
 

@@ -44,12 +44,18 @@ function installDom() {
     dom.window.HTMLElement.prototype.scrollIntoView = () => {}
   }
 
-  if (!dom.window.HTMLElement.prototype.attachEvent) {
-    dom.window.HTMLElement.prototype.attachEvent = () => {}
+  if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'attachEvent', {
+      value: () => {},
+      configurable: true,
+    })
   }
 
-  if (!dom.window.HTMLElement.prototype.detachEvent) {
-    dom.window.HTMLElement.prototype.detachEvent = () => {}
+  if (!('detachEvent' in dom.window.HTMLElement.prototype)) {
+    Object.defineProperty(dom.window.HTMLElement.prototype, 'detachEvent', {
+      value: () => {},
+      configurable: true,
+    })
   }
 
   if (!dom.window.HTMLTextAreaElement.prototype.setSelectionRange) {
@@ -75,11 +81,13 @@ const createRobotFixture = (): RobotState => ({
       visual: {
         type: GeometryType.BOX,
         dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+        color: '#9ca3af',
         origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
       },
       collision: {
         type: GeometryType.BOX,
         dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+        color: '#9ca3af',
         origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
       },
       inertial: {

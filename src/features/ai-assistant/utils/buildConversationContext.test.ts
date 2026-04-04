@@ -14,11 +14,13 @@ const createRobotFixture = (): RobotState => ({
       visual: {
         type: GeometryType.BOX,
         dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+        color: '#9ca3af',
         origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
       },
       collision: {
         type: GeometryType.BOX,
         dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+        color: '#9ca3af',
         origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
       },
       inertial: {
