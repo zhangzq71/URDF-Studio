@@ -122,3 +122,19 @@ test('empty string ids are normalized to the empty selection state', () => {
   state.setHoveredSelection({ type: 'link', id: '' });
   assert.deepEqual(useSelectionStore.getState().hoveredSelection, { type: null, id: null });
 });
+
+test('focusOn re-arms the same target so repeated locate actions can retrigger camera focus', async () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.focusOn('base_link');
+  assert.equal(useSelectionStore.getState().focusTarget, 'base_link');
+
+  state.focusOn('base_link');
+  assert.equal(useSelectionStore.getState().focusTarget, null);
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(useSelectionStore.getState().focusTarget, 'base_link');
+
+  useSelectionStore.getState().setFocusTarget(null);
+});

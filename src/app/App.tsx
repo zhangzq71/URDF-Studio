@@ -9,7 +9,13 @@ import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
-import { useAppShellState, useFileImport, useFileExport, useImportInputBinding, useUnsavedChangesPrompt } from './hooks';
+import {
+  useAppShellState,
+  useFileImport,
+  useFileExport,
+  useImportInputBinding,
+  useUnsavedChangesPrompt,
+} from './hooks';
 import { prepareImportPayloadWithWorker } from './hooks/importPreparationWorkerBridge';
 import { resolveRobotFileDataWithWorker } from './hooks/robotImportWorkerBridge';
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
@@ -20,7 +26,13 @@ import {
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
-import { useRobotStore, useUIStore, useSelectionStore, useAssetsStore, useAssemblyStore } from '@/store';
+import {
+  useRobotStore,
+  useUIStore,
+  useSelectionStore,
+  useAssetsStore,
+  useAssemblyStore,
+} from '@/store';
 import type { InspectionReport, RobotFile, RobotState } from '@/types';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
@@ -47,20 +59,22 @@ import type {
   AIConversationSelection,
 } from '@/features/ai-assistant/types';
 
-const loadAIInspectionModalModule = () => import('@/features/ai-assistant/components/AIInspectionModal');
-const loadAIConversationModalModule = () => import('@/features/ai-assistant/components/AIConversationModal');
+const loadAIInspectionModalModule = () =>
+  import('@/features/ai-assistant/components/AIInspectionModal');
+const loadAIConversationModalModule = () =>
+  import('@/features/ai-assistant/components/AIConversationModal');
 const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
 
 const AIInspectionModal = lazy(() =>
-  loadAIInspectionModalModule().then((module) => ({ default: module.AIInspectionModal }))
+  loadAIInspectionModalModule().then((module) => ({ default: module.AIInspectionModal })),
 );
 
 const AIConversationModal = lazy(() =>
-  loadAIConversationModalModule().then((module) => ({ default: module.AIConversationModal }))
+  loadAIConversationModalModule().then((module) => ({ default: module.AIConversationModal })),
 );
 
 const ExportDialog = lazy(() =>
-  loadExportDialogModule().then((module) => ({ default: module.ExportDialog }))
+  loadExportDialogModule().then((module) => ({ default: module.ExportDialog })),
 );
 
 function cloneAISnapshot<T>(value: T): T {
@@ -108,8 +122,12 @@ function createConversationLaunchContext({
     sessionId,
     mode,
     robotSnapshot: nextRobotSnapshot,
-    inspectionReportSnapshot: inspectionReportSnapshot ? cloneAISnapshot(inspectionReportSnapshot) : null,
-    selectedEntity: selectedEntity ? cloneAISnapshot(selectedEntity) : resolveConversationSelectedEntity(nextRobotSnapshot),
+    inspectionReportSnapshot: inspectionReportSnapshot
+      ? cloneAISnapshot(inspectionReportSnapshot)
+      : null,
+    selectedEntity: selectedEntity
+      ? cloneAISnapshot(selectedEntity)
+      : resolveConversationSelectedEntity(nextRobotSnapshot),
     focusedIssue: nextFocusedIssue,
   };
 }
@@ -132,14 +150,19 @@ function AIInspectionConnector({
     },
   ) => void;
 }) {
-  const { sidebarTab } = useUIStore(useShallow((state) => ({
-    sidebarTab: state.sidebarTab,
-  })));
-  const { selection, setSelection, focusOn } = useSelectionStore(useShallow((state) => ({
-    selection: state.selection,
-    setSelection: state.setSelection,
-    focusOn: state.focusOn,
-  })));
+  const { sidebarTab } = useUIStore(
+    useShallow((state) => ({
+      sidebarTab: state.sidebarTab,
+    })),
+  );
+  const { selection, setSelection, focusOn, pulseSelection } = useSelectionStore(
+    useShallow((state) => ({
+      selection: state.selection,
+      setSelection: state.setSelection,
+      focusOn: state.focusOn,
+      pulseSelection: state.pulseSelection,
+    })),
+  );
   const {
     robotName,
     robotLinks,
@@ -148,19 +171,23 @@ function AIInspectionConnector({
     robotMaterials,
     robotClosedLoopConstraints,
     inspectionContext,
-  } = useRobotStore(useShallow((state) => ({
-    robotName: state.name,
-    robotLinks: state.links,
-    robotJoints: state.joints,
-    rootLinkId: state.rootLinkId,
-    robotMaterials: state.materials,
-    robotClosedLoopConstraints: state.closedLoopConstraints,
-    inspectionContext: state.inspectionContext,
-  })));
-  const { assemblyState, getMergedRobotData } = useAssemblyStore(useShallow((state) => ({
-    assemblyState: state.assemblyState,
-    getMergedRobotData: state.getMergedRobotData,
-  })));
+  } = useRobotStore(
+    useShallow((state) => ({
+      robotName: state.name,
+      robotLinks: state.links,
+      robotJoints: state.joints,
+      rootLinkId: state.rootLinkId,
+      robotMaterials: state.materials,
+      robotClosedLoopConstraints: state.closedLoopConstraints,
+      inspectionContext: state.inspectionContext,
+    })),
+  );
+  const { assemblyState, getMergedRobotData } = useAssemblyStore(
+    useShallow((state) => ({
+      assemblyState: state.assemblyState,
+      getMergedRobotData: state.getMergedRobotData,
+    })),
+  );
 
   const mergedWorkspaceRobot = useMemo(() => {
     if (!assemblyState || sidebarTab !== 'workspace') {
@@ -208,6 +235,7 @@ function AIInspectionConnector({
       lang={lang}
       onSelectItem={(type, id) => {
         setSelection({ type, id });
+        pulseSelection({ type, id });
         focusOn(id);
       }}
       onOpenConversationWithReport={onOpenConversationWithReport}
@@ -250,41 +278,47 @@ function ExportDialogConnector({
   lang: Language;
   isExporting: boolean;
   onClose: () => void;
-  onExport: (config: ExportDialogConfig, options?: { onProgress?: (progress: ExportProgressState) => void }) => Promise<void>;
+  onExport: (
+    config: ExportDialogConfig,
+    options?: { onProgress?: (progress: ExportProgressState) => void },
+  ) => Promise<void>;
 }) {
-  const { sidebarTab } = useUIStore(useShallow((state) => ({
-    sidebarTab: state.sidebarTab,
-  })));
-  const {
-    selectedFile,
-    documentLoadState,
-    getUsdSceneSnapshot,
-    getUsdPreparedExportCache,
-  } = useAssetsStore(useShallow((state) => ({
-    selectedFile: state.selectedFile,
-    documentLoadState: state.documentLoadState,
-    getUsdSceneSnapshot: state.getUsdSceneSnapshot,
-    getUsdPreparedExportCache: state.getUsdPreparedExportCache,
-  })));
+  const { sidebarTab } = useUIStore(
+    useShallow((state) => ({
+      sidebarTab: state.sidebarTab,
+    })),
+  );
+  const { selectedFile, documentLoadState, getUsdSceneSnapshot, getUsdPreparedExportCache } =
+    useAssetsStore(
+      useShallow((state) => ({
+        selectedFile: state.selectedFile,
+        documentLoadState: state.documentLoadState,
+        getUsdSceneSnapshot: state.getUsdSceneSnapshot,
+        getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+      })),
+    );
 
-  const isSelectedUsdHydrating = selectedFile?.format === 'usd'
-    && documentLoadState.status === 'hydrating'
-    && documentLoadState.fileName === selectedFile.name;
+  const isSelectedUsdHydrating =
+    selectedFile?.format === 'usd' &&
+    documentLoadState.status === 'hydrating' &&
+    documentLoadState.fileName === selectedFile.name;
 
-  const currentUsdExportMode = selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
-    ? resolveCurrentUsdExportMode({
-      isHydrating: isSelectedUsdHydrating,
-      hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
-      hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
-      hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
-    })
-    : 'unavailable';
+  const currentUsdExportMode =
+    selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+      ? resolveCurrentUsdExportMode({
+          isHydrating: isSelectedUsdHydrating,
+          hasLiveStageExportHandler: Boolean(getUsdStageExportHandler()),
+          hasPreparedExportCache: Boolean(getUsdPreparedExportCache(selectedFile.name)),
+          hasSceneSnapshot: Boolean(getUsdSceneSnapshot(selectedFile.name)),
+        })
+      : 'unavailable';
 
-  const canExportUsd = target.type === 'current'
-    ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
-      ? currentUsdExportMode !== 'unavailable'
-      : !isSelectedUsdHydrating
-    : isLibraryRobotExportableFormat(target.file.format);
+  const canExportUsd =
+    target.type === 'current'
+      ? selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
+        ? currentUsdExportMode !== 'unavailable'
+        : !isSelectedUsdHydrating
+      : isLibraryRobotExportableFormat(target.file.format);
   const allowProjectExport = target.type === 'current' && sidebarTab === 'workspace';
   const defaultFormat: ExportDialogConfig['format'] = 'mjcf';
 
@@ -313,9 +347,7 @@ function waitForNextPaint(): Promise<void> {
   });
 }
 
-type ExportDialogTarget =
-  | { type: 'current' }
-  | { type: 'library-file'; file: RobotFile };
+type ExportDialogTarget = { type: 'current' } | { type: 'library-file'; file: RobotFile };
 
 function resolveCurrentAIRobotSnapshot(): RobotState {
   const { sidebarTab } = useUIStore.getState();
@@ -351,13 +383,18 @@ function AppContent() {
   // Refs for file inputs
   const importInputRef = useRef<HTMLInputElement>(null);
   const importFolderInputRef = useRef<HTMLInputElement>(null);
-  const loadRobotByNameRef = useRef<((file: RobotFile, options?: { forceReload?: boolean }) => Promise<void> | void) | null>(null);
+  const loadRobotByNameRef = useRef<
+    ((file: RobotFile, options?: { forceReload?: boolean }) => Promise<void> | void) | null
+  >(null);
   const loadRequestIdRef = useRef(0);
   const aiConversationSessionIdRef = useRef(0);
   const [shouldRenderAIInspectionModal, setShouldRenderAIInspectionModal] = useState(false);
   const [shouldRenderAIConversationModal, setShouldRenderAIConversationModal] = useState(false);
-  const [aiConversationLaunchContext, setAIConversationLaunchContext] = useState<AIConversationLaunchContext | null>(null);
-  const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({ type: 'current' });
+  const [aiConversationLaunchContext, setAIConversationLaunchContext] =
+    useState<AIConversationLaunchContext | null>(null);
+  const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({
+    type: 'current',
+  });
   const [disconnectedWorkspaceUrdfDialog, setDisconnectedWorkspaceUrdfDialog] = useState<{
     config: ExportDialogConfig;
     request: {
@@ -367,33 +404,35 @@ function AppContent() {
       exportName: string;
     };
   } | null>(null);
-  const [isDisconnectedWorkspaceUrdfExporting, setIsDisconnectedWorkspaceUrdfExporting] = useState(false);
+  const [isDisconnectedWorkspaceUrdfExporting, setIsDisconnectedWorkspaceUrdfExporting] =
+    useState(false);
   const [viewerReloadKey, setViewerReloadKey] = useState(0);
-  const [importPreparationOverlay, setImportPreparationOverlay] = useState<ImportPreparationOverlayState | null>(null);
+  const [importPreparationOverlay, setImportPreparationOverlay] =
+    useState<ImportPreparationOverlayState | null>(null);
 
   // UI Store
-  const { lang, setAppMode, openSettings } = useUIStore(useShallow((state) => ({
-    lang: state.lang,
-    setAppMode: state.setAppMode,
-    openSettings: state.openSettings,
-  })));
+  const { lang, setAppMode, openSettings } = useUIStore(
+    useShallow((state) => ({
+      lang: state.lang,
+      setAppMode: state.setAppMode,
+      openSettings: state.openSettings,
+    })),
+  );
   const t = translations[lang];
 
   // Selection Store
   const setSelection = useSelectionStore((state) => state.setSelection);
 
   // Assets Store
-  const {
-    setOriginalUrdfContent,
-    setOriginalFileFormat,
-    setSelectedFile,
-    setDocumentLoadState,
-  } = useAssetsStore(useShallow((state) => ({
-    setOriginalUrdfContent: state.setOriginalUrdfContent,
-    setOriginalFileFormat: state.setOriginalFileFormat,
-    setSelectedFile: state.setSelectedFile,
-    setDocumentLoadState: state.setDocumentLoadState,
-  })));
+  const { setOriginalUrdfContent, setOriginalFileFormat, setSelectedFile, setDocumentLoadState } =
+    useAssetsStore(
+      useShallow((state) => ({
+        setOriginalUrdfContent: state.setOriginalUrdfContent,
+        setOriginalFileFormat: state.setOriginalFileFormat,
+        setSelectedFile: state.setSelectedFile,
+        setDocumentLoadState: state.setDocumentLoadState,
+      })),
+    );
 
   // Robot Store
   const setRobot = useRobotStore((state) => state.setRobot);
@@ -421,167 +460,64 @@ function AppContent() {
     setViewConfig,
   } = useAppShellState();
 
-  const applyResolvedRobotImport = useCallback((file: RobotFile, importResult: RobotImportResult) => {
-    if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
-      if (importResult.status === 'ready') {
-        setRobot(
-          importResult.robotData,
-          {
+  const applyResolvedRobotImport = useCallback(
+    (file: RobotFile, importResult: RobotImportResult) => {
+      if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
+        if (importResult.status === 'ready') {
+          setRobot(importResult.robotData, {
             resetHistory: true,
             label: file.format === 'usd' ? 'Load USD stage' : 'Load imported robot',
-          },
-        );
+          });
 
-        if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
-          setOriginalUrdfContent(importResult.resolvedUrdfContent);
+          if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
+            setOriginalUrdfContent(importResult.resolvedUrdfContent);
+          }
+          markUnsavedChangesBaselineSaved('robot');
         }
-        markUnsavedChangesBaselineSaved('robot');
+        const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
+        setDocumentLoadState(
+          preserveDocumentLoadProgressForSameFile({
+            currentState: currentDocumentLoadState,
+            nextState: {
+              status: importResult.status === 'needs_hydration' ? 'hydrating' : 'loading',
+              fileName: file.name,
+              format: file.format,
+              error: null,
+              phase:
+                importResult.status === 'needs_hydration'
+                  ? 'checking-path'
+                  : file.format === 'usd'
+                    ? 'checking-path'
+                    : 'preparing-scene',
+              message: null,
+              progressPercent: null,
+              loadedCount: null,
+              totalCount: null,
+            },
+          }),
+        );
+        return;
       }
-      const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
-      setDocumentLoadState(preserveDocumentLoadProgressForSameFile({
-        currentState: currentDocumentLoadState,
-        nextState: {
-          status: importResult.status === 'needs_hydration' ? 'hydrating' : 'loading',
+
+      if (importResult.reason === 'source_only_fragment') {
+        setDocumentLoadState({
+          status: 'ready',
           fileName: file.name,
           format: file.format,
           error: null,
-          phase: importResult.status === 'needs_hydration'
-            ? 'checking-path'
-            : file.format === 'usd'
-              ? 'checking-path'
-              : 'preparing-scene',
-          message: null,
-          progressPercent: null,
+          phase: null,
+          message: t.xacroSourceOnlyPreviewHint,
+          progressPercent: 100,
           loadedCount: null,
           totalCount: null,
-        },
-      }));
-      return;
-    }
-
-    if (importResult.reason === 'source_only_fragment') {
-      setDocumentLoadState({
-        status: 'ready',
-        fileName: file.name,
-        format: file.format,
-        error: null,
-        phase: null,
-        message: t.xacroSourceOnlyPreviewHint,
-        progressPercent: 100,
-        loadedCount: null,
-        totalCount: null,
-      });
-      showToast(t.xacroSourceOnlyPreviewHint, 'info');
-      return;
-    }
-
-    const message = importResult.message
-      ?? t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
-    setDocumentLoadState({
-      status: 'error',
-      fileName: file.name,
-      format: file.format,
-      error: message,
-    });
-    showToast(message, 'info');
-  }, [
-    setDocumentLoadState,
-    setOriginalUrdfContent,
-    setRobot,
-    showToast,
-    t,
-  ]);
-
-  const commitResolvedFileSelection = useCallback((file: RobotFile) => {
-    setViewerReloadKey((value) => value + 1);
-    setSelectedFile(file);
-    setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-    setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
-    setSelection({ type: null, id: null });
-    const currentAppMode = useUIStore.getState().appMode;
-    const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
-    if (nextAppMode !== currentAppMode) {
-      setAppMode(nextAppMode);
-    }
-  }, [
-    setAppMode,
-    setOriginalFileFormat,
-    setOriginalUrdfContent,
-    setSelectedFile,
-    setSelection,
-  ]);
-
-  // Keep one internal loader so debug automation can force a reload of the
-  // currently selected file without changing normal click behavior.
-  const loadRobotFile = useCallback(async (file: RobotFile, options?: { forceReload?: boolean }) => {
-    const liveAssetsState = useAssetsStore.getState();
-    const currentSelectedFile = liveAssetsState.selectedFile;
-    if (
-      !options?.forceReload
-      && currentSelectedFile
-      && currentSelectedFile.name === file.name
-      && currentSelectedFile.format === file.format
-      && currentSelectedFile.content === file.content
-      && currentSelectedFile.blobUrl === file.blobUrl
-    ) {
-      const currentAppMode = useUIStore.getState().appMode;
-      const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
-      if (nextAppMode !== currentAppMode) {
-        setAppMode(nextAppMode);
-      }
-      return;
-    }
-
-    setDocumentLoadState(preserveDocumentLoadProgressForSameFile({
-      currentState: liveAssetsState.documentLoadState,
-      nextState: {
-        status: 'loading',
-        fileName: file.name,
-        format: file.format,
-        error: null,
-        phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
-        message: null,
-        progressPercent: null,
-        loadedCount: null,
-        totalCount: null,
-      },
-    }));
-    const requestId = ++loadRequestIdRef.current;
-
-    prewarmUsdSelectionInBackground(file, liveAssetsState.availableFiles, liveAssetsState.assets);
-
-    const preResolvedImportResult = peekPreResolvedRobotImport(file);
-    if (preResolvedImportResult) {
-      if (requestId !== loadRequestIdRef.current) {
+        });
+        showToast(t.xacroSourceOnlyPreviewHint, 'info');
         return;
       }
 
-      if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
-        commitResolvedFileSelection(file);
-      }
-      applyResolvedRobotImport(file, preResolvedImportResult);
-      return;
-    }
-
-    const importResultPromise = resolveRobotFileDataWithWorker(file, {
-      availableFiles: liveAssetsState.availableFiles,
-      assets: liveAssetsState.assets,
-      usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
-    });
-
-    await waitForNextPaint();
-
-    let importResult: Awaited<ReturnType<typeof resolveRobotFileDataWithWorker>>;
-    try {
-      importResult = await importResultPromise;
-    } catch (error) {
-      if (requestId !== loadRequestIdRef.current) {
-        return;
-      }
-
-      const message = error instanceof Error
-        ? error.message
-        : t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
+      const message =
+        importResult.message ??
+        t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
       setDocumentLoadState({
         status: 'error',
         fileName: file.name,
@@ -589,29 +525,136 @@ function AppContent() {
         error: message,
       });
       showToast(message, 'info');
-      return;
-    }
+    },
+    [setDocumentLoadState, setOriginalUrdfContent, setRobot, showToast, t],
+  );
 
-    if (requestId !== loadRequestIdRef.current) {
-      return;
-    }
+  const commitResolvedFileSelection = useCallback(
+    (file: RobotFile) => {
+      setViewerReloadKey((value) => value + 1);
+      setSelectedFile(file);
+      setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
+      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+      setSelection({ type: null, id: null });
+      const currentAppMode = useUIStore.getState().appMode;
+      const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
+      if (nextAppMode !== currentAppMode) {
+        setAppMode(nextAppMode);
+      }
+    },
+    [setAppMode, setOriginalFileFormat, setOriginalUrdfContent, setSelectedFile, setSelection],
+  );
 
-    if (shouldCommitResolvedRobotSelection(importResult)) {
-      commitResolvedFileSelection(file);
-    }
-    applyResolvedRobotImport(file, importResult);
-  }, [
-    applyResolvedRobotImport,
-    commitResolvedFileSelection,
-    setDocumentLoadState,
-    setAppMode,
-    showToast,
-    t,
-  ]);
+  // Keep one internal loader so debug automation can force a reload of the
+  // currently selected file without changing normal click behavior.
+  const loadRobotFile = useCallback(
+    async (file: RobotFile, options?: { forceReload?: boolean }) => {
+      const liveAssetsState = useAssetsStore.getState();
+      const currentSelectedFile = liveAssetsState.selectedFile;
+      if (
+        !options?.forceReload &&
+        currentSelectedFile &&
+        currentSelectedFile.name === file.name &&
+        currentSelectedFile.format === file.format &&
+        currentSelectedFile.content === file.content &&
+        currentSelectedFile.blobUrl === file.blobUrl
+      ) {
+        const currentAppMode = useUIStore.getState().appMode;
+        const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
+        if (nextAppMode !== currentAppMode) {
+          setAppMode(nextAppMode);
+        }
+        return;
+      }
 
-  const handleLoadRobot = useCallback((file: RobotFile) => {
-    loadRobotFile(file);
-  }, [loadRobotFile]);
+      setDocumentLoadState(
+        preserveDocumentLoadProgressForSameFile({
+          currentState: liveAssetsState.documentLoadState,
+          nextState: {
+            status: 'loading',
+            fileName: file.name,
+            format: file.format,
+            error: null,
+            phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+            message: null,
+            progressPercent: null,
+            loadedCount: null,
+            totalCount: null,
+          },
+        }),
+      );
+      const requestId = ++loadRequestIdRef.current;
+
+      prewarmUsdSelectionInBackground(file, liveAssetsState.availableFiles, liveAssetsState.assets);
+
+      const preResolvedImportResult = peekPreResolvedRobotImport(file);
+      if (preResolvedImportResult) {
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
+          commitResolvedFileSelection(file);
+        }
+        applyResolvedRobotImport(file, preResolvedImportResult);
+        return;
+      }
+
+      const importResultPromise = resolveRobotFileDataWithWorker(file, {
+        availableFiles: liveAssetsState.availableFiles,
+        assets: liveAssetsState.assets,
+        usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
+      });
+
+      await waitForNextPaint();
+
+      let importResult: Awaited<ReturnType<typeof resolveRobotFileDataWithWorker>>;
+      try {
+        importResult = await importResultPromise;
+      } catch (error) {
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : t.failedToParseFormat.replace('{format}', file.format.toUpperCase());
+        setDocumentLoadState({
+          status: 'error',
+          fileName: file.name,
+          format: file.format,
+          error: message,
+        });
+        showToast(message, 'info');
+        return;
+      }
+
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
+      if (shouldCommitResolvedRobotSelection(importResult)) {
+        commitResolvedFileSelection(file);
+      }
+      applyResolvedRobotImport(file, importResult);
+    },
+    [
+      applyResolvedRobotImport,
+      commitResolvedFileSelection,
+      setDocumentLoadState,
+      setAppMode,
+      showToast,
+      t,
+    ],
+  );
+
+  const handleLoadRobot = useCallback(
+    (file: RobotFile) => {
+      loadRobotFile(file);
+    },
+    [loadRobotFile],
+  );
 
   loadRobotByNameRef.current = loadRobotFile;
 
@@ -649,8 +692,9 @@ function AppContent() {
       return;
     }
 
-    const regressionDebugEnabled = import.meta.env.DEV
-      || new URLSearchParams(window.location.search).get('regressionDebug') === '1';
+    const regressionDebugEnabled =
+      import.meta.env.DEV ||
+      new URLSearchParams(window.location.search).get('regressionDebug') === '1';
     if (!regressionDebugEnabled) {
       return;
     }
@@ -670,7 +714,9 @@ function AppContent() {
       getAssetDebugState: () => {
         const assetsState = useAssetsStore.getState();
         return {
-          appAssetKeys: Object.keys(assetsState.assets).sort((left, right) => left.localeCompare(right)),
+          appAssetKeys: Object.keys(assetsState.assets).sort((left, right) =>
+            left.localeCompare(right),
+          ),
           preparedUsdCacheKeysByFile: Object.fromEntries(
             Object.entries(assetsState.usdPreparedExportCaches)
               .sort(([left], [right]) => left.localeCompare(right))
@@ -686,7 +732,8 @@ function AppContent() {
         hoveredSelection: useSelectionStore.getState().hoveredSelection,
       }),
       loadRobotByName: async (fileName: string) => {
-        const file = useAssetsStore.getState().availableFiles.find((entry) => entry.name === fileName) ?? null;
+        const file =
+          useAssetsStore.getState().availableFiles.find((entry) => entry.name === fileName) ?? null;
         if (!file) {
           return {
             loaded: false,
@@ -741,9 +788,7 @@ function AppContent() {
         }
       } catch (error) {
         showToast(
-          error instanceof Error && error.message
-            ? error.message
-            : t.exportFailedParse,
+          error instanceof Error && error.message ? error.message : t.exportFailedParse,
           'error',
         );
       } finally {
@@ -772,9 +817,10 @@ function AppContent() {
     const liveAssetsState = useAssetsStore.getState();
     const currentSelectedFile = liveAssetsState.selectedFile;
     const currentDocumentLoadState = liveAssetsState.documentLoadState;
-    const isSelectedUsdHydrating = currentSelectedFile?.format === 'usd'
-      && currentDocumentLoadState.status === 'hydrating'
-      && currentDocumentLoadState.fileName === currentSelectedFile.name;
+    const isSelectedUsdHydrating =
+      currentSelectedFile?.format === 'usd' &&
+      currentDocumentLoadState.status === 'hydrating' &&
+      currentDocumentLoadState.fileName === currentSelectedFile.name;
 
     if (isSelectedUsdHydrating) {
       showToast(t.usdLoadInProgress, 'info');
@@ -783,25 +829,28 @@ function AppContent() {
     return true;
   }, [showToast, t.usdLoadInProgress]);
 
-  const createConversationLaunchContextFromSnapshot = useCallback((
-    mode: AIConversationMode,
-    robotSnapshot: RobotState,
-    inspectionReportSnapshot: InspectionReport | null = null,
-    options: {
-      selectedEntity?: AIConversationSelection | null;
-      focusedIssue?: AIConversationFocusedIssue | null;
-    } = {},
-  ) => {
-    aiConversationSessionIdRef.current += 1;
-    return createConversationLaunchContext({
-      sessionId: aiConversationSessionIdRef.current,
-      mode,
-      robotSnapshot,
-      inspectionReportSnapshot,
-      selectedEntity: options.selectedEntity,
-      focusedIssue: options.focusedIssue,
-    });
-  }, []);
+  const createConversationLaunchContextFromSnapshot = useCallback(
+    (
+      mode: AIConversationMode,
+      robotSnapshot: RobotState,
+      inspectionReportSnapshot: InspectionReport | null = null,
+      options: {
+        selectedEntity?: AIConversationSelection | null;
+        focusedIssue?: AIConversationFocusedIssue | null;
+      } = {},
+    ) => {
+      aiConversationSessionIdRef.current += 1;
+      return createConversationLaunchContext({
+        sessionId: aiConversationSessionIdRef.current,
+        mode,
+        robotSnapshot,
+        inspectionReportSnapshot,
+        selectedEntity: options.selectedEntity,
+        focusedIssue: options.focusedIssue,
+      });
+    },
+    [],
+  );
 
   const handleOpenAIInspection = useCallback(() => {
     if (!ensureAIEntryAvailable()) {
@@ -841,50 +890,56 @@ function AppContent() {
     openAIConversation,
   ]);
 
-  const handleOpenConversationWithReport = useCallback((
-    report: InspectionReport,
-    robotSnapshot: RobotState,
-    options: {
-      selectedEntity?: AIConversationSelection | null;
-      focusedIssue?: AIConversationFocusedIssue | null;
-    } = {},
-  ) => {
-    if (!ensureAIEntryAvailable()) {
-      return;
-    }
+  const handleOpenConversationWithReport = useCallback(
+    (
+      report: InspectionReport,
+      robotSnapshot: RobotState,
+      options: {
+        selectedEntity?: AIConversationSelection | null;
+        focusedIssue?: AIConversationFocusedIssue | null;
+      } = {},
+    ) => {
+      if (!ensureAIEntryAvailable()) {
+        return;
+      }
 
-    const launchContext = createConversationLaunchContextFromSnapshot(
-      'inspection-followup',
-      robotSnapshot,
-      report,
-      options,
-    );
+      const launchContext = createConversationLaunchContextFromSnapshot(
+        'inspection-followup',
+        robotSnapshot,
+        report,
+        options,
+      );
 
-    setAIConversationLaunchContext(launchContext);
-    setShouldRenderAIConversationModal(true);
-    void loadAIConversationModalModule();
-    setIsAIConversationOpen(true);
-    setAILaunchMode('conversation');
-  }, [
-    createConversationLaunchContextFromSnapshot,
-    ensureAIEntryAvailable,
-    setAILaunchMode,
-    setIsAIConversationOpen,
-  ]);
+      setAIConversationLaunchContext(launchContext);
+      setShouldRenderAIConversationModal(true);
+      void loadAIConversationModalModule();
+      setIsAIConversationOpen(true);
+      setAILaunchMode('conversation');
+    },
+    [
+      createConversationLaunchContextFromSnapshot,
+      ensureAIEntryAvailable,
+      setAILaunchMode,
+      setIsAIConversationOpen,
+    ],
+  );
 
-  const handleStartNewAIConversation = useCallback((currentLaunchContext: AIConversationLaunchContext) => {
-    const nextLaunchContext = createConversationLaunchContextFromSnapshot(
-      currentLaunchContext.mode,
-      currentLaunchContext.robotSnapshot,
-      currentLaunchContext.inspectionReportSnapshot ?? null,
-      {
-        selectedEntity: currentLaunchContext.selectedEntity,
-        focusedIssue: currentLaunchContext.focusedIssue,
-      },
-    );
+  const handleStartNewAIConversation = useCallback(
+    (currentLaunchContext: AIConversationLaunchContext) => {
+      const nextLaunchContext = createConversationLaunchContextFromSnapshot(
+        currentLaunchContext.mode,
+        currentLaunchContext.robotSnapshot,
+        currentLaunchContext.inspectionReportSnapshot ?? null,
+        {
+          selectedEntity: currentLaunchContext.selectedEntity,
+          focusedIssue: currentLaunchContext.focusedIssue,
+        },
+      );
 
-    setAIConversationLaunchContext(nextLaunchContext);
-  }, [createConversationLaunchContextFromSnapshot]);
+      setAIConversationLaunchContext(nextLaunchContext);
+    },
+    [createConversationLaunchContextFromSnapshot],
+  );
 
   const handleOpenExportDialog = useCallback(() => {
     void loadExportDialogModule();
@@ -892,11 +947,14 @@ function AppContent() {
     setIsExportDialogOpen(true);
   }, [setIsExportDialogOpen]);
 
-  const handleOpenLibraryExportDialog = useCallback((file: RobotFile) => {
-    void loadExportDialogModule();
-    setExportDialogTarget({ type: 'library-file', file });
-    setIsExportDialogOpen(true);
-  }, [setIsExportDialogOpen]);
+  const handleOpenLibraryExportDialog = useCallback(
+    (file: RobotFile) => {
+      void loadExportDialogModule();
+      setExportDialogTarget({ type: 'library-file', file });
+      setIsExportDialogOpen(true);
+    },
+    [setIsExportDialogOpen],
+  );
 
   const handleConfirmDisconnectedWorkspaceUrdfExport = useCallback(async () => {
     if (!disconnectedWorkspaceUrdfDialog) {
@@ -905,16 +963,16 @@ function AppContent() {
 
     setIsDisconnectedWorkspaceUrdfExporting(true);
     try {
-      const result = await handleExportDisconnectedWorkspaceUrdfBundle(disconnectedWorkspaceUrdfDialog.config);
+      const result = await handleExportDisconnectedWorkspaceUrdfBundle(
+        disconnectedWorkspaceUrdfDialog.config,
+      );
       if (result.partial && result.warnings.length > 0) {
         showToast(result.warnings[0], 'info');
       }
       setDisconnectedWorkspaceUrdfDialog(null);
     } catch (error) {
       showToast(
-        error instanceof Error && error.message
-          ? error.message
-          : t.exportFailedParse,
+        error instanceof Error && error.message ? error.message : t.exportFailedParse,
         'error',
       );
     } finally {
@@ -928,20 +986,22 @@ function AppContent() {
   ]);
 
   const loadingLabel = t.loadingPanel;
-  const toastPresentation = toast.type === 'success'
-    ? {
-        badgeClassName: 'border border-success-border bg-success-soft text-success',
-        iconPath: 'M5 13l4 4L19 7',
-      }
-    : toast.type === 'error'
+  const toastPresentation =
+    toast.type === 'success'
       ? {
-          badgeClassName: 'border border-danger-border bg-danger-soft text-danger',
-          iconPath: 'M12 8v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z',
+          badgeClassName: 'border border-success-border bg-success-soft text-success',
+          iconPath: 'M5 13l4 4L19 7',
         }
-      : {
-          badgeClassName: 'border border-system-blue/20 bg-system-blue/10 text-system-blue',
-          iconPath: 'M12 8h.01M11 12h1v4h1m-1-13a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
-        };
+      : toast.type === 'error'
+        ? {
+            badgeClassName: 'border border-danger-border bg-danger-soft text-danger',
+            iconPath:
+              'M12 8v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z',
+          }
+        : {
+            badgeClassName: 'border border-system-blue/20 bg-system-blue/10 text-system-blue',
+            iconPath: 'M12 8h.01M11 12h1v4h1m-1-13a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z',
+          };
 
   return (
     <>
@@ -968,11 +1028,11 @@ function AppContent() {
       <SettingsModal />
       {shouldRenderAIInspectionModal && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          {/* Keep the modal mounted after first open so inspection results survive close/reopen. */}
           <AIInspectionConnector
             isOpen={isAIInspectionOpen}
             onClose={() => {
               setIsAIInspectionOpen(false);
-              setShouldRenderAIInspectionModal(false);
             }}
             lang={lang}
             onOpenConversationWithReport={handleOpenConversationWithReport}
@@ -1011,13 +1071,14 @@ function AppContent() {
                 requestAnimationFrame(() => resolve());
               });
               try {
-                const result = config.format === 'project'
-                  ? await runProjectExport({
-                    onProgress: options?.onProgress,
-                  })
-                  : await handleExportWithConfig(config, exportDialogTarget, {
-                    onProgress: options?.onProgress,
-                  });
+                const result =
+                  config.format === 'project'
+                    ? await runProjectExport({
+                        onProgress: options?.onProgress,
+                      })
+                    : await handleExportWithConfig(config, exportDialogTarget, {
+                        onProgress: options?.onProgress,
+                      });
                 if (result.actionRequired?.type === 'disconnected-workspace-urdf') {
                   setDisconnectedWorkspaceUrdfDialog({
                     config,
@@ -1032,9 +1093,7 @@ function AppContent() {
                 setIsExportDialogOpen(false);
               } catch (error) {
                 showToast(
-                  error instanceof Error && error.message
-                    ? error.message
-                    : t.exportFailedParse,
+                  error instanceof Error && error.message ? error.message : t.exportFailedParse,
                   'error',
                 );
               } finally {
@@ -1062,10 +1121,7 @@ function AppContent() {
       />
 
       {projectExportProgress && !isExportDialogOpen && (
-        <ExportProgressDialog
-          lang={lang}
-          progress={projectExportProgress}
-        />
+        <ExportProgressDialog lang={lang} progress={projectExportProgress} />
       )}
 
       {importPreparationOverlay && (
@@ -1082,9 +1138,16 @@ function AppContent() {
       {toast.show && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex max-w-[min(44rem,calc(100vw-2rem))] items-center gap-2.5 rounded-[1.75rem] border border-border-black bg-panel-bg px-3.5 py-2.5 shadow-2xl dark:shadow-black/40">
-            <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${toastPresentation.badgeClassName}`}>
+            <div
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${toastPresentation.badgeClassName}`}
+            >
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={toastPresentation.iconPath} />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={toastPresentation.iconPath}
+                />
               </svg>
             </div>
             <div className="flex min-h-6 min-w-0 flex-1 items-center whitespace-pre-line break-words text-[15px] font-semibold leading-5 text-text-primary">
@@ -1095,7 +1158,12 @@ function AppContent() {
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-element-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>

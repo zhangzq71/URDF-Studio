@@ -10,11 +10,29 @@ const outputPath = path.join(
 
 const source = fs.readFileSync(sourcePath, 'utf8');
 
-const REQUIRED_PROMPT_SECTIONS = ['generation', 'inspection.en', 'inspection.zh'];
+const REQUIRED_PROMPT_SECTIONS = [
+  'generation',
+  'inspection.en',
+  'inspection.zh',
+  'conversation.en',
+  'conversation.zh',
+];
 const REQUIRED_SECTION_PLACEHOLDERS = {
   generation: ['__ROBOT_CONTEXT__', '__MOTOR_LIBRARY_CONTEXT__'],
   'inspection.en': ['__CRITERIA_DESCRIPTION__', '__INSPECTION_NOTES__', '__LANGUAGE_INSTRUCTION__'],
   'inspection.zh': ['__CRITERIA_DESCRIPTION__', '__INSPECTION_NOTES__', '__LANGUAGE_INSTRUCTION__'],
+  'conversation.en': [
+    '__CONVERSATION_MODE__',
+    '__CONVERSATION_CONTEXT__',
+    '__CONVERSATION_HISTORY__',
+    '__LANGUAGE_INSTRUCTION__',
+  ],
+  'conversation.zh': [
+    '__CONVERSATION_MODE__',
+    '__CONVERSATION_CONTEXT__',
+    '__CONVERSATION_HISTORY__',
+    '__LANGUAGE_INSTRUCTION__',
+  ],
 };
 
 const sectionPattern = /<!-- PROMPT: ([^\n]+?) -->\n([\s\S]*?)\n<!-- \/PROMPT -->/g;
@@ -59,6 +77,10 @@ export const AI_PROMPT_TEMPLATES = {
   inspection: {
     en: ${JSON.stringify(extractPrompt('inspection.en'))},
     zh: ${JSON.stringify(extractPrompt('inspection.zh'))}
+  },
+  conversation: {
+    en: ${JSON.stringify(extractPrompt('conversation.en'))},
+    zh: ${JSON.stringify(extractPrompt('conversation.zh'))}
   }
 } as const;
 `;

@@ -272,6 +272,10 @@ export interface TranslationKeys {
   inspectionScoringReference: string;
   inspectionSourceEvidenceHint: string;
   inspectionSourceEvidenceEmpty: string;
+  inspectionRunScope: string;
+  inspectionRunStage: string;
+  inspectionElapsedTime: string;
+  inspectionRunning: string;
   inspectionCategoryImpactHigh: string;
   inspectionCategoryImpactMedium: string;
   inspectionCategoryImpactBaseline: string;
@@ -706,8 +710,16 @@ export interface TranslationKeys {
   inspectionRequestingModel: string;
   inspectionProcessingResponse: string;
   inspectionFinalizingReport: string;
+  inspectionPreparingContextDescription: string;
+  inspectionRequestingModelDescription: string;
+  inspectionProcessingResponseDescription: string;
+  inspectionFinalizingReportDescription: string;
   inspectionSelectedChecks: string;
   inspectionMayTake30Seconds: string;
+  inspectionRunDelayed: string;
+  inspectionStageCompleted: string;
+  inspectionStageInProgress: string;
+  inspectionStagePending: string;
   aiAnalyzing: string;
   issueError: string;
   issueWarning: string;

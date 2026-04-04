@@ -1,123 +1,139 @@
-import { Check, ChevronDown, ChevronRight, Minus } from 'lucide-react'
-import type { Dispatch, SetStateAction } from 'react'
-import type { Language, TranslationKeys } from '@/shared/i18n'
-import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
+import { Check, ChevronDown, ChevronRight, Minus } from 'lucide-react';
+import type { Dispatch, SetStateAction } from 'react';
+import type { Language, TranslationKeys } from '@/shared/i18n';
+import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria';
 
-export type SelectedInspectionItems = Record<string, Set<string>>
+export type SelectedInspectionItems = Record<string, Set<string>>;
 
 interface InspectionSidebarProps {
-  lang: Language
-  t: TranslationKeys
-  isGeneratingAI: boolean
-  focusedCategoryId: string
-  expandedCategories: Set<string>
-  selectedItems: SelectedInspectionItems
-  setExpandedCategories: Dispatch<SetStateAction<Set<string>>>
-  setSelectedItems: Dispatch<SetStateAction<SelectedInspectionItems>>
-  onFocusCategory: (categoryId: string) => void
+  lang: Language;
+  t: TranslationKeys;
+  isGeneratingAI: boolean;
+  readOnly?: boolean;
+  focusedCategoryId: string;
+  expandedCategories: Set<string>;
+  selectedItems: SelectedInspectionItems;
+  setExpandedCategories: Dispatch<SetStateAction<Set<string>>>;
+  setSelectedItems: Dispatch<SetStateAction<SelectedInspectionItems>>;
+  onFocusCategory: (categoryId: string) => void;
+  onNavigateToCategory?: (categoryId: string) => void;
+  onNavigateToItem?: (categoryId: string, itemId: string) => void;
 }
 
 export function InspectionSidebar({
   lang,
   t,
   isGeneratingAI,
+  readOnly = false,
   focusedCategoryId,
   expandedCategories,
   selectedItems,
   setExpandedCategories,
   setSelectedItems,
   onFocusCategory,
+  onNavigateToCategory,
+  onNavigateToItem,
 }: InspectionSidebarProps) {
-  const totalItemCount = INSPECTION_CRITERIA.reduce((sum, category) => sum + category.items.length, 0)
-  let totalSelectedCount = 0
-  let selectedCategoryCount = 0
+  const isInteractionLocked = isGeneratingAI;
+  const isRunningInspection = isGeneratingAI && readOnly;
+  const totalItemCount = INSPECTION_CRITERIA.reduce(
+    (sum, category) => sum + category.items.length,
+    0,
+  );
+  let totalSelectedCount = 0;
+  let selectedCategoryCount = 0;
 
   INSPECTION_CRITERIA.forEach((category) => {
-    const count = selectedItems[category.id]?.size ?? 0
-    totalSelectedCount += count
+    const count = selectedItems[category.id]?.size ?? 0;
+    totalSelectedCount += count;
     if (count > 0) {
-      selectedCategoryCount += 1
+      selectedCategoryCount += 1;
     }
-  })
+  });
+
+  const visibleCategories = readOnly
+    ? INSPECTION_CRITERIA.filter((category) => (selectedItems[category.id]?.size ?? 0) > 0)
+    : INSPECTION_CRITERIA;
 
   const toggleCategorySelection = (categoryId: string) => {
-    setSelectedItems(prev => {
-      const newItems = { ...prev }
-      const category = INSPECTION_CRITERIA.find(c => c.id === categoryId)
-      if (!category) return prev
+    setSelectedItems((prev) => {
+      const newItems = { ...prev };
+      const category = INSPECTION_CRITERIA.find((c) => c.id === categoryId);
+      if (!category) return prev;
 
-      const allSelected = category.items.every(item => newItems[categoryId]?.has(item.id))
+      const allSelected = category.items.every((item) => newItems[categoryId]?.has(item.id));
       if (allSelected) {
-        newItems[categoryId] = new Set()
+        newItems[categoryId] = new Set();
       } else {
-        newItems[categoryId] = new Set(category.items.map(item => item.id))
+        newItems[categoryId] = new Set(category.items.map((item) => item.id));
       }
-      return newItems
-    })
-  }
+      return newItems;
+    });
+  };
 
   const toggleItemSelection = (categoryId: string, itemId: string) => {
-    setSelectedItems(prev => {
-      const newItems = { ...prev }
+    setSelectedItems((prev) => {
+      const newItems = { ...prev };
       if (!newItems[categoryId]) {
-        newItems[categoryId] = new Set()
+        newItems[categoryId] = new Set();
       }
-      const itemSet = new Set(newItems[categoryId])
+      const itemSet = new Set(newItems[categoryId]);
       if (itemSet.has(itemId)) {
-        itemSet.delete(itemId)
+        itemSet.delete(itemId);
       } else {
-        itemSet.add(itemId)
+        itemSet.add(itemId);
       }
-      newItems[categoryId] = itemSet
-      return newItems
-    })
-  }
+      newItems[categoryId] = itemSet;
+      return newItems;
+    });
+  };
 
   const toggleCategoryExpand = (categoryId: string) => {
-    setExpandedCategories(prev => {
-      const next = new Set(prev)
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
       if (next.has(categoryId)) {
-        next.delete(categoryId)
+        next.delete(categoryId);
       } else {
-        next.add(categoryId)
+        next.add(categoryId);
       }
-      return next
-    })
-  }
+      return next;
+    });
+  };
 
   const resolveCategoryImpactLabel = (weight: number) => {
     if (weight >= 0.2) {
-      return t.inspectionCategoryImpactHigh
+      return t.inspectionCategoryImpactHigh;
     }
     if (weight >= 0.15) {
-      return t.inspectionCategoryImpactMedium
+      return t.inspectionCategoryImpactMedium;
     }
-    return t.inspectionCategoryImpactBaseline
-  }
+    return t.inspectionCategoryImpactBaseline;
+  };
 
   return (
-    <div className="flex w-72 shrink-0 flex-col border-r border-border-black bg-panel-bg dark:bg-element-bg">
-      <div className="border-b border-border-black bg-element-bg p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="px-1 text-[10px] font-medium tracking-wide text-text-tertiary">
-              {t.inspectionItems}
-            </h3>
-            <p className="mt-1 px-1 text-[11px] leading-4 text-text-secondary">
-              {t.inspectionScopeDescription}
-            </p>
-          </div>
-          {isGeneratingAI && (
-            <span className="rounded-lg border border-border-black bg-panel-bg px-2 py-1 text-[10px] font-medium text-text-secondary">
-              {t.checking}
-            </span>
-          )}
+    <div className="flex min-h-0 w-72 shrink-0 flex-col overflow-hidden border-r border-border-black bg-panel-bg dark:bg-element-bg">
+      <div className="shrink-0 border-b border-border-black bg-element-bg p-3">
+        <div className="min-w-0">
+          <h3 className="px-1 text-[10px] font-medium tracking-wide text-text-tertiary">
+            {t.inspectionItems}
+          </h3>
+          <p className="mt-1 px-1 text-[11px] leading-4 text-text-secondary">
+            {t.inspectionScopeDescription}
+          </p>
         </div>
 
-        <div className="mt-3 rounded-xl border border-border-black bg-panel-bg p-2.5">
+        <div
+          className={`mt-3 rounded-xl border p-2.5 ${
+            isRunningInspection
+              ? 'border-system-blue/20 bg-system-blue/5'
+              : 'border-border-black bg-panel-bg'
+          }`}
+        >
           <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
             <span>{t.runInspection}</span>
-            <span>{selectedCategoryCount}/{INSPECTION_CRITERIA.length}</span>
+            <span>
+              {selectedCategoryCount}/{INSPECTION_CRITERIA.length}
+            </span>
           </div>
           <div className="mt-1 text-xs font-semibold text-text-primary">
             {t.inspectionSelectedChecksSummary
@@ -127,21 +143,30 @@ export function InspectionSidebar({
         </div>
       </div>
 
-      <div className={`custom-scrollbar flex-1 overflow-y-auto p-2 space-y-2 ${isGeneratingAI ? 'pointer-events-none opacity-70' : ''}`}>
-        {INSPECTION_CRITERIA.map(category => {
-          const categoryName = lang === 'zh' ? category.nameZh : category.name
-          const selectedItemIds = selectedItems[category.id] || new Set()
-          const selectedCount = selectedItemIds.size
-          const allSelected = category.items.every(item => selectedItemIds.has(item.id))
-          const someSelected = category.items.some(item => selectedItemIds.has(item.id))
-          const isExpanded = expandedCategories.has(category.id)
-          const isFocused = focusedCategoryId === category.id
+      <div
+        className={`custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-2 ${
+          isInteractionLocked ? 'opacity-70' : ''
+        }`}
+      >
+        {visibleCategories.map((category) => {
+          const categoryName = lang === 'zh' ? category.nameZh : category.name;
+          const selectedItemIds = selectedItems[category.id] || new Set();
+          const selectedCount = selectedItemIds.size;
+          const allSelected = category.items.every((item) => selectedItemIds.has(item.id));
+          const someSelected = category.items.some((item) => selectedItemIds.has(item.id));
+          const isExpanded = expandedCategories.has(category.id);
+          const isFocused = focusedCategoryId === category.id;
+          const visibleItems = readOnly
+            ? category.items.filter((item) => selectedItemIds.has(item.id))
+            : category.items;
+          const canNavigateCategory =
+            readOnly && selectedCount > 0 && Boolean(onNavigateToCategory);
 
           return (
             <div
               key={category.id}
               className={`rounded-xl transition-colors ${
-                isFocused
+                !readOnly && isFocused
                   ? 'border border-system-blue/35 bg-system-blue/10 shadow-sm'
                   : someSelected || isExpanded
                     ? 'border border-border-black bg-panel-bg shadow-sm'
@@ -149,58 +174,117 @@ export function InspectionSidebar({
               }`}
             >
               <div className="flex items-start gap-2 p-2.5">
-                <button
-                  type="button"
-                  aria-label={categoryName}
-                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-                    isGeneratingAI
-                      ? 'border-border-strong bg-element-bg'
-                      : allSelected
-                        ? 'border-system-blue-solid bg-system-blue-solid'
-                        : someSelected
-                          ? 'border-system-blue bg-system-blue/80'
-                          : 'border-border-strong bg-panel-bg hover:border-system-blue'
-                  }`}
-                  onClick={() => {
-                    toggleCategorySelection(category.id)
-                    onFocusCategory(category.id)
-                  }}
-                >
-                  {allSelected ? (
-                    <Check className="h-3 w-3 text-white" />
-                  ) : someSelected ? (
-                    <Minus className="h-2.5 w-2.5 text-white" />
-                  ) : null}
-                </button>
-
-                <div className="min-w-0 flex-1">
+                {readOnly ? (
+                  <div
+                    aria-hidden="true"
+                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      someSelected ? 'bg-system-blue' : 'bg-border-strong'
+                    }`}
+                  />
+                ) : (
                   <button
                     type="button"
-                    className="w-full text-left"
-                    onClick={() => onFocusCategory(category.id)}
+                    aria-label={categoryName}
+                    className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                      isGeneratingAI
+                        ? 'border-border-strong bg-element-bg'
+                        : allSelected
+                          ? 'border-system-blue-solid bg-system-blue-solid'
+                          : someSelected
+                            ? 'border-system-blue bg-system-blue/80'
+                            : 'border-border-strong bg-panel-bg hover:border-system-blue'
+                    }`}
+                    onClick={() => {
+                      toggleCategorySelection(category.id);
+                      onFocusCategory(category.id);
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-xs font-semibold text-text-primary">
-                        {categoryName}
-                      </span>
-                      <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
-                        {Math.round(category.weight * 100)}%
-                      </span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
-                      <span>{selectedCount}/{category.items.length}</span>
-                      <span aria-hidden="true">•</span>
-                      <span>{resolveCategoryImpactLabel(category.weight)}</span>
-                    </div>
+                    {allSelected ? (
+                      <Check className="h-3 w-3 text-white" />
+                    ) : someSelected ? (
+                      <Minus className="h-2.5 w-2.5 text-white" />
+                    ) : null}
                   </button>
+                )}
+
+                <div className="min-w-0 flex-1">
+                  {readOnly ? (
+                    canNavigateCategory ? (
+                      <button
+                        type="button"
+                        className="w-full rounded-lg text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                        onClick={() => {
+                          onFocusCategory(category.id);
+                          onNavigateToCategory?.(category.id);
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-xs font-semibold text-text-primary">
+                            {categoryName}
+                          </span>
+                          <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                            {Math.round(category.weight * 100)}%
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                          <span>
+                            {selectedCount}/{category.items.length}
+                          </span>
+                          <span aria-hidden="true">•</span>
+                          <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="w-full">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-xs font-semibold text-text-primary">
+                            {categoryName}
+                          </span>
+                          <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                            {Math.round(category.weight * 100)}%
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                          <span>
+                            {selectedCount}/{category.items.length}
+                          </span>
+                          <span aria-hidden="true">•</span>
+                          <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() => onFocusCategory(category.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-xs font-semibold text-text-primary">
+                          {categoryName}
+                        </span>
+                        <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                          {Math.round(category.weight * 100)}%
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                        <span>
+                          {selectedCount}/{category.items.length}
+                        </span>
+                        <span aria-hidden="true">•</span>
+                        <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                      </div>
+                    </button>
+                  )}
                 </div>
 
                 <button
                   type="button"
-                  className="rounded-md p-1 transition-colors hover:bg-element-hover"
+                  disabled={isInteractionLocked}
+                  className="rounded-md p-1 transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
                   onClick={() => {
-                    onFocusCategory(category.id)
-                    toggleCategoryExpand(category.id)
+                    onFocusCategory(category.id);
+                    toggleCategoryExpand(category.id);
                   }}
                 >
                   {isExpanded ? (
@@ -214,43 +298,95 @@ export function InspectionSidebar({
               {isExpanded && (
                 <div className="animate-in fade-in slide-in-from-top-1 border-t border-border-black/80 px-2 pb-2 pt-2 duration-200">
                   <div className="space-y-1">
-                    {category.items.map(item => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors ${
-                          selectedItemIds.has(item.id)
-                            ? 'bg-element-bg'
-                            : 'hover:bg-element-hover'
-                        }`}
-                        onClick={() => {
-                          toggleItemSelection(category.id, item.id)
-                          onFocusCategory(category.id)
-                        }}
-                      >
-                        <div
-                          className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
-                            selectedItemIds.has(item.id)
-                              ? 'border-system-blue-solid bg-system-blue-solid'
-                              : 'border-border-strong bg-panel-bg'
+                    {visibleItems.map((item) => {
+                      const isSelected = selectedItemIds.has(item.id);
+                      const itemName = lang === 'zh' ? item.nameZh : item.name;
+
+                      if (readOnly) {
+                        const canNavigateItem = isSelected && Boolean(onNavigateToItem);
+
+                        if (canNavigateItem) {
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-lg bg-element-bg px-1.5 py-1.5 text-left transition-colors hover:bg-element-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                              onClick={() => {
+                                onFocusCategory(category.id);
+                                onNavigateToItem?.(category.id, item.id);
+                              }}
+                            >
+                              <div
+                                aria-hidden="true"
+                                className="h-2 w-2 shrink-0 rounded-full bg-system-blue"
+                              />
+                              <span className="truncate text-[11px] font-medium text-text-secondary">
+                                {itemName}
+                              </span>
+                            </button>
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 ${
+                              isSelected ? 'bg-element-bg' : 'bg-transparent'
+                            }`}
+                          >
+                            <div
+                              aria-hidden="true"
+                              className={`h-2 w-2 shrink-0 rounded-full ${
+                                isSelected ? 'bg-system-blue' : 'bg-border-strong'
+                              }`}
+                            />
+                            <span
+                              className={`truncate text-[11px] font-medium ${
+                                isSelected ? 'text-text-secondary' : 'text-text-tertiary'
+                              }`}
+                            >
+                              {itemName}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors ${
+                            isSelected ? 'bg-element-bg' : 'hover:bg-element-hover'
                           }`}
+                          onClick={() => {
+                            toggleItemSelection(category.id, item.id);
+                            onFocusCategory(category.id);
+                          }}
                         >
-                          {selectedItemIds.has(item.id) && <Check className="h-2.5 w-2.5 text-white" />}
-                        </div>
-                        <span className="truncate text-[11px] font-medium text-text-secondary">
-                          {lang === 'zh' ? item.nameZh : item.name}
-                        </span>
-                      </button>
-                    ))}
+                          <div
+                            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                              isSelected
+                                ? 'border-system-blue-solid bg-system-blue-solid'
+                                : 'border-border-strong bg-panel-bg'
+                            }`}
+                          >
+                            {isSelected && <Check className="h-2.5 w-2.5 text-white" />}
+                          </div>
+                          <span className="truncate text-[11px] font-medium text-text-secondary">
+                            {itemName}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
             </div>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }
 
-export default InspectionSidebar
+export default InspectionSidebar;

@@ -272,3 +272,40 @@ test('clear history requires confirmation and removes prior messages after reset
     dom.window.close()
   }
 })
+
+test('transparent AI conversation backdrop does not intercept pointer events', async () => {
+  const dom = installDom()
+  const container = dom.window.document.getElementById('root')
+  assert.ok(container, 'root container should exist')
+
+  const { AIConversationModal } = await import('./AIConversationModal.tsx')
+  const root = createRoot(container)
+
+  try {
+    await act(async () => {
+      root.render(
+        <AIConversationModal
+          isOpen
+          onClose={() => {}}
+          lang="zh"
+          launchContext={createLaunchContext()}
+          onStartNewConversation={() => {}}
+        />,
+      )
+    })
+    await flush()
+
+    const backdrop = container.querySelector('[aria-hidden="true"].fixed.inset-0')
+    assert.ok(backdrop, 'expected transparent backdrop to render')
+    assert.equal(
+      backdrop.classList.contains('pointer-events-none'),
+      true,
+      'transparent backdrop should not block interactions with the workspace',
+    )
+  } finally {
+    await act(async () => {
+      root.unmount()
+    })
+    dom.window.close()
+  }
+})
