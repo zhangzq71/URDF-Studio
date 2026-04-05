@@ -116,6 +116,44 @@ app -> features -> store -> shared -> core -> types
 - `src/shared/hooks/useEffectiveTheme.ts` 依赖 `@/store/uiStore`
 - `src/features/ai-assistant/utils/pdfExport.ts` 依赖 `@/features/file-io/components/InspectionReportTemplate`
 
+### 工程判断原则：符合 Linux 哲学与 Linus taste
+
+默认工程取向：
+
+- 优先简单直接的数据流与控制流，不为“理论优雅”引入额外抽象层
+- 优先解决真实问题，不为未来也许会出现的场景预埋复杂框架
+- 优先把复杂度消灭在设计里，而不是把复杂度包进 `manager`、`factory`、`coordinator` 之类命名里
+- 若一个设计需要靠大量解释才能看懂，通常说明设计本身不够好
+
+必须遵循：
+
+- 小而清晰的接口优先。函数、hook、store action、worker message shape 尽量只表达一件事
+- 优先组合现有稳定模块，不轻易新增“万能层”“统一抽象层”“Base\*”或过度泛化的中间封装
+- 优先通过更好的数据结构消灭特殊情况，而不是继续堆 `if/else`
+- 命名必须直白，优先描述真实语义、所有权、生命周期和失败路径
+- 不要把坏状态悄悄修平；异常时优先暴露不变量被破坏的位置
+- 新逻辑默认先问“能不能删掉特殊情况”，再问“要不要新增分支”
+- 新抽象必须证明它真的降低了整体复杂度；如果只是搬运复杂度，就不要抽
+- 公共层不要为单一业务特例污染接口；特例优先留在边界层
+- 性能优化以真实热点为目标，避免投机性缓存、记忆化和多态分发
+- 错误处理保持锋利边界，不要为了“调用方省心”吞掉上下文和失败条件
+
+自检问题：
+
+- 这个改动是否减少了特殊情况，而不是重新包装特殊情况？
+- 这个接口是否能让调用方一眼看懂，而不需要追三层抽象？
+- 这个状态或生命周期的 owner 是否唯一且明确？
+- 这段逻辑是否在解决真实需求，而不是为了架构好看？
+- 如果以后要删掉这段代码，边界是否清楚、代价是否可控？
+
+明确不鼓励：
+
+- 为了“模式统一”引入仓库当前并不需要的架构层
+- 过度 OO、过度继承、过度配置化、过度泛型化
+- 把复杂交互拆成大量弱关联小文件，导致阅读路径碎片化
+- 用 silent fallback、隐式同步、魔法默认值维持表面整洁
+- 为避免修改旧代码而额外包一层适配器，结果使主路径更难理解
+
 ### 状态管理
 
 - `robotStore`：机器人模型 CRUD、Undo/Redo、派生计算、闭环约束
@@ -132,15 +170,16 @@ app -> features -> store -> shared -> core -> types
 
 ## 4. 单模式 `Editor`
 
-| 子能力 | 主模块 | 典型任务 |
-| --- | --- | --- |
-| 拓扑编辑 | `Visualizer` | Link / Joint 增删、拓扑编辑、关节参数 |
+| 子能力             | 主模块        | 典型任务                                       |
+| ------------------ | ------------- | ---------------------------------------------- |
+| 拓扑编辑           | `Visualizer`  | Link / Joint 增删、拓扑编辑、关节参数          |
 | 几何 / 碰撞 / 测量 | `URDF Viewer` | Visual / Collision、网格、材质、纹理、碰撞变换 |
-| 硬件配置 | `Visualizer` | 电机型号、传动比、阻尼、摩擦 |
+| 硬件配置           | `Visualizer`  | 电机型号、传动比、阻尼、摩擦                   |
 
 新增功能前，先判断属于 `Editor` 下哪类子能力，避免跨子系统逻辑缠绕。
 
 共享交互优先落在：
+
 - `src/app/*` 编排层
 - `src/shared/components/3d/*` 共享画布基础设施
 
@@ -178,6 +217,7 @@ app -> features -> store -> shared -> core -> types
   - `src/app/hooks/useFileExport.ts`
 
 说明：
+
 - 旧的 `features/file-io/hooks/useFileExport.ts` 已移除。
 - `.usp` project import/export、USD prepared export cache、live USD roundtrip archive 已进入主工作流。
 
@@ -270,6 +310,7 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 ```
 
 关键 hooks / 能力：
+
 - `useJointPivots`
 - `useCollisionRefs`
 - `useClosedLoopDragSync`
@@ -353,6 +394,7 @@ VITE_OPENAI_MODEL=deepseek-v3
 - `src/features/ai-assistant/config/urdf_inspect_stantard_zh.md`
 
 说明：
+
 - 中文文件名当前仓库拼写为 `stantard`，属现状，不要擅自改名。
 
 ## 10. 常用检查命令
