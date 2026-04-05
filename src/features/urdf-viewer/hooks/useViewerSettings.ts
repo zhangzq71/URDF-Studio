@@ -3,7 +3,12 @@ import { useUIStore } from '@/store';
 import type { ViewerInteractiveLayer } from '../types';
 import { resolveInteractiveLayerPriority } from '../utils/interactiveLayerPriority';
 
+const ACTIVE_OVERLAY_LAYER_STORAGE_KEY = 'urdf_viewer_active_overlay_layer_v1';
 const ORIGIN_OVERLAY_STORAGE_KEY = 'urdf_viewer_origin_overlay_v2';
+const COLLISION_ALWAYS_ON_TOP_STORAGE_KEY = 'urdf_viewer_collision_always_on_top';
+const CENTER_OF_MASS_OVERLAY_STORAGE_KEY = 'urdf_viewer_com_overlay';
+const INERTIA_OVERLAY_STORAGE_KEY = 'urdf_viewer_inertia_overlay';
+const JOINT_AXIS_OVERLAY_STORAGE_KEY = 'urdf_viewer_joint_axis_overlay';
 const SHOW_COLLISION_STORAGE_KEY = 'urdf_viewer_show_collision';
 const SHOW_VISUAL_STORAGE_KEY = 'urdf_viewer_show_visual';
 const SHOW_CENTER_OF_MASS_STORAGE_KEY = 'urdf_viewer_show_center_of_mass';
@@ -11,309 +16,396 @@ const SHOW_INERTIA_STORAGE_KEY = 'urdf_viewer_show_inertia';
 const SHOW_ORIGINS_STORAGE_KEY = 'urdf_viewer_show_origins';
 const SHOW_JOINT_AXES_STORAGE_KEY = 'urdf_viewer_show_joint_axes';
 
+const OVERLAY_LAYER_PRIORITY: readonly ViewerOverlayLayer[] = [
+  'collision',
+  'origin-axes',
+  'joint-axis',
+  'center-of-mass',
+  'inertia',
+];
+
+type ViewerOverlayLayer = Exclude<ViewerInteractiveLayer, 'visual'>;
+
+function isViewerOverlayLayer(value: unknown): value is ViewerOverlayLayer {
+  return typeof value === 'string' && OVERLAY_LAYER_PRIORITY.includes(value as ViewerOverlayLayer);
+}
+
+function readStoredBoolean(key: string): boolean | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const saved = localStorage.getItem(key);
+  if (saved === 'true') return true;
+  if (saved === 'false') return false;
+  return null;
+}
+
+function resolveInitialActiveOverlayLayer(): ViewerOverlayLayer | null {
+  if (typeof window === 'undefined') {
+    return 'collision';
+  }
+
+  const savedActiveOverlayLayer = localStorage.getItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY);
+  if (savedActiveOverlayLayer === 'none') {
+    return null;
+  }
+  if (isViewerOverlayLayer(savedActiveOverlayLayer)) {
+    return savedActiveOverlayLayer;
+  }
+
+  const explicitLegacyOverlayState: Record<ViewerOverlayLayer, boolean | null> = {
+    collision: readStoredBoolean(COLLISION_ALWAYS_ON_TOP_STORAGE_KEY),
+    'origin-axes': readStoredBoolean(ORIGIN_OVERLAY_STORAGE_KEY),
+    'joint-axis': readStoredBoolean(JOINT_AXIS_OVERLAY_STORAGE_KEY),
+    'center-of-mass': readStoredBoolean(CENTER_OF_MASS_OVERLAY_STORAGE_KEY),
+    inertia: readStoredBoolean(INERTIA_OVERLAY_STORAGE_KEY),
+  };
+
+  const explicitEnabledLayer = OVERLAY_LAYER_PRIORITY.find(
+    (layer) => explicitLegacyOverlayState[layer] === true,
+  );
+  if (explicitEnabledLayer) {
+    return explicitEnabledLayer;
+  }
+
+  if (explicitLegacyOverlayState.collision === false) {
+    return null;
+  }
+
+  return 'collision';
+}
+
 export interface ViewerSettings {
-    showCollision: boolean;
-    setShowCollision: React.Dispatch<React.SetStateAction<boolean>>;
-    showCollisionAlwaysOnTop: boolean;
-    setShowCollisionAlwaysOnTop: React.Dispatch<React.SetStateAction<boolean>>;
-    localShowVisual: boolean;
-    setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>>;
-    showCenterOfMass: boolean;
-    setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>>;
-    showCoMOverlay: boolean;
-    setShowCoMOverlay: React.Dispatch<React.SetStateAction<boolean>>;
-    centerOfMassSize: number;
-    setCenterOfMassSize: React.Dispatch<React.SetStateAction<number>>;
-    showInertia: boolean;
-    setShowInertia: React.Dispatch<React.SetStateAction<boolean>>;
-    showInertiaOverlay: boolean;
-    setShowInertiaOverlay: React.Dispatch<React.SetStateAction<boolean>>;
-    showOrigins: boolean;
-    setShowOrigins: React.Dispatch<React.SetStateAction<boolean>>;
-    showOriginsOverlay: boolean;
-    setShowOriginsOverlay: React.Dispatch<React.SetStateAction<boolean>>;
-    originSize: number;
-    setOriginSize: React.Dispatch<React.SetStateAction<number>>;
-    showJointAxes: boolean;
-    setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>>;
-    showJointAxesOverlay: boolean;
-    setShowJointAxesOverlay: React.Dispatch<React.SetStateAction<boolean>>;
-    jointAxisSize: number;
-    setJointAxisSize: React.Dispatch<React.SetStateAction<number>>;
-    interactionLayerPriority: ViewerInteractiveLayer[];
-    recordInteractionLayerActivation: (layer: ViewerInteractiveLayer) => void;
-    modelOpacity: number;
-    setModelOpacity: React.Dispatch<React.SetStateAction<number>>;
-    highlightMode: 'link' | 'collision';
-    setHighlightMode: React.Dispatch<React.SetStateAction<'link' | 'collision'>>;
-    isOptionsCollapsed: boolean;
-    toggleOptionsCollapsed: () => void;
-    isJointsCollapsed: boolean;
-    toggleJointsCollapsed: () => void;
+  showCollision: boolean;
+  setShowCollision: React.Dispatch<React.SetStateAction<boolean>>;
+  showCollisionAlwaysOnTop: boolean;
+  setShowCollisionAlwaysOnTop: React.Dispatch<React.SetStateAction<boolean>>;
+  localShowVisual: boolean;
+  setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>>;
+  showCenterOfMass: boolean;
+  setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>>;
+  showCoMOverlay: boolean;
+  setShowCoMOverlay: React.Dispatch<React.SetStateAction<boolean>>;
+  centerOfMassSize: number;
+  setCenterOfMassSize: React.Dispatch<React.SetStateAction<number>>;
+  showInertia: boolean;
+  setShowInertia: React.Dispatch<React.SetStateAction<boolean>>;
+  showInertiaOverlay: boolean;
+  setShowInertiaOverlay: React.Dispatch<React.SetStateAction<boolean>>;
+  showOrigins: boolean;
+  setShowOrigins: React.Dispatch<React.SetStateAction<boolean>>;
+  showOriginsOverlay: boolean;
+  setShowOriginsOverlay: React.Dispatch<React.SetStateAction<boolean>>;
+  originSize: number;
+  setOriginSize: React.Dispatch<React.SetStateAction<number>>;
+  showJointAxes: boolean;
+  setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>>;
+  showJointAxesOverlay: boolean;
+  setShowJointAxesOverlay: React.Dispatch<React.SetStateAction<boolean>>;
+  jointAxisSize: number;
+  setJointAxisSize: React.Dispatch<React.SetStateAction<number>>;
+  interactionLayerPriority: ViewerInteractiveLayer[];
+  recordInteractionLayerActivation: (layer: ViewerInteractiveLayer) => void;
+  modelOpacity: number;
+  setModelOpacity: React.Dispatch<React.SetStateAction<number>>;
+  highlightMode: 'link' | 'collision';
+  setHighlightMode: React.Dispatch<React.SetStateAction<'link' | 'collision'>>;
+  isOptionsCollapsed: boolean;
+  toggleOptionsCollapsed: () => void;
+  isJointsCollapsed: boolean;
+  toggleJointsCollapsed: () => void;
 }
 
 export function useViewerSettings(): ViewerSettings {
-    const viewOptions = useUIStore((state) => state.viewOptions);
-    const setViewOption = useUIStore((state) => state.setViewOption);
+  const viewOptions = useUIStore((state) => state.viewOptions);
+  const setViewOption = useUIStore((state) => state.setViewOption);
 
-    const {
-        showCollision,
-        showJointAxes,
-        showInertia,
-        showCenterOfMass,
-        modelOpacity,
-    } = viewOptions;
+  const { showCollision, showJointAxes, showInertia, showCenterOfMass, modelOpacity } = viewOptions;
 
-    const [showCollisionAlwaysOnTop, setShowCollisionAlwaysOnTop] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_collision_always_on_top');
-            return saved !== 'false';
-        }
-        return true;
+  const [activeOverlayLayer, setActiveOverlayLayerState] = useState<ViewerOverlayLayer | null>(() =>
+    resolveInitialActiveOverlayLayer(),
+  );
+
+  const [localShowVisualState, setLocalShowVisualState] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(SHOW_VISUAL_STORAGE_KEY);
+      return saved !== 'false';
+    }
+    return true;
+  });
+
+  const [centerOfMassSize, setCenterOfMassSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('urdf_viewer_com_size');
+      return saved ? Math.min(parseFloat(saved), 0.5) : 0.01;
+    }
+    return 0.01;
+  });
+
+  const [showOriginsState, setShowOriginsState] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(SHOW_ORIGINS_STORAGE_KEY) === 'true';
+    }
+    return false;
+  });
+
+  const [originSize, setOriginSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('urdf_viewer_origin_size');
+      return saved ? Math.min(parseFloat(saved), 0.5) : 0.1;
+    }
+    return 0.1;
+  });
+
+  const [jointAxisSize, setJointAxisSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('urdf_viewer_joint_axis_size');
+      return saved ? Math.min(parseFloat(saved), 2.0) : 0.1;
+    }
+    return 0.1;
+  });
+
+  const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
+  const [interactionActivationOrder, setInteractionActivationOrder] = useState<
+    Record<ViewerInteractiveLayer, number>
+  >({
+    visual: 1,
+    collision: 0,
+    'origin-axes': 0,
+    'joint-axis': 0,
+    'center-of-mass': 0,
+    inertia: 0,
+  });
+
+  const [isOptionsCollapsed, setIsOptionsCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('urdf_viewer_options_collapsed');
+      return saved === 'true';
+    }
+    return false;
+  });
+  const [isJointsCollapsed, setIsJointsCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('urdf_viewer_joints_collapsed');
+      return saved === 'true';
+    }
+    return false;
+  });
+
+  const showCollisionAlwaysOnTop = activeOverlayLayer === 'collision';
+  const showOriginsOverlay = activeOverlayLayer === 'origin-axes';
+  const showJointAxesOverlay = activeOverlayLayer === 'joint-axis';
+  const showCoMOverlay = activeOverlayLayer === 'center-of-mass';
+  const showInertiaOverlay = activeOverlayLayer === 'inertia';
+
+  useEffect(() => {
+    localStorage.setItem(SHOW_VISUAL_STORAGE_KEY, localShowVisualState.toString());
+  }, [localShowVisualState]);
+
+  useEffect(() => {
+    localStorage.setItem('urdf_viewer_origin_size', originSize.toString());
+  }, [originSize]);
+
+  useEffect(() => {
+    localStorage.setItem('urdf_viewer_com_size', centerOfMassSize.toString());
+  }, [centerOfMassSize]);
+
+  useEffect(() => {
+    localStorage.setItem(SHOW_ORIGINS_STORAGE_KEY, showOriginsState.toString());
+  }, [showOriginsState]);
+
+  useEffect(() => {
+    localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
+  }, [jointAxisSize]);
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY, activeOverlayLayer ?? 'none');
+    localStorage.setItem(COLLISION_ALWAYS_ON_TOP_STORAGE_KEY, showCollisionAlwaysOnTop.toString());
+    localStorage.setItem(ORIGIN_OVERLAY_STORAGE_KEY, showOriginsOverlay.toString());
+    localStorage.setItem(JOINT_AXIS_OVERLAY_STORAGE_KEY, showJointAxesOverlay.toString());
+    localStorage.setItem(CENTER_OF_MASS_OVERLAY_STORAGE_KEY, showCoMOverlay.toString());
+    localStorage.setItem(INERTIA_OVERLAY_STORAGE_KEY, showInertiaOverlay.toString());
+  }, [
+    activeOverlayLayer,
+    showCoMOverlay,
+    showCollisionAlwaysOnTop,
+    showInertiaOverlay,
+    showJointAxesOverlay,
+    showOriginsOverlay,
+  ]);
+
+  const bumpInteractionLayer = useCallback((layer: ViewerInteractiveLayer) => {
+    setInteractionActivationOrder((previous) => {
+      const nextOrder = Math.max(...Object.values(previous)) + 1;
+      if (previous[layer] === nextOrder) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        [layer]: nextOrder,
+      };
     });
+  }, []);
 
-    const [localShowVisualState, setLocalShowVisualState] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(SHOW_VISUAL_STORAGE_KEY);
-            return saved !== 'false';
+  const setActiveOverlayLayer = useCallback(
+    (layer: ViewerOverlayLayer | null) => {
+      setActiveOverlayLayerState((previous) => {
+        if (previous === layer) {
+          return previous;
         }
-        return true;
-    });
+        return layer;
+      });
+      if (layer) {
+        bumpInteractionLayer(layer);
+      }
+    },
+    [bumpInteractionLayer],
+  );
 
-    const [showCoMOverlay, setShowCoMOverlay] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_com_overlay');
-            return saved !== 'false';
-        }
-        return true;
-    });
+  const localShowVisual = localShowVisualState;
+  const showOrigins = showOriginsState;
 
-    const [centerOfMassSize, setCenterOfMassSize] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_com_size');
-            return saved ? Math.min(parseFloat(saved), 0.5) : 0.01;
-        }
-        return 0.01;
-    });
+  const setShowCollision: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showCollision) : nextValue;
+      setViewOption('showCollision', resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('collision');
+      } else if (showCollisionAlwaysOnTop) {
+        setActiveOverlayLayer(null);
+      }
+    },
+    [
+      bumpInteractionLayer,
+      setActiveOverlayLayer,
+      setViewOption,
+      showCollision,
+      showCollisionAlwaysOnTop,
+    ],
+  );
 
-    const [showInertiaOverlay, setShowInertiaOverlay] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_inertia_overlay');
-            return saved !== 'false';
-        }
-        return true;
-    });
+  const setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(localShowVisualState) : nextValue;
+      setLocalShowVisualState(resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('visual');
+      }
+    },
+    [bumpInteractionLayer, localShowVisualState],
+  );
 
-    const [showOriginsState, setShowOriginsState] = useState(() => {
-        if (typeof window !== 'undefined') {
-            return localStorage.getItem(SHOW_ORIGINS_STORAGE_KEY) === 'true';
-        }
-        return false;
-    });
+  const setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showCenterOfMass) : nextValue;
+      setViewOption('showCenterOfMass', resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('center-of-mass');
+      } else if (showCoMOverlay) {
+        setActiveOverlayLayer(null);
+      }
+    },
+    [bumpInteractionLayer, setActiveOverlayLayer, setViewOption, showCenterOfMass, showCoMOverlay],
+  );
 
-    const [showOriginsOverlay, setShowOriginsOverlay] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(ORIGIN_OVERLAY_STORAGE_KEY);
-            return saved === 'true';
-        }
-        return false;
-    });
+  const setShowInertia: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showInertia) : nextValue;
+      setViewOption('showInertia', resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('inertia');
+      } else if (showInertiaOverlay) {
+        setActiveOverlayLayer(null);
+      }
+    },
+    [bumpInteractionLayer, setActiveOverlayLayer, setViewOption, showInertia, showInertiaOverlay],
+  );
 
-    const [originSize, setOriginSize] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_origin_size');
-            return saved ? Math.min(parseFloat(saved), 0.5) : 0.1;
-        }
-        return 0.1;
-    });
+  const setShowOrigins: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showOriginsState) : nextValue;
+      setShowOriginsState(resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('origin-axes');
+      } else if (showOriginsOverlay) {
+        setActiveOverlayLayer(null);
+      }
+    },
+    [bumpInteractionLayer, setActiveOverlayLayer, showOriginsOverlay, showOriginsState],
+  );
 
-    const [showJointAxesOverlay, setShowJointAxesOverlay] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_joint_axis_overlay');
-            return saved !== 'false';
-        }
-        return true;
-    });
+  const setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showJointAxes) : nextValue;
+      setViewOption('showJointAxes', resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('joint-axis');
+      } else if (showJointAxesOverlay) {
+        setActiveOverlayLayer(null);
+      }
+    },
+    [
+      bumpInteractionLayer,
+      setActiveOverlayLayer,
+      setViewOption,
+      showJointAxes,
+      showJointAxesOverlay,
+    ],
+  );
 
-    const [jointAxisSize, setJointAxisSize] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_joint_axis_size');
-            return saved ? Math.min(parseFloat(saved), 2.0) : 0.1;
-        }
-        return 0.1;
-    });
+  const setShowCollisionAlwaysOnTopTracked: React.Dispatch<React.SetStateAction<boolean>> =
+    useCallback(
+      (nextValue) => {
+        const resolvedValue =
+          typeof nextValue === 'function' ? nextValue(showCollisionAlwaysOnTop) : nextValue;
+        setActiveOverlayLayer(resolvedValue ? 'collision' : null);
+      },
+      [setActiveOverlayLayer, showCollisionAlwaysOnTop],
+    );
 
-    const [highlightMode, setHighlightMode] = useState<'link' | 'collision'>('link');
-    const [interactionActivationOrder, setInteractionActivationOrder] = useState<Record<ViewerInteractiveLayer, number>>({
-        visual: 1,
-        collision: 0,
-        'origin-axes': 0,
-        'joint-axis': 0,
-        'center-of-mass': 0,
-        inertia: 0,
-    });
+  const setShowCoMOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showCoMOverlay) : nextValue;
+      setActiveOverlayLayer(resolvedValue ? 'center-of-mass' : null);
+    },
+    [setActiveOverlayLayer, showCoMOverlay],
+  );
 
-    const [isOptionsCollapsed, setIsOptionsCollapsed] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_options_collapsed');
-            return saved === 'true';
-        }
-        return false;
-    });
-    const [isJointsCollapsed, setIsJointsCollapsed] = useState(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('urdf_viewer_joints_collapsed');
-            return saved === 'true';
-        }
-        return false;
-    });
+  const setShowInertiaOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showInertiaOverlay) : nextValue;
+      setActiveOverlayLayer(resolvedValue ? 'inertia' : null);
+    },
+    [setActiveOverlayLayer, showInertiaOverlay],
+  );
 
-    useEffect(() => {
-        localStorage.setItem(SHOW_VISUAL_STORAGE_KEY, localShowVisualState.toString());
-    }, [localShowVisualState]);
+  const setShowOriginsOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showOriginsOverlay) : nextValue;
+      setActiveOverlayLayer(resolvedValue ? 'origin-axes' : null);
+    },
+    [setActiveOverlayLayer, showOriginsOverlay],
+  );
 
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_origin_size', originSize.toString());
-    }, [originSize]);
+  const setShowJointAxesOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showJointAxesOverlay) : nextValue;
+      setActiveOverlayLayer(resolvedValue ? 'joint-axis' : null);
+    },
+    [setActiveOverlayLayer, showJointAxesOverlay],
+  );
 
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_com_size', centerOfMassSize.toString());
-    }, [centerOfMassSize]);
-
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_com_overlay', showCoMOverlay.toString());
-    }, [showCoMOverlay]);
-
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_inertia_overlay', showInertiaOverlay.toString());
-    }, [showInertiaOverlay]);
-
-    useEffect(() => {
-        localStorage.setItem(SHOW_ORIGINS_STORAGE_KEY, showOriginsState.toString());
-    }, [showOriginsState]);
-
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
-    }, [jointAxisSize]);
-
-    useEffect(() => {
-        localStorage.setItem(ORIGIN_OVERLAY_STORAGE_KEY, showOriginsOverlay.toString());
-    }, [showOriginsOverlay]);
-
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_joint_axis_overlay', showJointAxesOverlay.toString());
-    }, [showJointAxesOverlay]);
-
-    useEffect(() => {
-        localStorage.setItem('urdf_viewer_collision_always_on_top', showCollisionAlwaysOnTop.toString());
-    }, [showCollisionAlwaysOnTop]);
-
-    const bumpInteractionLayer = useCallback((layer: ViewerInteractiveLayer) => {
-        setInteractionActivationOrder((previous) => {
-            const nextOrder = Math.max(...Object.values(previous)) + 1;
-            if (previous[layer] === nextOrder) {
-                return previous;
-            }
-
-            return {
-                ...previous,
-                [layer]: nextOrder,
-            };
-        });
-    }, []);
-
-    const localShowVisual = localShowVisualState;
-    const showOrigins = showOriginsState;
-
-    const setShowCollision: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showCollision) : nextValue;
-        setViewOption('showCollision', resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('collision');
-        }
-    }, [bumpInteractionLayer, setViewOption, showCollision]);
-
-    const setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(localShowVisualState) : nextValue;
-        setLocalShowVisualState(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('visual');
-        }
-    }, [bumpInteractionLayer, localShowVisualState]);
-
-    const setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showCenterOfMass) : nextValue;
-        setViewOption('showCenterOfMass', resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('center-of-mass');
-        }
-    }, [bumpInteractionLayer, setViewOption, showCenterOfMass]);
-
-    const setShowInertia: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showInertia) : nextValue;
-        setViewOption('showInertia', resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('inertia');
-        }
-    }, [bumpInteractionLayer, setViewOption, showInertia]);
-
-    const setShowOrigins: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showOriginsState) : nextValue;
-        setShowOriginsState(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('origin-axes');
-        }
-    }, [bumpInteractionLayer, showOriginsState]);
-
-    const setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showJointAxes) : nextValue;
-        setViewOption('showJointAxes', resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('joint-axis');
-        }
-    }, [bumpInteractionLayer, setViewOption, showJointAxes]);
-
-    const setShowCollisionAlwaysOnTopTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showCollisionAlwaysOnTop) : nextValue;
-        setShowCollisionAlwaysOnTop(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('collision');
-        }
-    }, [bumpInteractionLayer, showCollisionAlwaysOnTop]);
-
-    const setShowCoMOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showCoMOverlay) : nextValue;
-        setShowCoMOverlay(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('center-of-mass');
-        }
-    }, [bumpInteractionLayer, showCoMOverlay]);
-
-    const setShowInertiaOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showInertiaOverlay) : nextValue;
-        setShowInertiaOverlay(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('inertia');
-        }
-    }, [bumpInteractionLayer, showInertiaOverlay]);
-
-    const setShowOriginsOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showOriginsOverlay) : nextValue;
-        setShowOriginsOverlay(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('origin-axes');
-        }
-    }, [bumpInteractionLayer, showOriginsOverlay]);
-
-    const setShowJointAxesOverlayTracked: React.Dispatch<React.SetStateAction<boolean>> = useCallback((nextValue) => {
-        const resolvedValue = typeof nextValue === 'function' ? nextValue(showJointAxesOverlay) : nextValue;
-        setShowJointAxesOverlay(resolvedValue);
-        if (resolvedValue) {
-            bumpInteractionLayer('joint-axis');
-        }
-    }, [bumpInteractionLayer, showJointAxesOverlay]);
-
-    const interactionLayerPriority = useMemo(() => resolveInteractiveLayerPriority({
+  const interactionLayerPriority = useMemo(
+    () =>
+      resolveInteractiveLayerPriority({
         showVisual: localShowVisual,
         showCollision,
         showCollisionAlwaysOnTop,
@@ -326,67 +418,85 @@ export function useViewerSettings(): ViewerSettings {
         showInertia,
         showInertiaOverlay,
         activationOrder: interactionActivationOrder,
-    }), [
-        interactionActivationOrder,
-        localShowVisual,
-        showCenterOfMass,
-        showCoMOverlay,
-        showCollision,
-        showCollisionAlwaysOnTop,
-        showInertia,
-        showInertiaOverlay,
-        showJointAxes,
-        showJointAxesOverlay,
-        showOrigins,
-        showOriginsOverlay,
-    ]);
+      }),
+    [
+      interactionActivationOrder,
+      localShowVisual,
+      showCenterOfMass,
+      showCoMOverlay,
+      showCollision,
+      showCollisionAlwaysOnTop,
+      showInertia,
+      showInertiaOverlay,
+      showJointAxes,
+      showJointAxesOverlay,
+      showOrigins,
+      showOriginsOverlay,
+    ],
+  );
 
-    const setModelOpacity: React.Dispatch<React.SetStateAction<number>> = (nextValue) => {
-        const resolvedValue = typeof nextValue === 'function'
-            ? nextValue(modelOpacity)
-            : nextValue;
-        const clampedValue = Number.isFinite(resolvedValue)
-            ? Math.max(0.1, Math.min(1, resolvedValue))
-            : 1;
-        setViewOption('modelOpacity', clampedValue);
-    };
+  const setModelOpacity: React.Dispatch<React.SetStateAction<number>> = (nextValue) => {
+    const resolvedValue = typeof nextValue === 'function' ? nextValue(modelOpacity) : nextValue;
+    const clampedValue = Number.isFinite(resolvedValue)
+      ? Math.max(0.1, Math.min(1, resolvedValue))
+      : 1;
+    setViewOption('modelOpacity', clampedValue);
+  };
 
-    const toggleOptionsCollapsed = () => {
-        setIsOptionsCollapsed(prev => {
-            const newState = !prev;
-            localStorage.setItem('urdf_viewer_options_collapsed', String(newState));
-            return newState;
-        });
-    };
+  const toggleOptionsCollapsed = () => {
+    setIsOptionsCollapsed((prev) => {
+      const newState = !prev;
+      localStorage.setItem('urdf_viewer_options_collapsed', String(newState));
+      return newState;
+    });
+  };
 
-    const toggleJointsCollapsed = () => {
-        setIsJointsCollapsed(prev => {
-            const newState = !prev;
-            localStorage.setItem('urdf_viewer_joints_collapsed', String(newState));
-            return newState;
-        });
-    };
+  const toggleJointsCollapsed = () => {
+    setIsJointsCollapsed((prev) => {
+      const newState = !prev;
+      localStorage.setItem('urdf_viewer_joints_collapsed', String(newState));
+      return newState;
+    });
+  };
 
-    return {
-        showCollision, setShowCollision,
-        showCollisionAlwaysOnTop, setShowCollisionAlwaysOnTop: setShowCollisionAlwaysOnTopTracked,
-        localShowVisual, setLocalShowVisual,
-        showCenterOfMass, setShowCenterOfMass,
-        showCoMOverlay, setShowCoMOverlay: setShowCoMOverlayTracked,
-        centerOfMassSize, setCenterOfMassSize,
-        showInertia, setShowInertia,
-        showInertiaOverlay, setShowInertiaOverlay: setShowInertiaOverlayTracked,
-        showOrigins, setShowOrigins,
-        showOriginsOverlay, setShowOriginsOverlay: setShowOriginsOverlayTracked,
-        originSize, setOriginSize,
-        showJointAxes, setShowJointAxes,
-        showJointAxesOverlay, setShowJointAxesOverlay: setShowJointAxesOverlayTracked,
-        jointAxisSize, setJointAxisSize,
-        interactionLayerPriority,
-        recordInteractionLayerActivation: bumpInteractionLayer,
-        modelOpacity, setModelOpacity,
-        highlightMode, setHighlightMode,
-        isOptionsCollapsed, toggleOptionsCollapsed,
-        isJointsCollapsed, toggleJointsCollapsed
-    };
+  return {
+    showCollision,
+    setShowCollision,
+    showCollisionAlwaysOnTop,
+    setShowCollisionAlwaysOnTop: setShowCollisionAlwaysOnTopTracked,
+    localShowVisual,
+    setLocalShowVisual,
+    showCenterOfMass,
+    setShowCenterOfMass,
+    showCoMOverlay,
+    setShowCoMOverlay: setShowCoMOverlayTracked,
+    centerOfMassSize,
+    setCenterOfMassSize,
+    showInertia,
+    setShowInertia,
+    showInertiaOverlay,
+    setShowInertiaOverlay: setShowInertiaOverlayTracked,
+    showOrigins,
+    setShowOrigins,
+    showOriginsOverlay,
+    setShowOriginsOverlay: setShowOriginsOverlayTracked,
+    originSize,
+    setOriginSize,
+    showJointAxes,
+    setShowJointAxes,
+    showJointAxesOverlay,
+    setShowJointAxesOverlay: setShowJointAxesOverlayTracked,
+    jointAxisSize,
+    setJointAxisSize,
+    interactionLayerPriority,
+    recordInteractionLayerActivation: bumpInteractionLayer,
+    modelOpacity,
+    setModelOpacity,
+    highlightMode,
+    setHighlightMode,
+    isOptionsCollapsed,
+    toggleOptionsCollapsed,
+    isJointsCollapsed,
+    toggleJointsCollapsed,
+  };
 }

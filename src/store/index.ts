@@ -45,6 +45,18 @@ export { useAssemblySelectionStore, ASSEMBLY_SELECTION_ID } from './assemblySele
 export { useCollisionTransformStore } from './collisionTransformStore';
 export type { PendingCollisionTransform } from './collisionTransformStore';
 
+// Joint interaction preview store - transient drag/preview overlay for panels/editors
+export {
+  useJointInteractionPreviewStore,
+  EMPTY_JOINT_INTERACTION_PREVIEW,
+  hasJointInteractionPreview,
+} from './jointInteractionPreviewStore';
+export type {
+  JointInteractionPreviewMatch,
+  JointInteractionPreviewSource,
+  JointInteractionPreviewSnapshot,
+} from './jointInteractionPreviewStore';
+
 // History helper (for custom stores that need undo/redo)
 export { createHistoryManager } from './historyMiddleware';
 export type { HistoryState, HistoryActions, HistoryOptions } from './historyMiddleware';

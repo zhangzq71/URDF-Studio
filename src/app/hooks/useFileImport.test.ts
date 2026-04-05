@@ -483,6 +483,57 @@ test('useFileImport keeps editor mode active across repeated imports', async () 
   }
 });
 
+test('useFileImport blocks standalone package-backed URDF files from auto-opening without matching assets', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const workerMock = installRobotImportWorkerMock();
+
+  const importedFile = new File(
+    [
+      `<robot name="aliengo">
+        <link name="base">
+          <visual>
+            <geometry>
+              <mesh filename="package://aliengo_description/meshes/trunk.dae" />
+            </geometry>
+          </visual>
+        </link>
+      </robot>`,
+    ],
+    'aliengo.urdf',
+    { type: 'text/xml' },
+  );
+
+  const loadCalls: RobotFile[] = [];
+  const toastCalls: Array<{ message: string; type?: 'info' | 'success' }> = [];
+  const rendered = renderHook({
+    onLoadRobot: (file) => {
+      loadCalls.push(file);
+    },
+    onShowToast: (message, type) => {
+      toastCalls.push({ message, type });
+    },
+  });
+
+  try {
+    await rendered.hook.handleImport([importedFile] as unknown as FileList);
+
+    assert.equal(loadCalls.length, 0);
+    assert.equal(useAssetsStore.getState().selectedFile, null);
+    assert.equal(useAssetsStore.getState().availableFiles[0]?.name, 'aliengo.urdf');
+    assert.match(
+      toastCalls.map((entry) => entry.message).join('\n'),
+      /Import the full folder or ZIP so meshes and textures are available/i,
+    );
+  } finally {
+    rendered.cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    workerMock.restore();
+    domEnvironment.restore();
+    resetStoresToBaseline();
+  }
+});
+
 test('useFileImport keeps editor mode when importing a project archive', async () => {
   resetStoresToBaseline();
   useUIStore.setState({ appMode: 'editor' });

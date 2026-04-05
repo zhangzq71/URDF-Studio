@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 import { GeometryType, type RobotData, type RobotFile } from '@/types';
@@ -139,6 +140,46 @@ test('resolveRobotFileData returns a ready result for mesh files', () => {
   }
   assert.equal(result.robotData.name, 'link');
   assert.equal(result.robotData.links.base_link?.visual.meshPath, 'meshes/demo/link.stl');
+});
+
+test('resolveRobotFileData keeps all Aliengo leg links when importing the generated URDF fixture', () => {
+  const fixturePath = 'test/unitree_ros/robots/aliengo_description/urdf/aliengo.urdf';
+  const result = resolveRobotFileData({
+    name: fixturePath,
+    content: fs.readFileSync(fixturePath, 'utf8'),
+    format: 'urdf',
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected Aliengo URDF import result to be ready');
+  }
+
+  const expectedLegLinks = [
+    'FL_hip',
+    'FL_thigh',
+    'FL_calf',
+    'FL_foot',
+    'FR_hip',
+    'FR_thigh',
+    'FR_calf',
+    'FR_foot',
+    'RL_hip',
+    'RL_thigh',
+    'RL_calf',
+    'RL_foot',
+    'RR_hip',
+    'RR_thigh',
+    'RR_calf',
+    'RR_foot',
+  ];
+
+  for (const linkId of expectedLegLinks) {
+    assert.ok(
+      result.robotData.links[linkId],
+      `Expected imported Aliengo robot to include ${linkId}`,
+    );
+  }
 });
 
 test('resolveRobotFileData returns a ready result for sdf files', () => {

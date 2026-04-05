@@ -167,3 +167,65 @@ test('editor rotate controls persist joint origin rotation when rotating the piv
     dom.window.close();
   }
 });
+
+test('rotate motion preview emits live joint angle updates while dragging the dedicated rotate object', async () => {
+  const dom = installDom();
+  const container = dom.window.document.getElementById('root');
+  assert.ok(container, 'root container should exist');
+
+  const { robot, jointId } = createRobotSelectionFixture();
+  useRobotStore.getState().resetRobot({
+    name: robot.name,
+    links: robot.links,
+    joints: robot.joints,
+    rootLinkId: robot.rootLinkId,
+  });
+  useSelectionStore.getState().setSelection(robot.selection);
+
+  const selectedPivot = new THREE.Group();
+  const selectedRotateObject = new THREE.Group();
+  const translateControls = new FakeTransformControls();
+  const rotateControls = new FakeTransformControls();
+  let latestHookState: TransformControlsState | null = null;
+  const previewCalls: Array<{ selectionId: string | null | undefined; angle: number }> = [];
+
+  function Harness() {
+    const hookState = useTransformControls(selectedPivot, 'universal', robot, () => {}, 'editor', {
+      selectedRotateObject,
+      onPreviewRotateChange: (selectionId, angle) => {
+        previewCalls.push({ selectionId, angle });
+      },
+    });
+
+    hookState.transformControlRef.current = translateControls;
+    hookState.rotateTransformControlRef.current = rotateControls;
+    latestHookState = hookState;
+    return null;
+  }
+
+  const root = createRoot(container);
+
+  try {
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    assert.ok(latestHookState, 'hook state should be available after render');
+
+    await act(async () => {
+      selectedRotateObject.quaternion.setFromEuler(new THREE.Euler(0, 0, 0.42, 'ZYX'));
+      selectedRotateObject.updateMatrixWorld(true);
+      latestHookState?.handleRotateObjectChange();
+    });
+
+    assert.equal(previewCalls.length, 1, 'expected one live preview callback');
+    assert.equal(previewCalls[0]?.selectionId, jointId);
+    assert.ok(Math.abs((previewCalls[0]?.angle ?? 0) - 0.42) < 1e-6);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    useSelectionStore.getState().clearSelection();
+    dom.window.close();
+  }
+});

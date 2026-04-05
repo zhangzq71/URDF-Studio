@@ -9,7 +9,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
-import type { RobotFile } from '@/types';
+import { JointType, type RobotFile } from '@/types';
 import type {
   ToolMode,
   URDFViewerProps,
@@ -30,6 +30,7 @@ import { normalizeUsdBootstrapDocumentLoadEvent } from '../utils/usdBootstrapDoc
 import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import { supportsUsdWorkerRenderer } from '../utils/usdWorkerRendererSupport';
+import { unwrapContinuousJointAngle } from '@/shared/utils/continuousJointAngle';
 import {
   disposeUsdOffscreenViewerStageInBackground,
   prepareSharedUsdOffscreenViewerStageOpenDispatch,
@@ -37,6 +38,7 @@ import {
 import { recordUsdStageLoadDebug } from '@/shared/debug/usdStageLoadDebug';
 
 interface UsdOffscreenStageProps {
+  resolvedTheme?: 'light' | 'dark';
   active?: boolean;
   sourceFile: RobotFile;
   availableFiles: RobotFile[];
@@ -58,6 +60,7 @@ interface UsdOffscreenStageProps {
   interactionLayerPriority?: readonly ViewerInteractiveLayer[];
   toolMode: ToolMode;
   runtimeBridge?: ViewerRuntimeStageBridge;
+  registerAutoFitGroundHandler?: ((handler: (() => void) | null) => void) | null;
   retainReadyAsLoadingDuringBootstrapHandoff?: boolean;
 }
 
@@ -114,7 +117,49 @@ function radiansToDegrees(value: number | null | undefined): number | undefined 
   return Number.isFinite(Number(value)) ? (Number(value) * 180) / Math.PI : undefined;
 }
 
+function getRuntimeJointLimitDegrees(
+  joint:
+    | {
+        type?: string | null;
+        limit?: { lower?: number | null; upper?: number | null } | null;
+      }
+    | null
+    | undefined,
+) {
+  if (joint?.type === JointType.CONTINUOUS) {
+    return {
+      lowerLimitDeg: -180,
+      upperLimitDeg: 180,
+    };
+  }
+
+  return {
+    lowerLimitDeg: radiansToDegrees(joint?.limit?.lower),
+    upperLimitDeg: radiansToDegrees(joint?.limit?.upper),
+  };
+}
+
+function resolveRuntimeProxyJointAngle(
+  joint:
+    | {
+        type?: string | null;
+      }
+    | null
+    | undefined,
+  angleRad: number,
+  referenceAngleRad: number | null | undefined,
+) {
+  if (joint?.type !== JointType.CONTINUOUS) {
+    return angleRad;
+  }
+
+  return Number.isFinite(referenceAngleRad)
+    ? unwrapContinuousJointAngle(angleRad, Number(referenceAngleRad))
+    : angleRad;
+}
+
 export function UsdOffscreenStage({
+  resolvedTheme = 'light',
   active = true,
   sourceFile,
   availableFiles,
@@ -136,6 +181,7 @@ export function UsdOffscreenStage({
   interactionLayerPriority,
   toolMode,
   runtimeBridge,
+  registerAutoFitGroundHandler = null,
   retainReadyAsLoadingDuringBootstrapHandoff = false,
 }: UsdOffscreenStageProps) {
   const workerRef = useRef<Worker | null>(null);
@@ -297,8 +343,7 @@ export function UsdOffscreenStage({
                     childLinkPath,
                     {
                       angleDeg: radiansToDegrees(joint.angle),
-                      lowerLimitDeg: radiansToDegrees(joint.limit?.lower),
-                      upperLimitDeg: radiansToDegrees(joint.limit?.upper),
+                      ...getRuntimeJointLimitDegrees(joint),
                     },
                   ],
                 ];
@@ -317,10 +362,11 @@ export function UsdOffscreenStage({
                   ([, candidatePath]) => candidatePath === linkPath,
                 )?.[0];
                 const joint = jointId ? resolution?.robotData.joints[jointId] : undefined;
-                const lowerLimitDeg = radiansToDegrees(joint?.limit?.lower);
-                const upperLimitDeg = radiansToDegrees(joint?.limit?.upper);
+                const { lowerLimitDeg, upperLimitDeg } = getRuntimeJointLimitDegrees(joint);
                 const clampedAngleDeg =
-                  Number.isFinite(lowerLimitDeg) && Number.isFinite(upperLimitDeg)
+                  joint?.type !== JointType.CONTINUOUS &&
+                  Number.isFinite(lowerLimitDeg) &&
+                  Number.isFinite(upperLimitDeg)
                     ? Math.min(Math.max(angleDeg, lowerLimitDeg!), upperLimitDeg!)
                     : angleDeg;
                 const nextInfo = {
@@ -337,8 +383,12 @@ export function UsdOffscreenStage({
                     angleRad: (clampedAngleDeg * Math.PI) / 180,
                   });
                   if (runtimeRobotProxyRef.current?.joints?.[jointId]) {
-                    runtimeRobotProxyRef.current.joints[jointId].angle =
-                      (clampedAngleDeg * Math.PI) / 180;
+                    const proxyJoint = runtimeRobotProxyRef.current.joints[jointId];
+                    proxyJoint.angle = resolveRuntimeProxyJointAngle(
+                      joint,
+                      (clampedAngleDeg * Math.PI) / 180,
+                      proxyJoint.angle,
+                    );
                   }
                 }
 
@@ -399,7 +449,12 @@ export function UsdOffscreenStage({
                 });
               }
               if (runtimeRobotProxyRef.current?.joints?.[jointId]) {
-                runtimeRobotProxyRef.current.joints[jointId].angle = angleRad;
+                const proxyJoint = runtimeRobotProxyRef.current.joints[jointId];
+                proxyJoint.angle = resolveRuntimeProxyJointAngle(
+                  resolution.robotData.joints[jointId],
+                  angleRad,
+                  proxyJoint.angle,
+                );
               }
             });
           }
@@ -517,6 +572,7 @@ export function UsdOffscreenStage({
           width: Math.max(1, Math.round(rect.width)),
           height: Math.max(1, Math.round(rect.height)),
           devicePixelRatio: window.devicePixelRatio || 1,
+          theme: resolvedTheme,
           active,
           groundPlaneOffset,
           showVisual,
@@ -575,7 +631,7 @@ export function UsdOffscreenStage({
       disposeUsdOffscreenViewerStageInBackground();
       workerRef.current = null;
     };
-  }, [canvasElement, containerElement]);
+  }, [canvasElement, containerElement, resolvedTheme]);
 
   useEffect(() => {
     postWorkerMessage({
@@ -599,6 +655,24 @@ export function UsdOffscreenStage({
       active,
     });
   }, [active, postWorkerMessage]);
+
+  useEffect(() => {
+    if (!registerAutoFitGroundHandler) {
+      return;
+    }
+
+    if (!active) {
+      return;
+    }
+
+    registerAutoFitGroundHandler(() => {
+      postWorkerMessage({ type: 'auto-fit-ground' });
+    });
+
+    return () => {
+      registerAutoFitGroundHandler(null);
+    };
+  }, [active, postWorkerMessage, registerAutoFitGroundHandler]);
 
   useEffect(() => {
     postWorkerMessage({

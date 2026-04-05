@@ -137,6 +137,40 @@ test('syncLoadedRobotScene indexes visual meshes attached directly to a root lin
   assert.equal(rootMesh.userData.isCollisionMesh, false);
 });
 
+test('syncLoadedRobotScene restores visual mesh shadow flags even when the material is already normalized', () => {
+  const robot = new URDFLink();
+  robot.name = 'base_link';
+
+  const visual = new URDFVisual();
+  visual.name = 'base_visual';
+
+  const normalizedMaterial = createMatteMaterial({
+    color: new THREE.Color('#7f7f7f'),
+    name: 'root_visual',
+  });
+  const rootMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), normalizedMaterial);
+  rootMesh.castShadow = false;
+  rootMesh.receiveShadow = false;
+
+  visual.add(rootMesh);
+  robot.add(visual);
+  (robot as any).links = { base_link: robot };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'urdf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(rootMesh.material, normalizedMaterial);
+  assert.equal(rootMesh.castShadow, true);
+  assert.equal(rootMesh.receiveShadow, true);
+  assert.equal(result.linkMeshMap.get('base_link:visual')?.includes(rootMesh), true);
+});
+
 test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewer materials', () => {
   const robot = new THREE.Group();
   const link = new URDFLink();

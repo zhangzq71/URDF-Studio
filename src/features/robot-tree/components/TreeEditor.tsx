@@ -543,7 +543,6 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       <TreeEditorSidebarHeader
         collapsed={collapsed}
         onToggle={onToggle}
-        modeLabel={t.modeLabel}
         isProMode={isProMode}
         simpleModeLabel={t.simpleMode}
         proModeLabel={t.proMode}

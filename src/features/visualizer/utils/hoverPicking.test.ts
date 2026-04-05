@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
+import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
+import { narrowLineRaycast } from '@/shared/utils/three/narrowLineRaycast';
 import { clearMaterialCache, getCachedMaterial } from './materialCache.ts';
 import {
   createVisualizerHoverUserData,
@@ -113,6 +115,46 @@ function createTaggedSupportPlane(
   wrapper.add(mesh);
 
   return { wrapper, mesh };
+}
+
+function createTaggedHelperOutline(
+  target: VisualizerHoverTarget,
+  options: {
+    meshVisualOnly?: boolean;
+    narrowOutlineRaycast?: boolean;
+    interactionLayer?:
+      | 'visual'
+      | 'collision'
+      | 'origin-axes'
+      | 'joint-axis'
+      | 'center-of-mass'
+      | 'inertia';
+  } = {},
+) {
+  const wrapper = new THREE.Group();
+  wrapper.userData = {
+    ...wrapper.userData,
+    ...createVisualizerHoverUserData(target, options.interactionLayer ?? 'inertia'),
+    isHelper: true,
+  };
+
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.35 }),
+  );
+  if (options.meshVisualOnly) {
+    mesh.raycast = ignoreRaycast;
+  }
+  wrapper.add(mesh);
+
+  const geometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+  const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x93c5fd }));
+  if (options.narrowOutlineRaycast) {
+    line.raycast = narrowLineRaycast;
+  }
+  wrapper.add(line);
+
+  return { wrapper, mesh, line };
 }
 
 function createTaggedReversedWindingTriangle(
@@ -246,6 +288,73 @@ test('findNearestVisualizerHoverTarget ignores closer helper meshes without visu
     subType: 'collision',
     objectIndex: 0,
   });
+});
+
+test('findNearestVisualizerHoverTarget ignores inertia fill hits away from the visible outline', () => {
+  const root = new THREE.Group();
+  const helper = createTaggedHelperOutline(
+    {
+      type: 'link',
+      id: 'inertia_link',
+      helperKind: 'inertia',
+    },
+    { meshVisualOnly: true, narrowOutlineRaycast: true, interactionLayer: 'inertia' },
+  );
+
+  root.add(helper.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 2), new THREE.Vector3(0, 0, -1));
+
+  assert.equal(findNearestVisualizerHoverTarget(root, raycaster), null);
+});
+
+test('findNearestVisualizerHoverTarget still allows inertia hits close to the visible outline', () => {
+  const root = new THREE.Group();
+  const helper = createTaggedHelperOutline(
+    {
+      type: 'link',
+      id: 'inertia_link',
+      helperKind: 'inertia',
+    },
+    { meshVisualOnly: true, narrowOutlineRaycast: true, interactionLayer: 'inertia' },
+  );
+
+  root.add(helper.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0.52, 2), new THREE.Vector3(0, 0, -1));
+
+  assert.deepEqual(findNearestVisualizerHoverTarget(root, raycaster), {
+    type: 'link',
+    id: 'inertia_link',
+    helperKind: 'inertia',
+  });
+});
+
+test('resolveVisualizerInteractionTargetFromHits does not force direct inertia mesh hits away from the outline', () => {
+  const root = new THREE.Group();
+  const helper = createTaggedHelperOutline(
+    {
+      type: 'link',
+      id: 'inertia_link',
+      helperKind: 'inertia',
+    },
+    { narrowOutlineRaycast: true, interactionLayer: 'inertia' },
+  );
+
+  root.add(helper.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 2), new THREE.Vector3(0, 0, -1));
+  const hits = raycaster.intersectObject(root, true);
+
+  assert.equal(
+    resolveVisualizerInteractionTargetFromHits(helper.mesh, hits, {
+      interactionLayerPriority: ['inertia'],
+    }),
+    null,
+  );
 });
 
 test('findNearestVisualizerHoverTarget skips hidden or fully transparent tagged geometry', () => {

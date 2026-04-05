@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import { disposeRobotImportWorker } from '@/app/hooks/robotImportWorkerBridge';
-import { mergeAssembly, prepareAssemblyRobotData } from '@/core/robot';
+import { parseURDF } from '@/core/parsers';
+import { computeLinkWorldMatrices, mergeAssembly, prepareAssemblyRobotData } from '@/core/robot';
+import { resolveAlignedAssemblyComponentTransformForBridge } from '@/core/robot/assemblyBridgeAlignment';
 import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
 import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 import { DEFAULT_LINK } from '@/types/constants';
@@ -58,6 +62,9 @@ if (!globalThis.DOMParser) {
 if (!globalThis.XMLSerializer) {
   globalThis.XMLSerializer = window.XMLSerializer;
 }
+
+const GO2_DESCRIPTION_ROOT = path.resolve('test/unitree_ros/robots/go2_description');
+const GO2_URDF_PATH = path.join(GO2_DESCRIPTION_ROOT, 'urdf/go2_description.urdf');
 
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
 
@@ -1002,24 +1009,104 @@ test('workspace viewer preview state realigns the child component before bridge 
 
   const previewRootJoint =
     previewDisplayRobot?.joints[`${WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX}comp_other`];
+  const previewParentRootJoint =
+    previewDisplayRobot?.joints[`${WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX}comp_demo`];
   assert.ok(
     previewRootJoint,
     'workspace viewer should keep a synthetic root joint for the child component',
   );
+  assert.ok(
+    previewParentRootJoint,
+    'workspace viewer should keep a synthetic root joint for the parent component',
+  );
   assertNearlyEqual(
-    previewRootJoint.origin.xyz.x,
+    previewRootJoint.origin.xyz.x - previewParentRootJoint.origin.xyz.x,
     0.1,
     'child preview root joint should move on x',
   );
   assertNearlyEqual(
-    previewRootJoint.origin.xyz.y,
+    previewRootJoint.origin.xyz.y - previewParentRootJoint.origin.xyz.y,
     -0.2,
     'child preview root joint should move on y',
   );
   assertNearlyEqual(
-    previewRootJoint.origin.xyz.z,
+    previewRootJoint.origin.xyz.z - previewParentRootJoint.origin.xyz.z,
     0.3,
     'child preview root joint should move on z',
+  );
+});
+
+test('workspace viewer preview state resolves unprefixed bridge link ids before realigning the child component', () => {
+  const assemblyState = createAssemblyState('robots/demo/left.xml');
+  assemblyState.components.comp_demo.robot.rootLinkId = 'comp_demo_base_link';
+  assemblyState.components.comp_demo.robot.links = {
+    comp_demo_base_link: {
+      ...DEFAULT_LINK,
+      id: 'comp_demo_base_link',
+      name: 'base_link',
+    },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/right.xml',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_other_root',
+      links: {
+        comp_other_other_root: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_other_root',
+          name: 'other_root',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 4, y: 0.5, z: -0.25 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const viewerAssemblyState = buildWorkspaceAssemblyViewerState({
+    assemblyState,
+    bridgePreview: {
+      id: '__bridge_preview__',
+      name: '__bridge_preview__',
+      parentComponentId: 'comp_demo',
+      parentLinkId: 'base_link',
+      childComponentId: 'comp_other',
+      childLinkId: 'other_root',
+      joint: {
+        id: '__bridge_preview__',
+        name: '__bridge_preview__',
+        type: JointType.FIXED,
+        parentLinkId: 'base_link',
+        childLinkId: 'other_root',
+        origin: { xyz: { x: 0.25, y: -0.5, z: 0.75 }, rpy: { r: 0, p: 0, y: 0 } },
+        dynamics: { damping: 0, friction: 0 },
+        hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+      },
+    },
+  });
+
+  assert.ok(viewerAssemblyState, 'viewer assembly state should exist');
+  assert.notEqual(viewerAssemblyState, assemblyState, 'preview should use a cloned assembly state');
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.x ?? 0,
+    0.25,
+    'preview child transform should resolve unprefixed link ids on x',
+  );
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.y ?? 0,
+    -0.5,
+    'preview child transform should resolve unprefixed link ids on y',
+  );
+  assertNearlyEqual(
+    viewerAssemblyState.components.comp_other.transform?.position.z ?? 0,
+    0.75,
+    'preview child transform should resolve unprefixed link ids on z',
   );
 });
 
@@ -1600,6 +1687,80 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData ignores placeholder mesh boun
   );
 });
 
+test('buildWorkspaceAssemblyViewerDisplayRobotData preserves aligned transforms for root-link bridges', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 1.2, y: 0, z: 0.58 },
+      rotation: { r: 0, p: 0, y: Math.PI },
+    },
+    visible: true,
+  };
+  assemblyState.bridges.bridge_demo = {
+    id: 'bridge_demo',
+    name: 'bridge_demo',
+    parentComponentId: 'comp_demo',
+    parentLinkId: 'base_link',
+    childComponentId: 'comp_other',
+    childLinkId: 'comp_other_base_link',
+    joint: {
+      id: 'bridge_demo',
+      name: 'bridge_demo',
+      type: JointType.FIXED,
+      parentLinkId: 'base_link',
+      childLinkId: 'comp_other_base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+
+  const bridgedRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+  const parentRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  assert.ok(bridgedRootJoint, 'expected a synthetic root joint for the root-bridged child');
+  assert.ok(parentRootJoint, 'expected a synthetic root joint for the parent component');
+  assertNearlyEqual(
+    bridgedRootJoint.origin.xyz.x,
+    1.2,
+    'root-bridged child should keep the aligned component x transform',
+  );
+  assertNearlyEqual(
+    bridgedRootJoint.origin.xyz.y,
+    0,
+    'root-bridged child should keep the aligned component y transform',
+  );
+  assertNearlyEqual(
+    bridgedRootJoint.origin.xyz.z - parentRootJoint.origin.xyz.z,
+    0.58,
+    'root-bridged child should keep the aligned component z transform',
+  );
+  assertNearlyEqual(
+    bridgedRootJoint.origin.rpy.y,
+    Math.PI,
+    'root-bridged child should keep the aligned component yaw transform',
+  );
+});
+
 test('buildWorkspaceAssemblyViewerDisplayRobotData uses component transforms for bridged components without a root-link bridge', () => {
   const assemblyState = createAssemblyState('robots/demo/demo.urdf');
   assemblyState.components.comp_other = {
@@ -1680,7 +1841,102 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData uses component transforms for
     'child component root should be shifted so its selected link aligns to the parent',
   );
   assertNearlyEqual(bridgedRootJoint.origin.xyz.y, 0, 'child component y should stay aligned');
-  assertNearlyEqual(bridgedRootJoint.origin.xyz.z, 0, 'child component z should stay aligned');
+  assertNearlyEqual(
+    bridgedRootJoint.origin.xyz.z - anchorRootJoint.origin.xyz.z,
+    0,
+    'child component z should stay aligned after inheriting the parent display lift',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData keeps complex non-root child-link bridges visually aligned for go2', () => {
+  const source = fs.readFileSync(GO2_URDF_PATH, 'utf8');
+  const robot = parseURDF(source);
+  assert.ok(robot, 'expected go2 URDF to parse');
+
+  const identityTransform = {
+    position: { x: 0, y: 0, z: 0 },
+    rotation: { r: 0, p: 0, y: 0 },
+  };
+
+  const assemblyState: AssemblyState = {
+    name: 'go2_workspace',
+    transform: identityTransform,
+    components: {
+      comp_parent: {
+        id: 'comp_parent',
+        name: 'go2_description',
+        sourceFile: 'go2_description/urdf/go2_description.urdf',
+        robot: prepareAssemblyRobotData(robot, {
+          componentId: 'comp_parent',
+          rootName: 'go2_description',
+        }),
+        transform: identityTransform,
+        visible: true,
+      },
+      comp_child: {
+        id: 'comp_child',
+        name: 'go2_description_1',
+        sourceFile: 'go2_description/urdf/go2_description.urdf',
+        robot: prepareAssemblyRobotData(robot, {
+          componentId: 'comp_child',
+          rootName: 'go2_description_1',
+        }),
+        transform: identityTransform,
+        visible: true,
+      },
+    },
+    bridges: {},
+  };
+
+  const bridge = {
+    id: 'bridge_demo',
+    name: 'bridge_demo',
+    parentComponentId: 'comp_parent',
+    parentLinkId: 'comp_parent_base',
+    childComponentId: 'comp_child',
+    childLinkId: 'comp_child_FL_foot',
+    joint: {
+      id: 'bridge_demo',
+      name: 'bridge_demo',
+      type: JointType.FIXED,
+      parentLinkId: 'comp_parent_base',
+      childLinkId: 'comp_child_FL_foot',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
+    },
+  } as const;
+
+  assemblyState.bridges.bridge_demo = bridge;
+  const alignedTransform = resolveAlignedAssemblyComponentTransformForBridge(assemblyState, bridge);
+  assert.ok(alignedTransform, 'expected child component to resolve an aligned transform');
+  assemblyState.components.comp_child.transform = alignedTransform;
+
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData: mergeAssembly(assemblyState),
+  });
+  const displayMatrices = computeLinkWorldMatrices(displayRobot!);
+  const parentBaseMatrix = displayMatrices.comp_parent_base;
+  const childFootMatrix = displayMatrices.comp_child_FL_foot;
+
+  assert.ok(parentBaseMatrix, 'expected a world matrix for the parent base link');
+  assert.ok(childFootMatrix, 'expected a world matrix for the bridged child foot link');
+  assertNearlyEqual(
+    childFootMatrix.elements[12],
+    parentBaseMatrix.elements[12],
+    'bridged child foot should stay aligned with the parent base on x',
+  );
+  assertNearlyEqual(
+    childFootMatrix.elements[13],
+    parentBaseMatrix.elements[13],
+    'bridged child foot should stay aligned with the parent base on y',
+  );
+  assertNearlyEqual(
+    childFootMatrix.elements[14],
+    parentBaseMatrix.elements[14],
+    'bridged child foot should stay aligned with the parent base on z',
+  );
 });
 
 test('buildWorkspaceAssemblyViewerDisplayRobotData reuses component link and joint references for viewer display', () => {

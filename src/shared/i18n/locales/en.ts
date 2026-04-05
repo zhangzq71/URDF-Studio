@@ -556,10 +556,6 @@ export const en: TranslationKeys = {
 
   // Measure Tool
   measureTool: 'Measure Tool',
-  measureInstruction1:
-    'Choose whether the measurement snaps to the link frame / TF origin, center of mass, or geometry center',
-  measureInstruction2: 'Esc to clear the current link selection',
-  measureInstruction3: 'Delete to undo the current selection or the last measurement',
   measuredCount: 'Measured: {count}',
   measureSlotFirst: 'Component 1',
   measureSlotSecond: 'Component 2',
@@ -567,8 +563,8 @@ export const en: TranslationKeys = {
   measureSlotSelecting: 'Selecting',
   measureSlotSelected: 'Selected',
   measureClearSelection: 'Clear the selected component',
-  measureAnchorMode: 'Anchor',
-  measureAnchorFrame: 'Frame',
+  measureAnchorMode: 'Snap',
+  measureAnchorFrame: 'Origin',
   measureAnchorCenterOfMass: 'CoM',
   measureAnchorGeometry: 'Geometry',
   measureGroups: 'Measurement Groups',

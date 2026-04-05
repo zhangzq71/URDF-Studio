@@ -17,6 +17,7 @@ interface MeshAssetNodeProps {
   assets: Record<string, string>;
   material: THREE.Material;
   color?: string;
+  enableShadows?: boolean;
   scale?: ScaleProps;
   normalizeRoot?: boolean;
   preserveOriginalMaterial?: boolean;
@@ -32,6 +33,7 @@ export function MeshAssetNode({
   assets,
   material,
   color = DEFAULT_COLOR,
+  enableShadows = true,
   scale,
   normalizeRoot,
   preserveOriginalMaterial,
@@ -52,7 +54,15 @@ export function MeshAssetNode({
   const assetBaseDir = getSourceFileDirectory(meshPath);
 
   if (extension === 'stl') {
-    return <STLRenderer url={assetUrl} material={material} scale={scale} onResolved={onResolved} />;
+    return (
+      <STLRenderer
+        url={assetUrl}
+        material={material}
+        enableShadows={enableShadows}
+        scale={scale}
+        onResolved={onResolved}
+      />
+    );
   }
 
   if (extension === 'obj') {
@@ -61,6 +71,7 @@ export function MeshAssetNode({
         url={assetUrl}
         material={material}
         color={color}
+        enableShadows={enableShadows}
         assets={assets}
         assetBaseDir={assetBaseDir}
         scale={scale}
@@ -74,6 +85,7 @@ export function MeshAssetNode({
       <DAERenderer
         url={assetUrl}
         material={material}
+        enableShadows={enableShadows}
         assets={assets}
         assetBaseDir={assetBaseDir}
         normalizeRoot={normalizeRoot}
@@ -89,6 +101,7 @@ export function MeshAssetNode({
       <GLTFRenderer
         url={assetUrl}
         material={material}
+        enableShadows={enableShadows}
         assets={assets}
         assetBaseDir={assetBaseDir}
         preserveOriginalMaterial={preserveOriginalMaterial}

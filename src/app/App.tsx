@@ -43,18 +43,21 @@ import {
   type ExportDialogConfig,
   type ExportProgressState,
 } from '@/features/file-io';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer';
-import { prewarmUsdOffscreenViewerRuntimeInBackground } from '@/features/urdf-viewer/utils/usdOffscreenViewerWorkerClient';
-import { prewarmUsdWasmRuntimeInBackground } from '@/features/urdf-viewer/utils/usdWasmRuntime';
+import {
+  getUsdStageExportHandler,
+  prewarmUsdOffscreenViewerRuntimeInBackground,
+  prewarmUsdWasmRuntimeInBackground,
+} from '@/features/urdf-viewer';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
+  setRegressionBeforeUnloadPromptSuppressed,
 } from '@/shared/debug/regressionBridge';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
 
-const loadAIModalModule = () => import('@/features/ai-assistant/components/AIModal');
-const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
+const loadAIModalModule = () => import('@/features/ai-assistant');
+const loadExportDialogModule = () => import('@/features/file-io');
 
 const AIModal = lazy(() => loadAIModalModule().then((module) => ({ default: module.AIModal })));
 
@@ -630,6 +633,7 @@ function AppContent() {
 
     return () => {
       setRegressionAppHandlers(null);
+      setRegressionBeforeUnloadPromptSuppressed(false);
       delete window.__URDF_STUDIO_DEBUG__;
     };
   }, []);

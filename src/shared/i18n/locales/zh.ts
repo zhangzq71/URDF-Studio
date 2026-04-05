@@ -534,9 +534,6 @@ export const zh: TranslationKeys = {
 
   // Measure Tool
   measureTool: '测量工具',
-  measureInstruction1: '可选择吸附到 link frame / TF 原点、质心，或几何中心来测量距离',
-  measureInstruction2: 'Esc 清空当前 link 选择',
-  measureInstruction3: 'Delete 撤销当前选择或上一条测量',
   measuredCount: '已测量: {count} 个',
   measureSlotFirst: '组件 1',
   measureSlotSecond: '组件 2',
@@ -544,7 +541,7 @@ export const zh: TranslationKeys = {
   measureSlotSelecting: '选择中',
   measureSlotSelected: '已选中',
   measureClearSelection: '清除当前选中的组件',
-  measureAnchorMode: '锚点',
+  measureAnchorMode: '吸附',
   measureAnchorFrame: '原点',
   measureAnchorCenterOfMass: '质心',
   measureAnchorGeometry: '几何中心',

@@ -30,6 +30,7 @@ export type {
   ProjectExportProgress,
   ProjectExportProgressPhase,
   UsdMeshCompressionOptions,
+  ExportProjectParams,
 } from './utils';
 
 // Utilities
@@ -63,11 +64,7 @@ export {
 } from './utils';
 
 // Hooks
-export {
-  useFileImport,
-  useSnapshot,
-  usePdfExport,
-} from './hooks';
+export { useSnapshot, usePdfExport } from './hooks';
 
 export { ExportDialog } from './components/ExportDialog';
 export { ExportProgressDialog } from './components/ExportProgressDialog';

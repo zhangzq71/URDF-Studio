@@ -176,6 +176,7 @@ export interface RegressionDebugApi {
   getProjectedInteractionTargets: () => RegressionProjectedInteractionTarget[];
   getAssetDebugState: () => RegressionAssetDebugState;
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
+  setBeforeUnloadPromptEnabled: (enabled: boolean) => { ok: boolean; enabled: boolean };
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; snapshot: RegressionSnapshot }>;
   setViewerFlags: (flags: RegressionViewerFlags) => { ok: boolean };
   setViewerToolMode: (toolMode: string) => {
@@ -218,6 +219,32 @@ let runtimeRobot: any | null = null;
 let runtimeRevision = 0;
 let projectedInteractionTargetsProvider: (() => RegressionProjectedInteractionTarget[]) | null =
   null;
+let regressionBeforeUnloadPromptSuppressed = false;
+const regressionBeforeUnloadPromptListeners = new Set<(suppressed: boolean) => void>();
+
+export function isRegressionBeforeUnloadPromptSuppressed(): boolean {
+  return regressionBeforeUnloadPromptSuppressed;
+}
+
+export function subscribeRegressionBeforeUnloadPromptSuppression(
+  listener: (suppressed: boolean) => void,
+): () => void {
+  regressionBeforeUnloadPromptListeners.add(listener);
+  return () => {
+    regressionBeforeUnloadPromptListeners.delete(listener);
+  };
+}
+
+export function setRegressionBeforeUnloadPromptSuppressed(suppressed: boolean): void {
+  if (regressionBeforeUnloadPromptSuppressed === suppressed) {
+    return;
+  }
+
+  regressionBeforeUnloadPromptSuppressed = suppressed;
+  regressionBeforeUnloadPromptListeners.forEach((listener) => {
+    listener(suppressed);
+  });
+}
 
 function toFixedArray(
   value: { x?: number; y?: number; z?: number } | [number, number, number] | undefined | null,
@@ -859,6 +886,10 @@ export function installRegressionDebugApi(targetWindow: Window): void {
       };
     },
     getRuntimeSceneTransforms: () => summarizeRuntimeSceneTransforms(runtimeRobot),
+    setBeforeUnloadPromptEnabled: (enabled: boolean) => {
+      setRegressionBeforeUnloadPromptSuppressed(!enabled);
+      return { ok: true, enabled };
+    },
     loadRobotByName: async (fileName: string) => {
       if (!appHandlers) {
         throw new Error('Regression app handlers are not registered.');

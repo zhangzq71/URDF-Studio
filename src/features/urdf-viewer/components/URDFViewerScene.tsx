@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MeasureTool } from './MeasureTool';
+import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { RobotModel } from './RobotModel';
 import type {
   MeasureTargetResolver,
@@ -31,6 +32,7 @@ export interface URDFViewerSceneProps extends URDFViewerSceneBaseProps {
 
 export const URDFViewerScene = ({
   controller,
+  resolvedTheme = 'light',
   active = true,
   sourceFile,
   sourceFormat,
@@ -64,6 +66,7 @@ export const URDFViewerScene = ({
   toolMode,
   t,
 }: URDFViewerSceneProps) => {
+  const snapshotRenderActive = useSnapshotRenderActive();
   const useUsdStage = sourceFile?.format === 'usd' && !isMeshPreview;
   const usdSourceFile = useUsdStage ? sourceFile : null;
   const useUsdOffscreenOnlyRenderer = usdSourceFile
@@ -248,23 +251,26 @@ export const URDFViewerScene = ({
 
   return (
     <>
-      <MeasureTool
-        active={controller.toolMode === 'measure'}
-        robot={controller.robot}
-        robotLinks={robotLinks}
-        measureState={controller.measureState}
-        setMeasureState={controller.setMeasureState}
-        measureAnchorMode={controller.measureAnchorMode}
-        showDecomposition={controller.showMeasureDecomposition}
-        deleteTooltip={t.deleteMeasurement}
-        measureTargetResolverRef={measureTargetResolverRef}
-      />
+      {!snapshotRenderActive && (
+        <MeasureTool
+          active={controller.toolMode === 'measure'}
+          robot={controller.robot}
+          robotLinks={robotLinks}
+          measureState={controller.measureState}
+          setMeasureState={controller.setMeasureState}
+          measureAnchorMode={controller.measureAnchorMode}
+          showDecomposition={controller.showMeasureDecomposition}
+          deleteTooltip={t.deleteMeasurement}
+          measureTargetResolverRef={measureTargetResolverRef}
+        />
+      )}
 
       {usdSourceFile ? (
         <Suspense fallback={null}>
           {mountUsdOffscreenStage ? (
             <LazyUsdOffscreenStage
               key={`${usdSourceFile.name}:${shouldRemountRuntime ? runtimeInstanceKey : 'stable'}:offscreen`}
+              resolvedTheme={resolvedTheme}
               active={usdOffscreenStageActive}
               sourceFile={usdSourceFile}
               availableFiles={availableFiles}
@@ -286,6 +292,7 @@ export const URDFViewerScene = ({
               interactionLayerPriority={controller.interactionLayerPriority}
               toolMode={toolMode}
               runtimeBridge={runtimeBridge}
+              registerAutoFitGroundHandler={controller.registerRuntimeAutoFitGroundHandler}
               retainReadyAsLoadingDuringBootstrapHandoff={useUsdOffscreenBootstrap}
             />
           ) : null}
@@ -332,6 +339,7 @@ export const URDFViewerScene = ({
               onRobotDataResolved={onRobotDataResolved}
               onDocumentLoadEvent={handleUsdWasmDocumentLoadEvent}
               runtimeBridge={runtimeBridge}
+              registerAutoFitGroundHandler={controller.registerRuntimeAutoFitGroundHandler}
               measureTargetResolverRef={measureTargetResolverRef}
             />
           ) : null}

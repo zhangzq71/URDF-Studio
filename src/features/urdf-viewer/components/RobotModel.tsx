@@ -13,6 +13,7 @@ import { SourceSceneAssemblyTransformControls } from './SourceSceneAssemblyTrans
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps } from '../types';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
+import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 
 import { useRobotLoader } from '../hooks/useRobotLoader';
 import { useHighlightManager } from '../hooks/useHighlightManager';
@@ -85,6 +86,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     onSourceSceneAssemblyComponentTransform,
   }) => {
     const { invalidate } = useThree();
+    const snapshotRenderActive = useSnapshotRenderActive();
     const autoFrameScopeFallbackRef = useRef<string | null>(null);
     const [sourceSceneComponentRoot, setSourceSceneComponentRoot] = useState<Group | null>(null);
     const runtimeSceneMetadataScopeKey = `${sourceFilePath ?? 'viewer-inline'}:${reloadToken}`;
@@ -401,39 +403,40 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
             </div>
           </Html>
         ) : null}
-        {(() => {
-          if (
-            active &&
-            showSourceSceneAssemblyComponentControls &&
-            sourceSceneAssemblyComponentId &&
-            onSourceSceneAssemblyComponentTransform
-          ) {
-            return (
-              <SourceSceneAssemblyTransformControls
-                object={sourceSceneComponentRoot}
-                componentId={sourceSceneAssemblyComponentId}
+        {!snapshotRenderActive &&
+          (() => {
+            if (
+              active &&
+              showSourceSceneAssemblyComponentControls &&
+              sourceSceneAssemblyComponentId &&
+              onSourceSceneAssemblyComponentTransform
+            ) {
+              return (
+                <SourceSceneAssemblyTransformControls
+                  object={sourceSceneComponentRoot}
+                  componentId={sourceSceneAssemblyComponentId}
+                  transformMode={transformMode}
+                  onComponentTransform={onSourceSceneAssemblyComponentTransform}
+                  onTransformPending={onTransformPending}
+                />
+              );
+            }
+
+            const shouldShow = transformMode !== 'select' && selection?.subType === 'collision';
+            return shouldShow ? (
+              <CollisionTransformControls
+                robot={robot}
+                robotVersion={robotVersion}
+                selection={selection}
                 transformMode={transformMode}
-                onComponentTransform={onSourceSceneAssemblyComponentTransform}
+                setIsDragging={handleCollisionTransformDragging}
+                onTransformChange={onCollisionTransformPreview}
+                onTransformEnd={onCollisionTransformEnd}
+                robotLinks={runtimeRobotLinks}
                 onTransformPending={onTransformPending}
               />
-            );
-          }
-
-          const shouldShow = transformMode !== 'select' && selection?.subType === 'collision';
-          return shouldShow ? (
-            <CollisionTransformControls
-              robot={robot}
-              robotVersion={robotVersion}
-              selection={selection}
-              transformMode={transformMode}
-              setIsDragging={handleCollisionTransformDragging}
-              onTransformChange={onCollisionTransformPreview}
-              onTransformEnd={onCollisionTransformEnd}
-              robotLinks={runtimeRobotLinks}
-              onTransformPending={onTransformPending}
-            />
-          ) : null;
-        })()}
+            ) : null;
+          })()}
       </>
     );
   },

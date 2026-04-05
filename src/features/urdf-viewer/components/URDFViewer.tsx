@@ -6,6 +6,7 @@ import { useSelectionStore } from '@/store/selectionStore';
 import type { URDFViewerProps } from '../types';
 import { useURDFViewerController } from '../hooks/useURDFViewerController';
 import { buildURDFViewerSceneProps } from '../utils/viewerSceneProps';
+import { resolveStandaloneViewerHoverSelectionWiring } from '../utils/standaloneHoverSelectionWiring';
 import { resolveDefaultViewerToolMode } from '../utils/scopedToolMode';
 import { URDFViewerCanvas } from './URDFViewerCanvas';
 import { URDFViewerPanels } from './URDFViewerPanels';
@@ -15,6 +16,7 @@ export const URDFViewer = memo(function URDFViewer({
   urdfContent,
   assets,
   sourceFile,
+  sourceFormat,
   availableFiles = [],
   onRobotDataResolved,
   onDocumentLoadEvent,
@@ -53,8 +55,12 @@ export const URDFViewer = memo(function URDFViewer({
   const t = translations[lang];
   const storeGroundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
   const setStoreGroundPlaneOffset = useUIStore((state) => state.setGroundPlaneOffset);
-  const shouldSubscribeToStoreHoveredSelection =
-    hoveredSelection === undefined && sourceFile?.format === 'usd' && !isMeshPreview;
+  const { shouldSubscribeToStoreHoveredSelection, hoverSelectionEnabled } =
+    resolveStandaloneViewerHoverSelectionWiring({
+      hoveredSelection,
+      sourceFormat: sourceFile?.format ?? sourceFormat,
+      isMeshPreview,
+    });
   const storeHoveredSelection = useSelectionStore(
     useCallback(
       (state) => (shouldSubscribeToStoreHoveredSelection ? state.hoveredSelection : undefined),
@@ -66,10 +72,12 @@ export const URDFViewer = memo(function URDFViewer({
   const inheritedTheme = useEffectiveTheme();
   const explicitTheme = useResolvedTheme(theme ?? 'system');
   const resolvedTheme = theme ? explicitTheme : inheritedTheme;
-  const defaultToolMode = resolveDefaultViewerToolMode(sourceFile?.format);
+  const defaultToolMode = resolveDefaultViewerToolMode(sourceFile?.format ?? sourceFormat);
   const toolModeScopeKey = sourceFile
     ? `${sourceFile.format}:${sourceFile.name}`
-    : (sourceFilePath ? `inline:${sourceFilePath}` : 'inline:urdf-viewer');
+    : sourceFilePath
+      ? `inline:${sourceFilePath}`
+      : 'inline:urdf-viewer';
   const controller = useURDFViewerController({
     onJointChange,
     syncJointChangesToApp,
@@ -89,10 +97,11 @@ export const URDFViewer = memo(function URDFViewer({
     defaultToolMode,
     toolModeScopeKey,
   });
-  const hoverSelectionEnabled = resolvedHoveredSelection !== undefined;
   const sceneProps = buildURDFViewerSceneProps({
+    resolvedTheme,
     controller,
     sourceFile,
+    sourceFormat,
     availableFiles,
     urdfContent,
     assets,

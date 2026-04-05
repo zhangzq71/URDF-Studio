@@ -47,6 +47,23 @@ function createResolution(): ViewerRobotDataResolution {
   };
 }
 
+function createContinuousResolution(
+  initialAngle = Math.PI * 2 + Math.PI / 6,
+): ViewerRobotDataResolution {
+  const resolution = createResolution();
+  resolution.robotData.joints.arm_joint = {
+    ...resolution.robotData.joints.arm_joint,
+    type: JointType.CONTINUOUS,
+    angle: initialAngle,
+    limit: {
+      ...resolution.robotData.joints.arm_joint.limit,
+      lower: 0,
+      upper: 0,
+    },
+  };
+  return resolution;
+}
+
 test('USD runtime joint preview only schedules render work and defers heavy refresh until commit', () => {
   let applyCalls = 0;
   let renderRequests = 0;
@@ -192,4 +209,43 @@ test('USD runtime joint writes back the clamped runtime angle without re-emittin
       options: { emitSelectionChanged: false },
     },
   ]);
+});
+
+test('USD runtime continuous joint keeps the accumulated angle while driving the wrapped runtime pose', () => {
+  const jointAngleUpdates: Array<{
+    angleDeg: number;
+    linkPath: string;
+  }> = [];
+  const initialAngle = Math.PI * 2 + Math.PI / 6;
+  const nextAngle = initialAngle + Math.PI / 2;
+
+  const runtimeRobot = createUsdViewerRuntimeRobot({
+    resolution: createContinuousResolution(initialAngle),
+    linkRotationController: {
+      apply: () => {},
+      getJointInfoForLink: () => ({
+        angleDeg: 30,
+      }),
+      setJointAngleForLink: (linkPath: string, angleDeg: number) => {
+        jointAngleUpdates.push({ linkPath, angleDeg });
+        return {
+          angleDeg,
+        };
+      },
+    },
+  });
+
+  const joint = runtimeRobot.joints.arm_joint as {
+    angle: number;
+    setJointValue: (value: number) => void;
+  };
+
+  assert.ok(Math.abs(joint.angle - initialAngle) < 1e-12);
+
+  joint.setJointValue(nextAngle);
+
+  assert.ok(Math.abs(joint.angle - nextAngle) < 1e-12);
+  assert.equal(jointAngleUpdates.length, 1);
+  assert.equal(jointAngleUpdates[0]?.linkPath, '/Robot/arm_link');
+  assert.ok(Math.abs((jointAngleUpdates[0]?.angleDeg ?? 0) - 120) < 1e-9);
 });

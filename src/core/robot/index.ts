@@ -75,6 +75,7 @@ export {
   resolveClosedLoopJointMotionCompensation,
   resolveClosedLoopJointAngleCompensation,
   resolveClosedLoopJointOriginCompensation,
+  resolveClosedLoopJointOriginCompensationDetailed,
 } from './closedLoops';
 
 // Assembly Merger - Merge AssemblyState to RobotData

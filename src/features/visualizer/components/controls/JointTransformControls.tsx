@@ -7,6 +7,7 @@ import { TransformControlsState } from '../../hooks/useTransformControls';
 interface JointTransformControlsProps {
   mode: 'editor';
   selectedJointPivot: THREE.Group | null;
+  selectedJointMotion: THREE.Group | null;
   robot: RobotState;
   transformMode: 'translate' | 'rotate' | 'universal';
   transformControlsState: TransformControlsState;
@@ -25,6 +26,7 @@ const JOINT_GIZMO_THICKNESS_SCALE = 1.6;
 export const JointTransformControls = memo(function JointTransformControls({
   mode,
   selectedJointPivot,
+  selectedJointMotion,
   robot,
   transformMode,
   transformControlsState,
@@ -169,12 +171,15 @@ export const JointTransformControls = memo(function JointTransformControls({
         isTranslateDraggingRef.current = true;
         lastActiveControlRef.current = 'translate';
       }
+      applyTranslateProxyToPivot();
+      handleObjectChange();
       invalidate();
       return;
     }
 
     if (rotateControls?.dragging) {
       lastActiveControlRef.current = 'rotate';
+      handleRotateObjectChange();
       invalidate();
       return;
     }
@@ -215,8 +220,9 @@ export const JointTransformControls = memo(function JointTransformControls({
           rotateRef={rotateTransformControlRef}
           object={selectedJointPivot}
           translateObject={shouldRenderTranslateProxy ? (translateProxy ?? undefined) : undefined}
-          // In editor mode the rotate gizmo edits the joint origin/pivot so the
-          // entire child subtree follows, rather than only changing joint motion.
+          rotateObject={selectedJointMotion ?? undefined}
+          // Translate edits the joint origin/pivot. Rotate edits the joint motion
+          // group so closed-loop compensation can follow the live kinematic pose.
           mode={transformMode}
           size={VISUALIZER_UNIFIED_GIZMO_SIZE}
           translateSpace="local"

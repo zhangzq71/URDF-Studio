@@ -258,7 +258,7 @@ test('updateComponentTransform clones the transform and tracks undo redo history
 
   store.undo();
   assert.deepEqual(useAssemblyStore.getState().assemblyState?.components[component.id]?.transform, {
-    position: { x: 0, y: 0, z: 0 },
+    position: { x: 0, y: 0, z: 0.25 },
     rotation: { r: 0, p: 0, y: 0 },
   });
 
@@ -349,7 +349,7 @@ test('addComponent falls back to a fresh identity when a prepared component beco
   assert.equal(component?.robot.rootLinkId, 'comp_component_1_base_link');
 });
 
-test('addComponent keeps the first component anchored and places later components beside it on the ground', () => {
+test('addComponent grounds the first component and places later components beside it on the ground', () => {
   resetAssemblyStore();
 
   const store = useAssemblyStore.getState();
@@ -380,7 +380,7 @@ test('addComponent keeps the first component anchored and places later component
   assert.ok(first, 'first component should be created');
   assert.ok(second, 'second component should be created');
   assert.deepEqual(first?.transform, {
-    position: { x: 0, y: 0, z: 0 },
+    position: { x: 0, y: 0, z: 0.25 },
     rotation: { r: 0, p: 0, y: 0 },
   });
   assert.ok(second?.transform, 'second component should receive an explicit initial transform');

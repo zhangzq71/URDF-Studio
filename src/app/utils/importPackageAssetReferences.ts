@@ -80,11 +80,7 @@ function inferBundleRootFromUriPath(uriPath: string): string | null {
 
   const rootSegments = [
     packageName,
-    ...(
-      boundaryIndex > 0
-        ? relativeSegments.slice(0, boundaryIndex)
-        : []
-    ),
+    ...(boundaryIndex > 0 ? relativeSegments.slice(0, boundaryIndex) : []),
   ].filter(Boolean);
 
   return rootSegments.length > 0 ? rootSegments.join('/') : null;
@@ -92,6 +88,16 @@ function inferBundleRootFromUriPath(uriPath: string): string | null {
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right));
+}
+
+function assetPathMatchesBundleRoot(assetPath: string, bundleRoot: string): boolean {
+  const normalizedAssetPath = normalizeRootSegments(assetPath).join('/');
+  const normalizedBundleRoot = normalizeRootSegments(bundleRoot).join('/');
+
+  return (
+    normalizedAssetPath === normalizedBundleRoot ||
+    normalizedAssetPath.startsWith(`${normalizedBundleRoot}/`)
+  );
 }
 
 function commonRootPrefix(roots: readonly string[]): string | null {
@@ -133,11 +139,11 @@ export function inferCommonPackageAssetBundleRoot(
   sources: readonly PackageAssetReferenceSource[],
 ): string | null {
   const roots = uniqueSorted(
-    sources.flatMap((source) => (
+    sources.flatMap((source) =>
       ROOT_REFERENCE_FORMATS.has(source.format)
         ? extractPackageAssetBundleRoots(source.content)
-        : []
-    )),
+        : [],
+    ),
   );
 
   return commonRootPrefix(roots);
@@ -147,7 +153,7 @@ export function buildStandalonePackageAssetImportWarning(
   source: PackageAssetReferenceSource | null,
   assetPaths: readonly string[],
 ): StandalonePackageAssetImportWarning | null {
-  if (!source || assetPaths.length > 0 || !ROOT_REFERENCE_FORMATS.has(source.format)) {
+  if (!source || !ROOT_REFERENCE_FORMATS.has(source.format)) {
     return null;
   }
 
@@ -156,8 +162,16 @@ export function buildStandalonePackageAssetImportWarning(
     return null;
   }
 
+  const missingBundleRoots = bundleRoots.filter(
+    (bundleRoot) =>
+      !assetPaths.some((assetPath) => assetPathMatchesBundleRoot(assetPath, bundleRoot)),
+  );
+  if (missingBundleRoots.length === 0) {
+    return null;
+  }
+
   return {
-    bundleRoots,
-    packageNames: uniqueSorted(bundleRoots.map((root) => root.split('/')[0] ?? root)),
+    bundleRoots: missingBundleRoots,
+    packageNames: uniqueSorted(missingBundleRoots.map((root) => root.split('/')[0] ?? root)),
   };
 }

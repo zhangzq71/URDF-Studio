@@ -10,6 +10,7 @@ import {
 import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, InertiaBox, LinkCenterOfMass } from '@/shared/components/3d';
+import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { Language, translations } from '@/shared/i18n';
 import { GeometryRenderer } from './GeometryRenderer';
 import { JointNode } from './JointNode';
@@ -120,6 +121,7 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
   onPrewarmedMeshResolved,
 }: RobotNodeProps) {
   const t = translations[lang];
+  const snapshotRenderActive = useSnapshotRenderActive();
 
   if (depth > 50) return null;
 
@@ -291,7 +293,11 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
     [handleLinkHoverLeave],
   );
 
-  const showRootAxes = isRoot && showOrigin;
+  const effectiveShowOrigin = showOrigin && !snapshotRenderActive;
+  const effectiveShowJointAxes = showJointAxes && !snapshotRenderActive;
+  const effectiveShowInertia = showInertia && !snapshotRenderActive;
+  const effectiveShowCenterOfMass = showCenterOfMass && !snapshotRenderActive;
+  const showRootAxes = isRoot && effectiveShowOrigin;
   const shouldRenderGeometry =
     showGeometry || showCollision || visualEntries.length > 0 || collisionEntries.length > 0;
   const showLinkLabel = showLabels;
@@ -313,17 +319,17 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
             mode={mode}
             showGeometry={showGeometry}
             showVisual={showVisual}
-            showOrigin={showOrigin}
+            showOrigin={effectiveShowOrigin}
             selectionTarget={selectionTarget}
             showLabels={showLabels}
-            showJointAxes={showJointAxes}
+            showJointAxes={effectiveShowJointAxes}
             jointAxisSize={jointAxisSize}
             frameSize={frameSize}
             labelScale={labelScale}
             showCollision={showCollision}
             modelOpacity={modelOpacity}
-            showInertia={showInertia}
-            showCenterOfMass={showCenterOfMass}
+            showInertia={effectiveShowInertia}
+            showCenterOfMass={effectiveShowCenterOfMass}
             interactionLayerPriority={interactionLayerPriority}
             transformMode={transformMode}
             depth={depth + 1}
@@ -454,7 +460,7 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
       )}
 
       {/* Inertia Visualization */}
-      {showInertia && (
+      {effectiveShowInertia && (
         <group
           userData={{ isHelper: true, ...inertiaHoverUserData }}
           onClick={handleHelperClick}
@@ -466,7 +472,7 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
       )}
 
       {/* Center of Mass Indicator */}
-      {showCenterOfMass && (
+      {effectiveShowCenterOfMass && (
         <group
           userData={{ isHelper: true, ...centerOfMassHoverUserData }}
           onClick={handleHelperClick}
@@ -540,17 +546,17 @@ export const RobotNode = memo<RobotNodeProps>(function RobotNode({
           mode={mode}
           showGeometry={showGeometry}
           showVisual={showVisual}
-          showOrigin={showOrigin}
+          showOrigin={effectiveShowOrigin}
           selectionTarget={selectionTarget}
           showLabels={showLabels}
-          showJointAxes={showJointAxes}
+          showJointAxes={effectiveShowJointAxes}
           jointAxisSize={jointAxisSize}
           frameSize={frameSize}
           labelScale={labelScale}
           showCollision={showCollision}
           modelOpacity={modelOpacity}
-          showInertia={showInertia}
-          showCenterOfMass={showCenterOfMass}
+          showInertia={effectiveShowInertia}
+          showCenterOfMass={effectiveShowCenterOfMass}
           interactionLayerPriority={interactionLayerPriority}
           transformMode={transformMode}
           depth={depth + 1}

@@ -79,7 +79,9 @@ export const useVisualizerController = ({
     mode,
     {
       onPreviewObjectChange: closedLoopDragSync.previewConstraintCompensation,
+      onPreviewRotateChange: closedLoopDragSync.previewConstraintMotionCompensation,
       onResetPreview: closedLoopDragSync.resetConstraintPreview,
+      selectedRotateObject: selectedJointMotion,
     },
   );
 

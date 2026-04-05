@@ -56,7 +56,10 @@ function createRobot(link: UrdfLink): RobotState {
   };
 }
 
-function renderLinkProperties(mode: AppMode, detailLinkTab: 'visual' | 'collision' | 'physics' = 'visual') {
+function renderLinkProperties(
+  mode: AppMode,
+  detailLinkTab: 'visual' | 'collision' | 'physics' = 'visual',
+) {
   const link = createLink();
   const robot = createRobot(link);
   useUIStore.getState().setDetailLinkTab(detailLinkTab);
@@ -91,17 +94,22 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
   (globalThis as { InputEvent?: typeof InputEvent }).InputEvent = dom.window.InputEvent;
   (globalThis as { FocusEvent?: typeof FocusEvent }).FocusEvent = dom.window.FocusEvent;
   (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
@@ -187,23 +195,124 @@ test('physics tab keeps diagonal inertia inline and principal axes in a matrix l
       );
     });
 
-    const i1Label = Array.from(container.querySelectorAll('span'))
-      .find((node) => node.textContent === 'I1');
+    const i1Label = Array.from(container.querySelectorAll('span')).find(
+      (node) => node.textContent === 'I1',
+    );
     assert.ok(i1Label, 'I1 label should render');
     assert.equal(i1Label.parentElement?.className.includes('items-center'), true);
-    assert.ok(i1Label.parentElement?.querySelector('input'), 'I1 label should share its row with a number input');
+    assert.ok(
+      i1Label.parentElement?.querySelector('input'),
+      'I1 label should share its row with a number input',
+    );
+    const diagonalGrid = i1Label.parentElement?.parentElement;
+    assert.ok(diagonalGrid, 'diagonal inertia grid should render');
+    assert.match(
+      diagonalGrid.className,
+      /\bmin-w-0\b/,
+      'diagonal inertia grid should be allowed to shrink within the sidebar',
+    );
+    assert.match(
+      diagonalGrid.className,
+      /\bw-full\b/,
+      'diagonal inertia grid should fill the available inline width without overflowing',
+    );
 
-    const xHeader = Array.from(container.querySelectorAll('span'))
-      .find((node) => node.textContent === 'X');
+    const xHeader = Array.from(container.querySelectorAll('span')).find(
+      (node) => node.textContent === 'X',
+    );
     assert.ok(xHeader, 'principal axes X header should render');
     assert.equal(xHeader.parentElement?.textContent?.includes('A1'), false);
 
-    const a1Label = Array.from(container.querySelectorAll('div'))
-      .find((node) => node.textContent?.trim() === 'A1');
+    const a1Label = Array.from(container.querySelectorAll('div')).find(
+      (node) => node.textContent?.trim() === 'A1',
+    );
     assert.ok(a1Label, 'principal axes A1 label should render');
     const a1Row = a1Label.parentElement;
     assert.ok(a1Row, 'principal axes A1 label should belong to a row container');
-    assert.equal(a1Row.children.length, 4, 'principal axes A1 row should keep one label column plus three value columns');
+    assert.equal(
+      a1Row.children.length,
+      4,
+      'principal axes A1 row should keep one label column plus three value columns',
+    );
+    assert.match(
+      a1Row.className,
+      /\bmin-w-0\b/,
+      'principal axes rows should be allowed to shrink within the sidebar',
+    );
+    assert.match(
+      a1Row.className,
+      /\bw-full\b/,
+      'principal axes rows should fill the available inline width without overflowing',
+    );
+
+    const densityLabel = Array.from(container.querySelectorAll('label')).find(
+      (node) => node.textContent === translations.en.density,
+    );
+    assert.ok(densityLabel, 'density label should render');
+    const densityField = densityLabel.parentElement?.querySelector('div.min-w-0.flex-1 > div');
+    assert.ok(densityField, 'density field should render inside a shrinkable wrapper');
+    assert.match(
+      densityField.className,
+      /\boverflow-hidden\b/,
+      'density field should clip oversized values instead of overflowing',
+    );
+    assert.match(
+      densityField.className,
+      /\btruncate\b/,
+      'density field should truncate oversized values inside the textbox',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('physics tab reuses collision-style rotation shortcuts for inertial origin', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('physics');
+    useUIStore.setState({ rotationDisplayMode: 'euler_deg' });
+
+    const link = createLink();
+    const robot = createRobot(link);
+    const updates: UrdfLink[] = [];
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: (_type, _id, nextData) => {
+            updates.push(nextData as UrdfLink);
+          },
+          motorLibrary: {},
+          assets: {},
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    const rollIncreaseButton = Array.from(
+      container.querySelectorAll('button[aria-label="Roll increase 90°"]'),
+    ).at(-1) as HTMLButtonElement | undefined;
+    const yawDecreaseButton = Array.from(
+      container.querySelectorAll('button[aria-label="Yaw decrease 90°"]'),
+    ).at(-1) as HTMLButtonElement | undefined;
+    assert.ok(rollIncreaseButton, 'physics tab should expose roll shortcut buttons');
+    assert.ok(yawDecreaseButton, 'physics tab should expose yaw shortcut buttons');
+
+    await act(async () => {
+      rollIncreaseButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'physics rotation shortcut should emit an updated link');
+    assert.equal(nextLink.inertial?.origin?.rpy.r, Math.PI / 2);
+    assert.equal(nextLink.inertial?.origin?.rpy.p, 0);
+    assert.equal(nextLink.inertial?.origin?.rpy.y, 0);
   } finally {
     await destroyComponentRoot(dom, root);
   }

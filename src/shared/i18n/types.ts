@@ -514,9 +514,6 @@ export interface TranslationKeys {
 
   // Measure Tool
   measureTool: string;
-  measureInstruction1: string;
-  measureInstruction2: string;
-  measureInstruction3: string;
   measuredCount: string;
   measureSlotFirst: string;
   measureSlotSecond: string;

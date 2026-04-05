@@ -80,6 +80,10 @@ export {
 // Visualization Helpers
 export * from './helpers';
 
+export { WorkspaceCanvas } from './workspace';
+export { resolveWorkspaceCanvasEnvironmentIntensity, useWorkspaceCanvasTheme } from './workspace';
+export type { WorkspaceCanvasEnvironmentIntensityByTheme } from './workspace';
+
 export { UsageGuide } from './UsageGuide';
 export { ViewModeBadge } from './ViewModeBadge';
 export { TransformConfirmOverlay } from './TransformConfirmOverlay';

@@ -328,7 +328,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
 
           const standalonePackageAssetWarning = buildStandalonePackageAssetImportWarning(
             preferredFile,
-            renamedAssetFiles.map((file) => file.name),
+            Object.keys(mergedAssets),
           );
 
           const preferredPreResolvedImportResult = preferredFile
@@ -339,7 +339,22 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             : null;
 
           if (preferredFile) {
-            if (!hadExistingAvailableFiles) {
+            if (standalonePackageAssetWarning) {
+              const packageLabel =
+                standalonePackageAssetWarning.packageNames.length > 3
+                  ? `${standalonePackageAssetWarning.packageNames.slice(0, 3).join(', ')}, …`
+                  : standalonePackageAssetWarning.packageNames.join(', ');
+              const warningMessage = t.importPackageAssetBundleHint.replace(
+                '{packages}',
+                packageLabel,
+              );
+
+              if (onShowToast) {
+                onShowToast(warningMessage, 'info');
+              } else {
+                alert(warningMessage);
+              }
+            } else if (!hadExistingAvailableFiles) {
               const preResolvedRobotData: RobotData | null =
                 preferredFile.format === 'usd'
                   ? preferredPreResolvedImportResult?.status === 'ready'
@@ -417,22 +432,6 @@ export function useFileImport(options: UseFileImportOptions = {}) {
                 ),
                 'success',
               );
-            }
-          }
-
-          if (standalonePackageAssetWarning) {
-            const packageLabel =
-              standalonePackageAssetWarning.packageNames.length > 3
-                ? `${standalonePackageAssetWarning.packageNames.slice(0, 3).join(', ')}, …`
-                : standalonePackageAssetWarning.packageNames.join(', ');
-            const warningMessage = t.importPackageAssetBundleHint.replace(
-              '{packages}',
-              packageLabel,
-            );
-            if (onShowToast) {
-              onShowToast(warningMessage, 'info');
-            } else {
-              alert(warningMessage);
             }
           }
         } else if (renamedLibraryFiles.length > 0) {

@@ -4,6 +4,7 @@ import {
   AssemblyState,
   BridgeJoint,
   JointType,
+  type JointHardwareInterface,
   MotorSpec,
   RobotData,
   RobotFile,
@@ -39,8 +40,10 @@ type ProjectHistorySnapshot<T> = {
 const MAX_HISTORY = 50;
 const MAX_ACTIVITY_LOG = 200;
 
-const clampHistoryEntries = <T>(entries: T[] | undefined): T[] => (entries ?? []).slice(-MAX_HISTORY);
-const clampFutureEntries = <T>(entries: T[] | undefined): T[] => (entries ?? []).slice(0, MAX_HISTORY);
+const clampHistoryEntries = <T>(entries: T[] | undefined): T[] =>
+  (entries ?? []).slice(-MAX_HISTORY);
+const clampFutureEntries = <T>(entries: T[] | undefined): T[] =>
+  (entries ?? []).slice(0, MAX_HISTORY);
 
 export interface ImportResult {
   manifest: ProjectManifest;
@@ -105,17 +108,15 @@ async function readOptionalArchiveText(zip: JSZip, path: string): Promise<string
   return await entry.async('string');
 }
 
-async function loadRequiredJsonRecord<T>(
-  zip: JSZip,
-  path: string,
-  label: string,
-): Promise<T> {
+async function loadRequiredJsonRecord<T>(zip: JSZip, path: string, label: string): Promise<T> {
   const content = await readRequiredArchiveText(zip, path, label);
 
   try {
     return JSON.parse(content) as T;
   } catch (error) {
-    throw new Error(`Invalid project file: failed to parse ${label} at "${path}"`, { cause: error });
+    throw new Error(`Invalid project file: failed to parse ${label} at "${path}"`, {
+      cause: error,
+    });
   }
 }
 
@@ -160,6 +161,9 @@ const parseBridgeXml = (xmlContent: string): Record<string, BridgeJoint> => {
       damping: Number(dynamicsNode?.getAttribute('damping') || 0),
       friction: Number(dynamicsNode?.getAttribute('friction') || 0),
     };
+    const hardwareNode = jointNode.getElementsByTagName('hardware')[0];
+    const hardwareInterface = hardwareNode?.getElementsByTagName('hardwareInterface')[0]
+      ?.textContent as JointHardwareInterface | null;
 
     const joint: UrdfJoint = {
       id,
@@ -189,6 +193,7 @@ const parseBridgeXml = (xmlContent: string): Record<string, BridgeJoint> => {
         motorType: 'None',
         motorId: '',
         motorDirection: 1,
+        ...(hardwareInterface ? { hardwareInterface } : {}),
       },
     };
 
@@ -210,12 +215,13 @@ const loadPackedAssets = async (
   zip: JSZip,
   manifest: ProjectManifest,
 ): Promise<Record<string, string>> => {
-  const assetEntriesFromManifest = manifest.assets.assetEntries
-    ?? await loadRequiredJsonRecord<Array<{ logicalPath: string; archivePath: string }>>(
+  const assetEntriesFromManifest =
+    manifest.assets.assetEntries ??
+    (await loadRequiredJsonRecord<Array<{ logicalPath: string; archivePath: string }>>(
       zip,
       PROJECT_ASSET_MANIFEST_FILE,
       'asset manifest',
-    );
+    ));
   if (!assetEntriesFromManifest || assetEntriesFromManifest.length === 0) {
     return {};
   }
@@ -255,19 +261,20 @@ const loadLibraryFiles = async (
 
     if (fileInfo.format !== 'mesh') {
       const archivePath = buildLibraryArchivePath(fileInfo.name);
-      content = fileInfo.format === 'usd'
-        // Binary USD sources are restored from packed assets, so the library
-        // placeholder may intentionally be empty.
-        ? await getRequiredArchiveEntry(
-          zip,
-          archivePath,
-          `library source file "${fileInfo.name}"`,
-        ).async('string')
-        : await readRequiredArchiveText(
-          zip,
-          archivePath,
-          `library source file "${fileInfo.name}"`,
-        );
+      content =
+        fileInfo.format === 'usd'
+          ? // Binary USD sources are restored from packed assets, so the library
+            // placeholder may intentionally be empty.
+            await getRequiredArchiveEntry(
+              zip,
+              archivePath,
+              `library source file "${fileInfo.name}"`,
+            ).async('string')
+          : await readRequiredArchiveText(
+              zip,
+              archivePath,
+              `library source file "${fileInfo.name}"`,
+            );
     }
 
     availableFiles.push({
@@ -320,24 +327,26 @@ export async function importProject(file: File, lang: Language = 'en'): Promise<
 
     const originalUrdfContent = manifest.assets.originalUrdfContentFile
       ? await readRequiredArchiveText(
-        zip,
-        manifest.assets.originalUrdfContentFile,
-        'original URDF source',
-      )
-      : await readOptionalArchiveText(zip, PROJECT_ORIGINAL_URDF_FILE) ?? '';
+          zip,
+          manifest.assets.originalUrdfContentFile,
+          'original URDF source',
+        )
+      : ((await readOptionalArchiveText(zip, PROJECT_ORIGINAL_URDF_FILE)) ?? '');
 
     const robotHistoryFile = manifest.history?.robotFile ?? PROJECT_ROBOT_HISTORY_FILE;
     const robotHistorySnapshot = await loadHistoryFile<RobotData>(zip, robotHistoryFile);
 
     const assemblyHistoryFile = manifest.history?.assemblyFile ?? PROJECT_ASSEMBLY_HISTORY_FILE;
-    const assemblyHistorySnapshot = await loadHistoryFile<AssemblyState | null>(zip, assemblyHistoryFile);
+    const assemblyHistorySnapshot = await loadHistoryFile<AssemblyState | null>(
+      zip,
+      assemblyHistoryFile,
+    );
 
     const assemblyState = assemblyHistorySnapshot?.present ?? null;
     const firstAssemblyComponent = assemblyState
-      ? Object.values(assemblyState.components)[0]?.robot ?? null
+      ? (Object.values(assemblyState.components)[0]?.robot ?? null)
       : null;
-    const robotState = robotHistorySnapshot?.present
-      ?? firstAssemblyComponent;
+    const robotState = robotHistorySnapshot?.present ?? firstAssemblyComponent;
 
     return {
       manifest,

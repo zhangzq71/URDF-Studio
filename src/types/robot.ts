@@ -16,6 +16,8 @@ export enum JointType {
   FLOATING = 'floating',
 }
 
+export type JointHardwareInterface = 'effort' | 'position' | 'velocity';
+
 export type JointQuaternion = QuaternionXYZW;
 
 export interface UrdfInertial {
@@ -62,6 +64,7 @@ export interface UrdfJointHardware {
   motorType: string;
   motorId: string;
   motorDirection: 1 | -1;
+  hardwareInterface?: JointHardwareInterface;
 }
 
 export interface UrdfJointMimic {

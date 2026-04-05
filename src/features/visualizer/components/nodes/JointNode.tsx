@@ -6,6 +6,7 @@ import type { ColladaRootNormalizationHints } from '@/core/loaders/colladaRootNo
 import { getJointMotionPose } from '@/core/robot';
 import { useSelectionStore } from '@/store/selectionStore';
 import { ThickerAxes, JointAxesVisual } from '@/shared/components/3d';
+import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { Language } from '@/shared/i18n';
 import { RobotNode } from './RobotNode';
 import {
@@ -117,10 +118,14 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
 
   const { x, y, z } = joint.origin.xyz;
   const { r, p, y: yaw } = joint.origin.rpy;
+  const snapshotRenderActive = useSnapshotRenderActive();
+
   // URDF stores roll/pitch/yaw values that should be composed in ZYX order.
   const jointRotation = new THREE.Euler(r, p, yaw, 'ZYX');
   const jointMotionPose = getJointMotionPose(joint);
-  const showAxes = showOrigin;
+  const effectiveShowOrigin = showOrigin && !snapshotRenderActive;
+  const effectiveShowJointAxes = showJointAxes && !snapshotRenderActive;
+  const showAxes = effectiveShowOrigin;
   const showJointLabel = showLabels;
 
   // Joint pivot: represents joint origin in parent-local space
@@ -146,7 +151,9 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
     () => ({ type: 'joint', id: joint.id }),
     [joint.id],
   );
-  const jointHelperLayer: VisualizerInteractiveLayer = showJointAxes ? 'joint-axis' : 'origin-axes';
+  const jointHelperLayer: VisualizerInteractiveLayer = effectiveShowJointAxes
+    ? 'joint-axis'
+    : 'origin-axes';
   const jointHelperHoverTarget = useMemo<VisualizerHoverTarget>(
     () => ({ type: 'joint', id: joint.id, helperKind: jointHelperLayer }),
     [joint.id, jointHelperLayer],
@@ -240,8 +247,8 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
     mode,
     showGeometry,
     showJointLabel,
-    showOrigin,
-    showJointAxes,
+    showOrigin: effectiveShowOrigin,
+    showJointAxes: effectiveShowJointAxes,
   });
 
   const helperSphereOpacity = isSelected ? 0.96 : isHelperHovered || isStoreHovered ? 0.64 : 0.24;
@@ -293,7 +300,7 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
               </group>
             )}
 
-            {(showJointLabel || (showJointAxes && joint.type !== 'fixed')) && (
+            {(showJointLabel || (effectiveShowJointAxes && joint.type !== 'fixed')) && (
               <group>
                 {showJointLabel && (
                   <Html
@@ -340,7 +347,7 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
                     </div>
                   </Html>
                 )}
-                {showJointAxes && joint.type !== 'fixed' && (
+                {effectiveShowJointAxes && joint.type !== 'fixed' && (
                   <group
                     userData={{ isHelper: true, ...jointHoverUserData }}
                     onClick={handleHelperClick}
@@ -387,9 +394,9 @@ export const JointNode = memo<JointNodeComponentProps>(function JointNode({
               mode={mode}
               showGeometry={showGeometry}
               showVisual={showVisual}
-              showOrigin={showOrigin}
+              showOrigin={effectiveShowOrigin}
               showLabels={showLabels}
-              showJointAxes={showJointAxes}
+              showJointAxes={effectiveShowJointAxes}
               jointAxisSize={jointAxisSize}
               frameSize={frameSize}
               labelScale={labelScale}

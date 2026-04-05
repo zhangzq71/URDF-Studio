@@ -9,6 +9,7 @@ import {
 } from './materials';
 import { disposeReplacedMaterials } from './robotLoaderPatchUtils';
 import { applyURDFMaterials, type URDFMaterialInfo } from './urdfMaterials';
+import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
 
 export interface SyncLoadedRobotSceneOptions {
   robot: THREE.Object3D;
@@ -332,6 +333,10 @@ export function syncLoadedRobotScene({
 
     if (shouldUpgradeVisualMaterial) {
       enhanceMaterials(mesh);
+      changed = true;
+    }
+
+    if (applyVisualMeshShadowPolicy(mesh)) {
       changed = true;
     }
 

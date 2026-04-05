@@ -196,6 +196,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             positionValue={inertial.origin?.xyz || { x: 0, y: 0, z: 0 }}
             rotationValue={inertial.origin?.rpy || { r: 0, p: 0, y: 0 }}
             compact={false}
+            rotationQuickStepDegrees={90}
             onPositionChange={(xyz) =>
               onUpdate('link', selection.id!, {
                 ...data,
@@ -254,11 +255,13 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
       storageKey="property_editor_link_derived_values"
     >
       <InlineInputGroup label={densityLabel} labelWidthClassName="w-16" align="start">
-        <ReadonlyValueField>{formatReadonlyNumber(densityResult.value)}</ReadonlyValueField>
+        <ReadonlyValueField className="min-w-0 w-full overflow-hidden truncate">
+          {formatReadonlyNumber(densityResult.value)}
+        </ReadonlyValueField>
       </InlineInputGroup>
 
       <InlineInputGroup label={t.diagonalInertia} labelWidthClassName="w-16" align="start">
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid min-w-0 w-full grid-cols-3 gap-1.5">
           {diagonalInertiaLabels.map((label, index) => (
             <div key={label} className="flex min-w-0 items-center gap-1.5">
               <span className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-4 justify-center`}>
@@ -285,7 +288,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
         align="start"
         className="mb-0"
       >
-        <div className="space-y-1.5">
+        <div className="min-w-0 w-full space-y-1.5">
           <ReadonlyVectorStatHeader />
           {principalAxisLabels.map((label, index) => {
             const axis = principalAxes[index];

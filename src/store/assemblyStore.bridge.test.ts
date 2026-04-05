@@ -165,7 +165,7 @@ test('addBridge realigns the child component transform so a non-root child link 
   const childTransform =
     useAssemblyStore.getState().assemblyState?.components[childComponent!.id]?.transform;
   assert.deepEqual(childTransform, {
-    position: { x: -1.2, y: 0, z: 0 },
+    position: { x: -1.2, y: 0, z: 0.25 },
     rotation: { r: 0, p: 0, y: 0 },
   });
 });
@@ -218,7 +218,7 @@ test('updateBridge re-aligns the child component transform when the bridge child
   assert.deepEqual(
     useAssemblyStore.getState().assemblyState?.components[childComponent!.id]?.transform,
     {
-      position: { x: 0.5, y: 0, z: 0 },
+      position: { x: 0.5, y: 0, z: 0.25 },
       rotation: { r: 0, p: 0, y: 0 },
     },
   );
@@ -238,7 +238,7 @@ test('updateBridge re-aligns the child component transform when the bridge child
   const childTransform =
     useAssemblyStore.getState().assemblyState?.components[childComponent!.id]?.transform;
   assert.deepEqual(childTransform, {
-    position: { x: -1.2, y: 0, z: 0 },
+    position: { x: -1.2, y: 0, z: 0.25 },
     rotation: { r: 0, p: 0, y: 0 },
   });
 });

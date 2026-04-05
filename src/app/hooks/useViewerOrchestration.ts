@@ -6,7 +6,7 @@ import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import {
   resolveDetailLinkTabAfterGeometrySelection,
   resolveDetailLinkTabAfterViewerMeshSelect,
-} from '@/features/property-editor/utils';
+} from '@/features/property-editor';
 
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;
@@ -113,7 +113,10 @@ export function useViewerOrchestration({
       helperKind?: ViewerHelperKind,
     ) => {
       if (transformPendingRef.current) return;
-      const nextSelection = preserveCollisionObjectIndex({ type, id, subType } as const);
+      const baseSelection = helperKind
+        ? ({ type, id, subType, helperKind } as const)
+        : ({ type, id, subType } as const);
+      const nextSelection = preserveCollisionObjectIndex(baseSelection);
       if (!isInteractionAllowed(nextSelection)) {
         return;
       }

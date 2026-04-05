@@ -19,10 +19,7 @@ test('extractPackageAssetBundleRoots keeps ROS package roots with intermediate m
   </link>
 </robot>`;
 
-  assert.deepEqual(
-    extractPackageAssetBundleRoots(content),
-    ['val_description/model'],
-  );
+  assert.deepEqual(extractPackageAssetBundleRoots(content), ['val_description/model']);
 });
 
 test('extractPackageAssetBundleRoots preserves deeper package roots before mesh and texture folders', () => {
@@ -37,10 +34,9 @@ test('extractPackageAssetBundleRoots preserves deeper package roots before mesh 
   </link>
 </robot>`;
 
-  assert.deepEqual(
-    extractPackageAssetBundleRoots(content),
-    ['robot_description/pointfoot/PF_P441A'],
-  );
+  assert.deepEqual(extractPackageAssetBundleRoots(content), [
+    'robot_description/pointfoot/PF_P441A',
+  ]);
 });
 
 test('inferCommonPackageAssetBundleRoot derives a shared root from package-dependent robot definitions', () => {
@@ -51,14 +47,12 @@ test('inferCommonPackageAssetBundleRoot derives a shared root from package-depen
     },
     {
       format: 'urdf',
-      content: '<mesh filename="package://val_description/model/materials/textures/pelvistexture.png" />',
+      content:
+        '<mesh filename="package://val_description/model/materials/textures/pelvistexture.png" />',
     },
   ];
 
-  assert.equal(
-    inferCommonPackageAssetBundleRoot(sources),
-    'val_description/model',
-  );
+  assert.equal(inferCommonPackageAssetBundleRoot(sources), 'val_description/model');
 });
 
 test('buildStandalonePackageAssetImportWarning reports package-backed imports with no accompanying assets', () => {
@@ -86,4 +80,19 @@ test('buildStandalonePackageAssetImportWarning stays silent once assets are impo
   );
 
   assert.equal(warning, null);
+});
+
+test('buildStandalonePackageAssetImportWarning ignores unrelated assets from other bundles', () => {
+  const warning = buildStandalonePackageAssetImportWarning(
+    {
+      format: 'urdf',
+      content: '<mesh filename="package://val_description/model/meshes/pelvis/pelvis.dae" />',
+    },
+    ['other_description/meshes/base.dae'],
+  );
+
+  assert.deepEqual(warning, {
+    bundleRoots: ['val_description/model'],
+    packageNames: ['val_description'],
+  });
 });

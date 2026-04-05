@@ -16,18 +16,20 @@ import type {
   CollisionOptimizationOperation,
   CollisionOptimizationSource,
   CollisionTargetRef,
-} from '@/features/property-editor/utils';
+} from '@/features/property-editor';
 
 const SourceCodeEditor = lazy(() =>
-  loadSourceCodeEditorModule().then((module) => ({ default: module.SourceCodeEditor }))
+  loadSourceCodeEditorModule().then((module) => ({ default: module.SourceCodeEditor })),
 );
 
 const CollisionOptimizationDialog = lazy(() =>
-  loadCollisionOptimizationDialogModule().then((module) => ({ default: module.CollisionOptimizationDialog }))
+  loadCollisionOptimizationDialogModule().then((module) => ({
+    default: module.CollisionOptimizationDialog,
+  })),
 );
 
 const BridgeCreateModal = lazy(() =>
-  loadBridgeCreateModalModule().then((module) => ({ default: module.BridgeCreateModal }))
+  loadBridgeCreateModalModule().then((module) => ({ default: module.BridgeCreateModal })),
 );
 
 interface AppLayoutOverlaysProps {

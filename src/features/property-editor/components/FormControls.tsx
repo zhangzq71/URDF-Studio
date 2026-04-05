@@ -139,7 +139,7 @@ export const ReadonlyVectorStatRow = ({
   label: string;
   values: [string, string, string];
 }) => (
-  <div className="grid grid-cols-[28px_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 gap-y-0.5">
+  <div className="grid min-w-0 w-full grid-cols-[28px_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 gap-y-0.5">
     <div className="flex h-[22px] items-center text-[8px] font-semibold leading-4 text-text-tertiary">
       {label}
     </div>
@@ -156,7 +156,7 @@ export const ReadonlyVectorStatHeader = ({
 }: {
   axisLabels?: [string, string, string];
 }) => (
-  <div className="grid grid-cols-[28px_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 gap-y-0.5">
+  <div className="grid min-w-0 w-full grid-cols-[28px_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 gap-y-0.5">
     <div aria-hidden="true" />
     {axisLabels.map((axisLabel) => (
       <span key={axisLabel} className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} text-center`}>
