@@ -1,4 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { resolveJointKey } from '@/core/robot';
+import { useAssemblyStore, useUIStore } from '@/store';
 import { useRobotStore } from '@/store/robotStore';
 import { JointType } from '@/types';
 import { createJointDragStoreSync } from '@/shared/utils/jointDragStoreSync';
@@ -53,6 +55,9 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
   const itemRef = useRef<HTMLDivElement>(null);
   const continuousPreviewValueRef = useRef(value);
   const isSliderDraggingRef = useRef(false);
+  const sidebarTab = useUIStore((state) => state.sidebarTab);
+  const updateComponentRobot = useAssemblyStore((state) => state.updateComponentRobot);
+  const updateBridge = useAssemblyStore((state) => state.updateBridge);
   const sliderStoreSync = React.useMemo(
     () =>
       createJointDragStoreSync({
@@ -103,6 +108,64 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
 
       const jointId = joint.id || name;
       if (jointId) {
+        if (sidebarTab === 'workspace') {
+          const assemblyState = useAssemblyStore.getState().assemblyState;
+          if (assemblyState) {
+            for (const component of Object.values(assemblyState.components)) {
+              const resolvedJointId = resolveJointKey(component.robot.joints, jointId);
+              if (!resolvedJointId) continue;
+
+              const currentJoint = component.robot.joints[resolvedJointId];
+              updateComponentRobot(
+                component.id,
+                {
+                  joints: {
+                    ...component.robot.joints,
+                    [resolvedJointId]: {
+                      ...currentJoint,
+                      limit: {
+                        ...currentJoint.limit,
+                        ...newLimits,
+                      },
+                    },
+                  },
+                },
+                {
+                  label: 'Update assembly joint limits',
+                },
+              );
+              return;
+            }
+
+            const bridge =
+              assemblyState.bridges[jointId] ??
+              Object.values(assemblyState.bridges).find(
+                (candidate) =>
+                  candidate.joint.id === jointId ||
+                  candidate.name === jointId ||
+                  candidate.joint.name === jointId,
+              );
+            if (bridge) {
+              updateBridge(
+                bridge.id,
+                {
+                  joint: {
+                    ...bridge.joint,
+                    limit: {
+                      ...bridge.joint.limit,
+                      ...newLimits,
+                    },
+                  },
+                },
+                {
+                  label: 'Update bridge joint',
+                },
+              );
+              return;
+            }
+          }
+        }
+
         if (onUpdate) {
           onUpdate('joint', jointId, {
             ...joint,
@@ -122,6 +185,9 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
       localLimits,
       name,
       onUpdate,
+      sidebarTab,
+      updateBridge,
+      updateComponentRobot,
       updateJoint,
       value,
     ],

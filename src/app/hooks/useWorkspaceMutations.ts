@@ -2,6 +2,10 @@ import { useCallback } from 'react';
 import {
   addChildToRobot,
   appendCollisionBody,
+  createJoint,
+  createLink,
+  generateJointId,
+  generateLinkId,
   getCollisionGeometryEntries,
   resolveClosedLoopJointOriginCompensationDetailed,
   resolveJointKey,
