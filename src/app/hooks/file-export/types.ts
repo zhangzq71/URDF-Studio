@@ -18,6 +18,11 @@ export interface HandleExportWithConfigOptions {
 
 export interface HandleProjectExportOptions {
   onProgress?: (progress: import('@/features/file-io').ExportProgressState) => void;
+  /**
+   * Skip the default browser download and only return the generated blob.
+   * Useful when another caller needs to upload or otherwise handle the file.
+   */
+  skipDownload?: boolean;
 }
 
 export interface ExportExecutionIssue {
@@ -47,6 +52,10 @@ export interface ProjectExportExecutionResult {
   warnings: string[];
   issues: ExportExecutionIssue[];
   actionRequired?: ExportActionRequired;
+  /**
+   * Generated USP archive content for callers that handle delivery themselves.
+   */
+  blob?: Blob;
 }
 
 export interface UrdfSourceExportPreference {

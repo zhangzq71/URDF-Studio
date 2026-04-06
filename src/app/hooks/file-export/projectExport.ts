@@ -216,11 +216,14 @@ export async function executeProjectExport({
     },
   });
 
-  downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
+  if (!options.skipDownload) {
+    downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
+  }
   markAllSaved();
 
   return {
     partial: result.partial,
+    blob: result.blob,
     warnings: result.warnings.map((warning) => warning.message),
     issues: result.warnings.map((warning) => ({
       code: warning.code,
