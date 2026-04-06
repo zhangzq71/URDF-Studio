@@ -13,7 +13,11 @@ import {
   type JointQuaternion,
   type RobotState,
 } from '@/types';
-import { EMPTY_JOINT_INTERACTION_PREVIEW, useJointInteractionPreviewStore } from '@/store';
+import {
+  EMPTY_JOINT_INTERACTION_PREVIEW,
+  useJointInteractionPreviewStore,
+  useSelectionStore,
+} from '@/store';
 
 import { useURDFViewerController } from './useURDFViewerController.ts';
 
@@ -129,6 +133,96 @@ function createClosedLoopRobotFixture(): RobotState {
   };
 }
 
+function createMimicRobotFixture(): RobotState {
+  return {
+    name: 'mimic-fixture',
+    rootLinkId: 'base',
+    selection: { type: 'joint', id: 'follower_joint' },
+    links: {
+      base: {
+        ...DEFAULT_LINK,
+        id: 'base',
+        name: 'base',
+      },
+      leader_link: {
+        ...DEFAULT_LINK,
+        id: 'leader_link',
+        name: 'leader_link',
+      },
+      follower_link: {
+        ...DEFAULT_LINK,
+        id: 'follower_link',
+        name: 'follower_link',
+      },
+    },
+    joints: {
+      leader_joint: {
+        ...DEFAULT_JOINT,
+        id: 'leader_joint',
+        name: 'leader_joint',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base',
+        childLinkId: 'leader_link',
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -Math.PI, upper: Math.PI, effort: 1, velocity: 1 },
+        angle: 0,
+      },
+      follower_joint: {
+        ...DEFAULT_JOINT,
+        id: 'follower_joint',
+        name: 'follower_joint',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base',
+        childLinkId: 'follower_link',
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -Math.PI, upper: Math.PI, effort: 1, velocity: 1 },
+        angle: 0,
+        mimic: {
+          joint: 'leader_joint',
+          multiplier: -2,
+          offset: 0.1,
+        },
+      },
+    },
+  };
+}
+
+function createSimpleRobotFixture(): RobotState {
+  return {
+    name: 'simple-fixture',
+    rootLinkId: 'base',
+    selection: { type: 'joint', id: 'joint_a' },
+    links: {
+      base: {
+        ...DEFAULT_LINK,
+        id: 'base',
+        name: 'base',
+      },
+      link_a: {
+        ...DEFAULT_LINK,
+        id: 'link_a',
+        name: 'link_a',
+      },
+    },
+    joints: {
+      joint_a: {
+        ...DEFAULT_JOINT,
+        id: 'joint_a',
+        name: 'joint_a',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base',
+        childLinkId: 'link_a',
+        origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -Math.PI, upper: Math.PI, effort: 1, velocity: 1 },
+        angle: 0,
+      },
+    },
+  };
+}
+
 type RuntimeJoint = RobotState['joints'][string] & {
   jointValue: number;
   quaternion?: JointQuaternion;
@@ -164,6 +258,13 @@ function createRuntimeRobotFixture(robot: RobotState) {
 }
 
 async function mountController(closedLoopRobotState: RobotState) {
+  return mountControllerWithProps({
+    active: false,
+    closedLoopRobotState,
+  });
+}
+
+async function mountControllerWithProps(props: Parameters<typeof useURDFViewerController>[0]) {
   const dom = installDom();
   const container = dom.window.document.getElementById('root');
   assert.ok(container, 'root container should exist');
@@ -174,10 +275,7 @@ async function mountController(closedLoopRobotState: RobotState) {
   let hookValue: ReturnType<typeof useURDFViewerController> | null = null;
 
   function Probe() {
-    hookValue = useURDFViewerController({
-      active: false,
-      closedLoopRobotState,
-    });
+    hookValue = useURDFViewerController(props);
     return null;
   }
 
@@ -207,6 +305,13 @@ function assertAlmostEqual(actual: number | undefined, expected: number, epsilon
     Math.abs((actual ?? 0) - expected) <= epsilon,
     `${actual} should be within ${epsilon} of ${expected}`,
   );
+}
+
+function resetSelectionStore() {
+  const state = useSelectionStore.getState();
+  state.setHoverFrozen(false);
+  state.clearHover();
+  state.setHoveredSelection({ type: null, id: null });
 }
 
 test('handleAutoFitGround delegates to the active runtime auto-fit handler when registered', () => {
@@ -243,11 +348,10 @@ test('handleRuntimeJointAngleChange publishes live closed-loop preview compensat
     assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0.42);
     assertAlmostEqual(runtimeRobot.joints.joint_b?.angle, 0.42);
 
-    const preview = useJointInteractionPreviewStore.getState().preview;
-    assert.equal(preview.source, 'urdf-viewer');
-    assert.equal(preview.activeJointId, 'joint_a');
-    assertAlmostEqual(preview.jointAngles.joint_a, 0.42);
-    assertAlmostEqual(preview.jointAngles.joint_b, 0.42);
+    assert.deepEqual(
+      useJointInteractionPreviewStore.getState().preview,
+      EMPTY_JOINT_INTERACTION_PREVIEW,
+    );
 
     await act(async () => {
       getHook().handleJointChangeCommit('joint_a', 0.42);
@@ -263,5 +367,196 @@ test('handleRuntimeJointAngleChange publishes live closed-loop preview compensat
       root.unmount();
     });
     dom.window.close();
+  }
+});
+
+test('handleRuntimeJointAnglesChange keeps USD drag previews local until the drag ends', async () => {
+  const robotState = createSimpleRobotFixture();
+  const runtimeRobot = createRuntimeRobotFixture(robotState);
+  const committedJointChanges: Array<{ jointName: string; angle: number }> = [];
+  const { root, getHook } = await mountControllerWithProps({
+    active: false,
+    onJointChange: (jointName, angle) => {
+      committedJointChanges.push({ jointName, angle });
+    },
+    syncJointChangesToApp: true,
+  });
+
+  try {
+    await act(async () => {
+      getHook().handleJointPanelRobotLoaded(runtimeRobot);
+    });
+
+    await act(async () => {
+      getHook().setIsDragging(true);
+      getHook().handleRuntimeJointAnglesChange({ joint_a: 0.35 });
+    });
+
+    assert.deepEqual(committedJointChanges, []);
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0.35);
+    assertAlmostEqual(getHook().jointPanelStore.getSnapshot().jointAngles.joint_a, 0.35);
+
+    await act(async () => {
+      getHook().setIsDragging(false);
+      getHook().handleRuntimeJointAnglesChange({ joint_a: 0.45 });
+    });
+
+    assert.deepEqual(committedJointChanges, [{ jointName: 'joint_a', angle: 0.45 }]);
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0.45);
+    assertAlmostEqual(getHook().jointPanelStore.getSnapshot().jointAngles.joint_a, 0.45);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+  }
+});
+
+test('previewIkJointKinematics keeps the IK drag preview out of the joint panel store', async () => {
+  const robotState = createSimpleRobotFixture();
+  const runtimeRobot = createRuntimeRobotFixture(robotState);
+  const { root, getHook } = await mountControllerWithProps({
+    active: false,
+    jointAngleState: { joint_a: 0 },
+  });
+
+  try {
+    await act(async () => {
+      getHook().handleJointPanelRobotLoaded(runtimeRobot);
+    });
+
+    await act(async () => {
+      getHook().previewIkJointKinematics({ joint_a: 0.35 }, {});
+    });
+
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0.35);
+    assertAlmostEqual(getHook().jointPanelStore.getSnapshot().jointAngles.joint_a, 0);
+
+    await act(async () => {
+      getHook().clearIkJointKinematicsPreview();
+    });
+
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0);
+    assertAlmostEqual(getHook().jointPanelStore.getSnapshot().jointAngles.joint_a, 0);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+  }
+});
+
+test('setIsDragging freezes hover state immediately for active viewers', async () => {
+  resetSelectionStore();
+  const { root, getHook } = await mountControllerWithProps({
+    active: true,
+  });
+
+  try {
+    useSelectionStore.getState().setHoveredSelection({
+      type: 'link',
+      id: 'base_link',
+      subType: 'visual',
+      objectIndex: 0,
+    });
+
+    await act(async () => {
+      getHook().setIsDragging(true);
+    });
+
+    let selectionState = useSelectionStore.getState();
+    assert.equal(selectionState.hoverFrozen, true);
+    assert.deepEqual(selectionState.hoveredSelection, { type: null, id: null });
+
+    await act(async () => {
+      getHook().setIsDragging(false);
+    });
+
+    selectionState = useSelectionStore.getState();
+    assert.equal(selectionState.hoverFrozen, false);
+  } finally {
+    resetSelectionStore();
+    await act(async () => {
+      root.unmount();
+    });
+  }
+});
+
+test('handleJointAngleChange batches closed-loop slider preview into one frame-aligned update', async () => {
+  const closedLoopRobotState = createClosedLoopRobotFixture();
+  const runtimeRobot = createRuntimeRobotFixture(closedLoopRobotState);
+  const { dom, root, getHook } = await mountController(closedLoopRobotState);
+
+  try {
+    await act(async () => {
+      getHook().handleRobotLoaded(runtimeRobot);
+    });
+
+    await act(async () => {
+      getHook().handleJointAngleChange('joint_a', 0.42);
+    });
+
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0);
+    assertAlmostEqual(runtimeRobot.joints.joint_b?.angle, 0);
+    assert.deepEqual(getHook().jointPanelStore.getSnapshot().jointAngles, {
+      joint_a: 0,
+      joint_b: 0,
+    });
+
+    await act(async () => {
+      await nextAnimationFrame(dom);
+    });
+
+    const panelAngles = getHook().jointPanelStore.getSnapshot().jointAngles;
+    assertAlmostEqual(panelAngles.joint_a, 0.42);
+    assertAlmostEqual(panelAngles.joint_b, 0.42);
+    assertAlmostEqual(runtimeRobot.joints.joint_a?.angle, 0.42);
+    assertAlmostEqual(runtimeRobot.joints.joint_b?.angle, 0.42);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    dom.window.close();
+  }
+});
+
+test('handleJointAngleChange expands mimic-coupled joints before commit', async () => {
+  const robotState = createMimicRobotFixture();
+  const runtimeRobot = createRuntimeRobotFixture(robotState);
+  const { root, getHook } = await mountController(robotState);
+
+  try {
+    await act(async () => {
+      getHook().handleRobotLoaded(runtimeRobot);
+    });
+
+    await act(async () => {
+      getHook().handleJointAngleChange('follower_joint', 0.3);
+    });
+
+    const panelAngles = getHook().jointPanelStore.getSnapshot().jointAngles;
+    assertAlmostEqual(panelAngles.leader_joint, -0.1);
+    assertAlmostEqual(panelAngles.follower_joint, 0.3);
+    assertAlmostEqual(runtimeRobot.joints.leader_joint?.angle, -0.1);
+    assertAlmostEqual(runtimeRobot.joints.follower_joint?.angle, 0.3);
+
+    assert.deepEqual(
+      useJointInteractionPreviewStore.getState().preview,
+      EMPTY_JOINT_INTERACTION_PREVIEW,
+    );
+
+    await act(async () => {
+      getHook().handleJointChangeCommit('follower_joint', 0.3);
+    });
+
+    const committedAngles = getHook().jointPanelStore.getSnapshot().jointAngles;
+    assertAlmostEqual(committedAngles.leader_joint, -0.1);
+    assertAlmostEqual(committedAngles.follower_joint, 0.3);
+    assert.deepEqual(
+      useJointInteractionPreviewStore.getState().preview,
+      EMPTY_JOINT_INTERACTION_PREVIEW,
+    );
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
   }
 });

@@ -45,6 +45,28 @@ const clampHistoryEntries = <T>(entries: T[] | undefined): T[] =>
 const clampFutureEntries = <T>(entries: T[] | undefined): T[] =>
   (entries ?? []).slice(0, MAX_HISTORY);
 
+export interface ImportedProjectLibraryFile extends Omit<RobotFile, 'blobUrl'> {
+  blobPath?: string | null;
+}
+
+export interface ImportedProjectArchiveData {
+  manifest: ProjectManifest;
+  assetFiles: AssetFile[];
+  availableFiles: ImportedProjectLibraryFile[];
+  allFileContents: Record<string, string>;
+  motorLibrary: Record<string, MotorSpec[]>;
+  selectedFileName: string | null;
+  originalUrdfContent: string;
+  originalFileFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | null;
+  usdPreparedExportCaches: Record<string, UsdPreparedExportCache>;
+  robotState: RobotData | null;
+  robotHistory: { past: RobotData[]; future: RobotData[] };
+  robotActivity: ProjectActivityEntry[];
+  assemblyState: AssemblyState | null;
+  assemblyHistory: { past: Array<AssemblyState | null>; future: Array<AssemblyState | null> };
+  assemblyActivity: ProjectActivityEntry[];
+}
+
 export interface ImportResult {
   manifest: ProjectManifest;
   assets: Record<string, string>;
@@ -80,7 +102,7 @@ function getRequiredArchiveEntry(zip: JSZip, path: string, label: string): JSZip
   return entry;
 }
 
-function createPackedProjectAssetUrls(assetFiles: AssetFile[]): Record<string, string> {
+function createPackedProjectAssetUrls(assetFiles: readonly AssetFile[]): Record<string, string> {
   const assets: Record<string, string> = {};
 
   assetFiles.forEach(({ name, blob }) => {
@@ -211,10 +233,10 @@ const parseBridgeXml = (xmlContent: string): Record<string, BridgeJoint> => {
   return bridges;
 };
 
-const loadPackedAssets = async (
+const loadPackedAssetFiles = async (
   zip: JSZip,
   manifest: ProjectManifest,
-): Promise<Record<string, string>> => {
+): Promise<AssetFile[]> => {
   const assetEntriesFromManifest =
     manifest.assets.assetEntries ??
     (await loadRequiredJsonRecord<Array<{ logicalPath: string; archivePath: string }>>(
@@ -223,7 +245,7 @@ const loadPackedAssets = async (
       'asset manifest',
     ));
   if (!assetEntriesFromManifest || assetEntriesFromManifest.length === 0) {
-    return {};
+    return [];
   }
 
   const assetFiles: AssetFile[] = [];
@@ -238,7 +260,7 @@ const loadPackedAssets = async (
     }),
   );
 
-  return createPackedProjectAssetUrls(assetFiles);
+  return assetFiles;
 };
 
 const loadHistoryFile = async <T>(
@@ -252,9 +274,9 @@ const loadHistoryFile = async <T>(
 const loadLibraryFiles = async (
   zip: JSZip,
   manifest: ProjectManifest,
-  assets: Record<string, string>,
-): Promise<RobotFile[]> => {
-  const availableFiles: RobotFile[] = [];
+  assetPaths: ReadonlySet<string>,
+): Promise<ImportedProjectLibraryFile[]> => {
+  const availableFiles: ImportedProjectLibraryFile[] = [];
 
   for (const fileInfo of manifest.assets.availableFiles ?? []) {
     let content = '';
@@ -281,7 +303,7 @@ const loadLibraryFiles = async (
       name: fileInfo.name,
       content,
       format: fileInfo.format as RobotFile['format'],
-      blobUrl: assets[fileInfo.name],
+      blobPath: assetPaths.has(fileInfo.name) ? fileInfo.name : null,
     });
   }
 
@@ -296,7 +318,47 @@ function revokeImportedAssetUrls(assets: Record<string, string>): void {
   });
 }
 
-export async function importProject(file: File, lang: Language = 'en'): Promise<ImportResult> {
+export function hydrateImportedProjectResult(
+  archiveData: ImportedProjectArchiveData,
+): ImportResult {
+  let assets: Record<string, string> = {};
+
+  try {
+    assets = createPackedProjectAssetUrls(archiveData.assetFiles);
+
+    return {
+      manifest: archiveData.manifest,
+      assets,
+      availableFiles: archiveData.availableFiles.map((file) => {
+        const { blobPath, ...rest } = file;
+        return {
+          ...rest,
+          ...(blobPath ? { blobUrl: assets[blobPath] } : {}),
+        };
+      }),
+      allFileContents: archiveData.allFileContents,
+      motorLibrary: archiveData.motorLibrary,
+      selectedFileName: archiveData.selectedFileName,
+      originalUrdfContent: archiveData.originalUrdfContent,
+      originalFileFormat: archiveData.originalFileFormat,
+      usdPreparedExportCaches: archiveData.usdPreparedExportCaches,
+      robotState: archiveData.robotState,
+      robotHistory: archiveData.robotHistory,
+      robotActivity: archiveData.robotActivity,
+      assemblyState: archiveData.assemblyState,
+      assemblyHistory: archiveData.assemblyHistory,
+      assemblyActivity: archiveData.assemblyActivity,
+    };
+  } catch (error) {
+    revokeImportedAssetUrls(assets);
+    throw error;
+  }
+}
+
+export async function readImportedProjectArchive(
+  file: File | Blob | ArrayBuffer | Uint8Array,
+  lang: Language = 'en',
+): Promise<ImportedProjectArchiveData> {
   const t = translations[lang];
   const zip = await JSZip.loadAsync(file);
 
@@ -306,73 +368,71 @@ export async function importProject(file: File, lang: Language = 'en'): Promise<
   }
 
   const manifest = JSON.parse(manifestContent) as ProjectManifest;
-  let assets: Record<string, string> = {};
+  const assetFiles = await loadPackedAssetFiles(zip, manifest);
+  const assetPaths = new Set(assetFiles.map((assetFile) => assetFile.name));
+  const availableFiles = await loadLibraryFiles(zip, manifest, assetPaths);
+  const usdPreparedExportCaches = await readUsdPreparedExportCaches(zip);
 
-  try {
-    assets = await loadPackedAssets(zip, manifest);
-    const availableFiles = await loadLibraryFiles(zip, manifest, assets);
-    const usdPreparedExportCaches = await readUsdPreparedExportCaches(zip);
+  const allFileContents = await loadRequiredJsonRecord<Record<string, string>>(
+    zip,
+    manifest.assets.allFileContentsFile ?? PROJECT_ALL_FILE_CONTENTS_FILE,
+    'all file contents record',
+  );
 
-    const allFileContents = await loadRequiredJsonRecord<Record<string, string>>(
-      zip,
-      manifest.assets.allFileContentsFile ?? PROJECT_ALL_FILE_CONTENTS_FILE,
-      'all file contents record',
-    );
+  const motorLibrary = await loadRequiredJsonRecord<Record<string, MotorSpec[]>>(
+    zip,
+    manifest.assets.motorLibraryFile ?? PROJECT_MOTOR_LIBRARY_FILE,
+    'motor library',
+  );
 
-    const motorLibrary = await loadRequiredJsonRecord<Record<string, MotorSpec[]>>(
-      zip,
-      manifest.assets.motorLibraryFile ?? PROJECT_MOTOR_LIBRARY_FILE,
-      'motor library',
-    );
+  const originalUrdfContent = manifest.assets.originalUrdfContentFile
+    ? await readRequiredArchiveText(
+        zip,
+        manifest.assets.originalUrdfContentFile,
+        'original URDF source',
+      )
+    : ((await readOptionalArchiveText(zip, PROJECT_ORIGINAL_URDF_FILE)) ?? '');
 
-    const originalUrdfContent = manifest.assets.originalUrdfContentFile
-      ? await readRequiredArchiveText(
-          zip,
-          manifest.assets.originalUrdfContentFile,
-          'original URDF source',
-        )
-      : ((await readOptionalArchiveText(zip, PROJECT_ORIGINAL_URDF_FILE)) ?? '');
+  const robotHistoryFile = manifest.history?.robotFile ?? PROJECT_ROBOT_HISTORY_FILE;
+  const robotHistorySnapshot = await loadHistoryFile<RobotData>(zip, robotHistoryFile);
 
-    const robotHistoryFile = manifest.history?.robotFile ?? PROJECT_ROBOT_HISTORY_FILE;
-    const robotHistorySnapshot = await loadHistoryFile<RobotData>(zip, robotHistoryFile);
+  const assemblyHistoryFile = manifest.history?.assemblyFile ?? PROJECT_ASSEMBLY_HISTORY_FILE;
+  const assemblyHistorySnapshot = await loadHistoryFile<AssemblyState | null>(
+    zip,
+    assemblyHistoryFile,
+  );
 
-    const assemblyHistoryFile = manifest.history?.assemblyFile ?? PROJECT_ASSEMBLY_HISTORY_FILE;
-    const assemblyHistorySnapshot = await loadHistoryFile<AssemblyState | null>(
-      zip,
-      assemblyHistoryFile,
-    );
+  const assemblyState = assemblyHistorySnapshot?.present ?? null;
+  const firstAssemblyComponent = assemblyState
+    ? (Object.values(assemblyState.components)[0]?.robot ?? null)
+    : null;
+  const robotState = robotHistorySnapshot?.present ?? firstAssemblyComponent;
 
-    const assemblyState = assemblyHistorySnapshot?.present ?? null;
-    const firstAssemblyComponent = assemblyState
-      ? (Object.values(assemblyState.components)[0]?.robot ?? null)
-      : null;
-    const robotState = robotHistorySnapshot?.present ?? firstAssemblyComponent;
+  return {
+    manifest,
+    assetFiles,
+    availableFiles,
+    allFileContents,
+    motorLibrary,
+    selectedFileName: manifest.workspace?.selectedFile ?? null,
+    originalUrdfContent,
+    originalFileFormat: manifest.assets.originalFileFormat ?? null,
+    usdPreparedExportCaches,
+    robotState,
+    robotHistory: {
+      past: clampHistoryEntries(robotHistorySnapshot?.past),
+      future: clampFutureEntries(robotHistorySnapshot?.future),
+    },
+    robotActivity: normalizeActivity(robotHistorySnapshot?.activity),
+    assemblyState,
+    assemblyHistory: {
+      past: clampHistoryEntries(assemblyHistorySnapshot?.past),
+      future: clampFutureEntries(assemblyHistorySnapshot?.future),
+    },
+    assemblyActivity: normalizeActivity(assemblyHistorySnapshot?.activity),
+  };
+}
 
-    return {
-      manifest,
-      assets,
-      availableFiles,
-      allFileContents,
-      motorLibrary,
-      selectedFileName: manifest.workspace?.selectedFile ?? null,
-      originalUrdfContent,
-      originalFileFormat: manifest.assets.originalFileFormat ?? null,
-      usdPreparedExportCaches,
-      robotState,
-      robotHistory: {
-        past: clampHistoryEntries(robotHistorySnapshot?.past),
-        future: clampFutureEntries(robotHistorySnapshot?.future),
-      },
-      robotActivity: normalizeActivity(robotHistorySnapshot?.activity),
-      assemblyState,
-      assemblyHistory: {
-        past: clampHistoryEntries(assemblyHistorySnapshot?.past),
-        future: clampFutureEntries(assemblyHistorySnapshot?.future),
-      },
-      assemblyActivity: normalizeActivity(assemblyHistorySnapshot?.activity),
-    };
-  } catch (error) {
-    revokeImportedAssetUrls(assets);
-    throw error;
-  }
+export async function importProject(file: File, lang: Language = 'en'): Promise<ImportResult> {
+  return hydrateImportedProjectResult(await readImportedProjectArchive(file, lang));
 }

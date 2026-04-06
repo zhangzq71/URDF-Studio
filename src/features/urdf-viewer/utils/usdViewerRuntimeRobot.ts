@@ -75,7 +75,9 @@ export function createUsdViewerRuntimeRobot({
         name: joint.name || jointId,
         type: joint.type,
         jointType: joint.type,
+        parentLinkId: joint.parentLinkId,
         child: { name: joint.childLinkId },
+        parent: { name: joint.parentLinkId },
         ignoreLimits: false,
         limit: {
           ...joint.limit,

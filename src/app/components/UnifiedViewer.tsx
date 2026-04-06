@@ -8,11 +8,6 @@ import type {
   RobotState,
   Theme,
 } from '@/types';
-import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
-import {
-  denormalizeSourceSceneAssemblyComponentTransform,
-  normalizeSourceSceneAssemblyComponentTransform,
-} from '@/app/utils/sourceSceneAssemblyTransform';
 import type { Language } from '@/shared/i18n';
 import { translations } from '@/shared/i18n';
 import { WorkspaceCanvas } from '@/shared/components/3d';
@@ -21,20 +16,17 @@ import {
   WORKSPACE_CANVAS_BACKGROUND,
   type SnapshotCaptureAction,
 } from '@/shared/components/3d';
-import { useVisualizerController, VisualizerPanels, VisualizerScene } from '@/features/visualizer';
-import {
-  useURDFViewerController,
-  URDFViewerPanels,
-  type ViewerHelperKind,
-  buildViewerRobotLinksScopeSignature,
-  resolveDefaultViewerToolMode,
-  type ToolMode,
-  type ViewerDocumentLoadEvent,
-  type ViewerJointMotionStateValue,
-  type ViewerRobotDataResolution,
-  type ViewerRobotSourceFormat,
-  type ViewerResourceScope,
-} from '@/features/urdf-viewer';
+import { useVisualizerController } from '@/features/visualizer/hooks/useVisualizerController';
+import { useURDFViewerController } from '@/features/urdf-viewer/hooks/useURDFViewerController';
+import { resolveDefaultViewerToolMode } from '@/features/urdf-viewer/utils/scopedToolMode';
+import type {
+  ViewerHelperKind,
+  ToolMode,
+  ViewerDocumentLoadEvent,
+  ViewerJointMotionStateValue,
+  ViewerRobotSourceFormat,
+} from '@/features/urdf-viewer/types';
+import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import { resolveUnifiedViewerForcedSessionState } from '@/app/utils/unifiedViewerForcedSessionState';
 import { resolveUnifiedViewerLoadReleaseState } from '@/app/utils/unifiedViewerLoadReleaseState';
@@ -44,24 +36,29 @@ import {
 } from '@/app/utils/unifiedViewerOptionsRestore';
 import { useUIStore } from '@/store';
 import type { AssemblySelection } from '@/store/assemblySelectionStore';
-import type { DocumentLoadState } from '@/store/assetsStore';
+import type { DocumentLoadLifecycleState } from '@/store/assetsStore';
 import type { UpdateCommitOptions } from '@/types/viewer';
-import { setRegressionViewerResourceScope } from '@/shared/debug/regressionBridge';
 import {
   syncGroupRaycastInteractivity,
   type RaycastableObject,
 } from './unified-viewer/raycastInteractivity';
+import {
+  preloadViewerModeModules,
+  preloadVisualizerModeModules,
+} from './unified-viewer/modeModuleLoaders';
+import { handleUnifiedViewerWorkspaceLeave } from '@/app/utils/unifiedViewerHoverReset';
 import { UnifiedViewerOverlays } from './unified-viewer/UnifiedViewerOverlays';
 import { UnifiedViewerSceneRoots } from './unified-viewer/UnifiedViewerSceneRoots';
 import type { FilePreviewState } from './unified-viewer/types';
 import { useUnifiedViewerDerivedState } from './unified-viewer/useUnifiedViewerDerivedState';
+import { useSelectionStore } from '@/store/selectionStore';
 
 interface UnifiedViewerProps {
   robot: RobotState;
   visualizerRobot?: RobotState;
   mode: AppMode;
   onSelect: (
-    type: 'link' | 'joint',
+    type: Exclude<InteractionSelection['type'], null>,
     id: string,
     subType?: 'visual' | 'collision',
     helperKind?: ViewerHelperKind,
@@ -73,11 +70,12 @@ interface UnifiedViewerProps {
     objectType: 'visual' | 'collision',
   ) => void;
   onHover?: (
-    type: 'link' | 'joint' | null,
+    type: InteractionSelection['type'],
     id: string | null,
     subType?: 'visual' | 'collision',
     objectIndex?: number,
     helperKind?: ViewerHelperKind,
+    highlightObjectId?: number,
   ) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   assets: Record<string, string>;
@@ -150,10 +148,18 @@ interface UnifiedViewerProps {
   pendingViewerToolMode?: ToolMode | null;
   onConsumePendingViewerToolMode?: () => void;
   viewerReloadKey?: number;
-  documentLoadState: DocumentLoadState;
+  documentLoadState: DocumentLoadLifecycleState;
 }
 
 const INACTIVE_SCENE_UNMOUNT_DELAY_MS = 15_000;
+
+type IdleScheduler = {
+  requestIdleCallback?: (
+    callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+    options?: { timeout: number },
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
 
 export const UnifiedViewer = React.memo(
   ({
@@ -210,6 +216,7 @@ export const UnifiedViewer = React.memo(
     documentLoadState,
   }: UnifiedViewerProps) => {
     const t = translations[lang];
+    const clearHover = useSelectionStore((state) => state.clearHover);
     const {
       groundPlaneOffset,
       setGroundPlaneOffset,
@@ -642,6 +649,84 @@ export const UnifiedViewer = React.memo(
       viewerController,
     ]);
 
+    useEffect(() => {
+      const preloadCurrentModeModules = isViewerMode
+        ? preloadViewerModeModules
+        : preloadVisualizerModeModules;
+
+      void preloadCurrentModeModules().catch((error) => {
+        console.warn('[UnifiedViewer] Failed to preload active mode modules.', error);
+      });
+    }, [isViewerMode]);
+
+    useEffect(() => {
+      const schedulerWindow = window as Window & IdleScheduler;
+      let timeoutHandle: number | null = null;
+      let idleHandle: number | null = null;
+      let cancelled = false;
+
+      const preloadInactiveModeModules = () => {
+        if (cancelled) {
+          return;
+        }
+        const preload = isViewerMode ? preloadVisualizerModeModules : preloadViewerModeModules;
+        void preload().catch((error) => {
+          console.warn('[UnifiedViewer] Failed to prefetch inactive mode modules.', error);
+        });
+      };
+
+      if (typeof schedulerWindow.requestIdleCallback === 'function') {
+        idleHandle = schedulerWindow.requestIdleCallback(preloadInactiveModeModules, {
+          timeout: 1_500,
+        });
+      } else {
+        timeoutHandle = window.setTimeout(preloadInactiveModeModules, 1_500);
+      }
+
+      return () => {
+        cancelled = true;
+        if (idleHandle !== null && typeof schedulerWindow.cancelIdleCallback === 'function') {
+          schedulerWindow.cancelIdleCallback(idleHandle);
+        }
+        if (timeoutHandle !== null) {
+          window.clearTimeout(timeoutHandle);
+        }
+      };
+    }, [isViewerMode]);
+
+    useEffect(() => {
+      const handleWindowBlur = () => {
+        clearHover();
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          clearHover();
+        }
+      };
+
+      window.addEventListener('blur', handleWindowBlur);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      return () => {
+        window.removeEventListener('blur', handleWindowBlur);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    }, [clearHover]);
+
+    const handleWorkspaceMouseLeave = React.useCallback(() => {
+      handleUnifiedViewerWorkspaceLeave({
+        activeScene,
+        clearHover,
+        handleViewerMouseUp: viewerController.handleMouseUp,
+        handleVisualizerMouseUp: visualizerController.panel.handleMouseUp,
+      });
+    }, [
+      activeScene,
+      clearHover,
+      viewerController.handleMouseUp,
+      visualizerController.panel.handleMouseUp,
+    ]);
+
     return (
       <WorkspaceCanvas
         theme={theme}
@@ -669,15 +754,7 @@ export const UnifiedViewer = React.memo(
             ? viewerController.handleMouseUp
             : visualizerController.panel.handleMouseUp
         }
-        onMouseLeave={
-          activeScene === 'viewer'
-            ? viewerController.handleMouseUp
-            : (event) => {
-                void event;
-                visualizerController.panel.handleMouseUp();
-                visualizerController.clearHover();
-              }
-        }
+        onMouseLeave={handleWorkspaceMouseLeave}
         environment={workspaceEnvironment}
         environmentIntensity={workspaceEnvironmentIntensity}
         cameraFollowPrimary={useViewerCanvasPresentation}

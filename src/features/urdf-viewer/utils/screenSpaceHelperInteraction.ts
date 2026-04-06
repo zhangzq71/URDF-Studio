@@ -44,10 +44,12 @@ export interface ResolveScreenSpaceHelperInteractionOptions {
 function isHelperProjectionRoot(object: THREE.Object3D): boolean {
   const explicitHelperKind = object.userData?.viewerHelperKind;
   return (
+    explicitHelperKind === 'ik-handle' ||
     explicitHelperKind === 'center-of-mass' ||
     explicitHelperKind === 'inertia' ||
     explicitHelperKind === 'origin-axes' ||
     explicitHelperKind === 'joint-axis' ||
+    object.name === '__ik_handle__' ||
     object.name === '__com_visual__' ||
     object.name === '__inertia_box__' ||
     object.name === '__origin_axes__' ||
@@ -58,6 +60,8 @@ function isHelperProjectionRoot(object: THREE.Object3D): boolean {
 
 function resolveHelperLayer(helperKind: ViewerHelperKind): ViewerInteractiveLayer {
   switch (helperKind) {
+    case 'ik-handle':
+      return 'ik-handle';
     case 'origin-axes':
       return 'origin-axes';
     case 'joint-axis':
@@ -138,7 +142,12 @@ export function collectProjectedHelperInteractionTargets(options: {
     }
 
     const resolved = resolveInteractionSelectionHit(robot, object);
-    if (!resolved || resolved.targetKind !== 'helper' || !resolved.helperKind) {
+    if (
+      !resolved ||
+      resolved.targetKind !== 'helper' ||
+      resolved.type === 'tendon' ||
+      !resolved.helperKind
+    ) {
       return;
     }
 

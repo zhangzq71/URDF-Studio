@@ -322,9 +322,22 @@ export function useWorkspaceSourceSync({
   const deferredWorkspaceAssemblyRenderFailureReason = useDeferredValue(
     workspaceAssemblyRenderFailureReason,
   );
+  const isPreviewingAssemblyBridge = shouldRenderAssembly && Boolean(assemblyBridgePreview);
+  // Bridge-creation steppers emit small, high-frequency origin updates. Running those
+  // preview frames through deferred values makes the child component feel sticky.
+  const workspaceViewerAssemblyStateForDisplay = isPreviewingAssemblyBridge
+    ? viewerAssemblyState
+    : deferredViewerAssemblyState;
+  const workspaceViewerMergedRobotDataForDisplay = isPreviewingAssemblyBridge
+    ? viewerMergedRobotData
+    : deferredViewerMergedRobotData;
+  const workspaceAssemblyRenderFailureReasonForDisplay = isPreviewingAssemblyBridge
+    ? workspaceAssemblyRenderFailureReason
+    : deferredWorkspaceAssemblyRenderFailureReason;
   const animateWorkspaceViewerRobot = shouldAnimateWorkspaceViewerRobot({
     shouldRenderAssembly,
     previouslyRenderedAssembly: previousShouldRenderAssemblyRef.current,
+    isPreviewingAssemblyBridge,
   });
 
   const emptyRobot = useMemo<RobotState>(
@@ -362,21 +375,24 @@ export function useWorkspaceSourceSync({
       return null;
     }
 
-    if (deferredWorkspaceAssemblyRenderFailureReason || !deferredViewerMergedRobotData) {
+    if (
+      workspaceAssemblyRenderFailureReasonForDisplay ||
+      !workspaceViewerMergedRobotDataForDisplay
+    ) {
       return null;
     }
 
     return (
       buildWorkspaceAssemblyViewerDisplayRobotData({
-        assemblyState: deferredViewerAssemblyState,
-        mergedRobotData: deferredViewerMergedRobotData,
-      }) ?? buildWorkspaceViewerRobotData(deferredViewerMergedRobotData)
+        assemblyState: workspaceViewerAssemblyStateForDisplay,
+        mergedRobotData: workspaceViewerMergedRobotDataForDisplay,
+      }) ?? buildWorkspaceViewerRobotData(workspaceViewerMergedRobotDataForDisplay)
     );
   }, [
     deferredShouldRenderAssembly,
-    deferredViewerAssemblyState,
-    deferredViewerMergedRobotData,
-    deferredWorkspaceAssemblyRenderFailureReason,
+    workspaceAssemblyRenderFailureReasonForDisplay,
+    workspaceViewerAssemblyStateForDisplay,
+    workspaceViewerMergedRobotDataForDisplay,
   ]);
   const animatedWorkspaceViewerRobotData = useAnimatedWorkspaceViewerRobotData(
     workspaceViewerRobotData,
@@ -1282,15 +1298,17 @@ export function useWorkspaceSourceSync({
 
   useEffect(() => {
     if (!filePreviewFile) {
+      filePreviewRequestRef.current += 1;
       setPreviewRobot(null);
       setFilePreview(undefined);
       return;
     }
 
     const requestId = ++filePreviewRequestRef.current;
-    setPreviewRobot(null);
-    setFilePreview(undefined);
 
+    // Keep the current preview scene mounted until the replacement preview payload is ready.
+    // Clearing it immediately causes a visible blank-frame handoff when switching mesh/model
+    // previews, even if the shared canvas itself no longer remounts.
     void resolveRobotFileDataWithWorker(filePreviewFile, {
       availableFiles,
       assets,
@@ -1309,20 +1327,22 @@ export function useWorkspaceSourceSync({
           importResult: result,
         });
 
+        const shouldActivatePreview =
+          previewUrdf != null &&
+          (filePreviewFile.format === 'usd' || previewUrdf.trim().length > 0);
+
+        if (!shouldActivatePreview) {
+          return;
+        }
+
         setPreviewRobot(nextPreviewRobot);
-        setFilePreview(
-          previewUrdf != null
-            ? { urdfContent: previewUrdf, fileName: filePreviewFile.name }
-            : undefined,
-        );
+        setFilePreview({ urdfContent: previewUrdf, fileName: filePreviewFile.name });
       })
       .catch((error) => {
         if (requestId !== filePreviewRequestRef.current) {
           return;
         }
 
-        setPreviewRobot(null);
-        setFilePreview(undefined);
         scheduleFailFastInDev(
           'useWorkspaceSourceSync:filePreview',
           new Error(`Failed to resolve file preview for "${filePreviewFile.name}".`, {

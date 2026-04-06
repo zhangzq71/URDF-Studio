@@ -694,6 +694,60 @@ test('generateURDF does not fall back to the default visual blue when a texture-
   assert.doesNotMatch(urdf, /<color rgba="0\.23137647 0\.50980784 0\.96470980 1\.00000000"\/>/);
 });
 
+test('generateURDF exports per-visual texture overrides without leaking the link fallback to secondary visuals', () => {
+  const urdf = generateURDF({
+    name: 'per_visual_texture_export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#123456',
+          authoredMaterials: [{ texture: 'textures/primary.png' }],
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        visualBodies: [
+          {
+            type: GeometryType.BOX,
+            dimensions: { x: 0.5, y: 0.5, z: 0.5 },
+            color: '#abcdef',
+            authoredMaterials: [{ texture: 'textures/secondary.png' }],
+            origin: { xyz: { x: 1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ],
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    joints: {},
+    materials: {
+      base_link: {
+        texture: 'textures/legacy.png',
+      },
+    },
+  });
+
+  assert.match(
+    urdf,
+    /<texture filename="package:\/\/per_visual_texture_export\/textures\/primary\.png" \/>/,
+  );
+  assert.match(
+    urdf,
+    /<texture filename="package:\/\/per_visual_texture_export\/textures\/secondary\.png" \/>/,
+  );
+  assert.doesNotMatch(urdf, /legacy\.png/);
+});
+
 test('generateURDF keeps go2 Collada exports package-relative while preserving authored mesh materials', () => {
   const source = fs.readFileSync(
     'test/unitree_ros/robots/go2_description/urdf/go2_description.urdf',

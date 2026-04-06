@@ -55,6 +55,7 @@ function createTaggedMesh(
     isHelper?: boolean;
     renderOrder?: number;
     interactionLayer?:
+      | 'ik-handle'
       | 'visual'
       | 'collision'
       | 'origin-axes'
@@ -94,6 +95,7 @@ function createTaggedSupportPlane(
   z: number,
   options: {
     interactionLayer?:
+      | 'ik-handle'
       | 'visual'
       | 'collision'
       | 'origin-axes'
@@ -123,6 +125,7 @@ function createTaggedHelperOutline(
     meshVisualOnly?: boolean;
     narrowOutlineRaycast?: boolean;
     interactionLayer?:
+      | 'ik-handle'
       | 'visual'
       | 'collision'
       | 'origin-axes'
@@ -721,6 +724,124 @@ test('resolveVisualizerInteractionTargetFromHits prefers the directly hit helper
     {
       type: 'joint',
       id: 'joint_1',
+    },
+  );
+});
+
+test('resolveVisualizerInteractionTargetFromHits resolves overlapping helpers through layer priority instead of trusting the direct hit blindly', () => {
+  const root = new THREE.Group();
+
+  const jointAxisHelper = createTaggedMesh(
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
+    },
+    -2,
+    {
+      isHelper: true,
+      interactionLayer: 'joint-axis',
+    },
+  );
+
+  const ikHandleHelper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'tool_link',
+      helperKind: 'ik-handle',
+    },
+    -1.5,
+    {
+      isHelper: true,
+      interactionLayer: 'ik-handle',
+    },
+  );
+
+  root.add(jointAxisHelper.wrapper);
+  root.add(ikHandleHelper.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+  const hits = raycaster.intersectObject(root, true);
+
+  assert.deepEqual(
+    findNearestVisualizerTargetFromHitsWithOptions(hits, {
+      interactionLayerPriority: ['joint-axis', 'ik-handle'],
+    }),
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
+    },
+  );
+
+  assert.deepEqual(
+    resolveVisualizerInteractionTargetFromHitsWithOptions(ikHandleHelper.mesh, hits, {
+      interactionLayerPriority: ['joint-axis', 'ik-handle'],
+    }),
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
+    },
+  );
+});
+
+test('resolveVisualizerInteractionTargetFromHits prefers the joint axis when it overlaps the origin axes helper', () => {
+  const root = new THREE.Group();
+
+  const jointAxisHelper = createTaggedMesh(
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
+    },
+    -2,
+    {
+      isHelper: true,
+      interactionLayer: 'joint-axis',
+    },
+  );
+
+  const originAxesHelper = createTaggedMesh(
+    {
+      type: 'link',
+      id: 'tool_link',
+      helperKind: 'origin-axes',
+    },
+    -1.5,
+    {
+      isHelper: true,
+      interactionLayer: 'origin-axes',
+    },
+  );
+
+  root.add(jointAxisHelper.wrapper);
+  root.add(originAxesHelper.wrapper);
+  root.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+  const hits = raycaster.intersectObject(root, true);
+
+  assert.deepEqual(
+    findNearestVisualizerTargetFromHitsWithOptions(hits, {
+      interactionLayerPriority: ['joint-axis', 'origin-axes'],
+    }),
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
+    },
+  );
+
+  assert.deepEqual(
+    resolveVisualizerInteractionTargetFromHitsWithOptions(originAxesHelper.mesh, hits, {
+      interactionLayerPriority: ['joint-axis', 'origin-axes'],
+    }),
+    {
+      type: 'joint',
+      id: 'joint_1',
+      helperKind: 'joint-axis',
     },
   );
 });

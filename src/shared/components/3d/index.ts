@@ -71,9 +71,13 @@ export {
   UnifiedTransformControls,
   VISUALIZER_UNIFIED_GIZMO_SIZE,
 } from './UnifiedTransformControls';
+export { LinkIkTransformControls } from './LinkIkTransformControls';
 export { LoadingHud } from './LoadingHud';
 export {
   buildLoadingHudState,
+  hasDeterminateLoadingCounts,
+  normalizeLoadingProgress,
+  resolveLoadingProgressMode,
   shouldUseIndeterminateStreamingMeshProgress,
 } from './loadingHudState';
 

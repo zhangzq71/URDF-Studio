@@ -33,6 +33,17 @@ export interface UrdfInertial {
   };
 }
 
+export interface UrdfMjcfSite {
+  name: string;
+  sourceName?: string;
+  type: string;
+  size?: number[];
+  rgba?: [number, number, number, number];
+  pos?: [number, number, number];
+  quat?: [number, number, number, number];
+  group?: number;
+}
+
 export interface UrdfLink {
   id: string;
   name: string;
@@ -50,6 +61,7 @@ export interface UrdfLink {
    */
   collisionBodies?: UrdfVisual[];
   inertial?: UrdfInertial;
+  mjcfSites?: UrdfMjcfSite[];
   visible?: boolean; // Controls visibility in the 3D scene
 }
 
@@ -111,9 +123,8 @@ export interface RobotClosedLoopConstraintSource {
   body2Name: string;
 }
 
-export interface RobotClosedLoopConstraint {
+interface RobotClosedLoopConstraintBase {
   id: string;
-  type: 'connect';
   linkAId: string;
   linkBId: string;
   anchorWorld: Vector3;
@@ -121,6 +132,19 @@ export interface RobotClosedLoopConstraint {
   anchorLocalB: Vector3;
   source?: RobotClosedLoopConstraintSource;
 }
+
+export interface RobotClosedLoopConnectConstraint extends RobotClosedLoopConstraintBase {
+  type: 'connect';
+}
+
+export interface RobotClosedLoopDistanceConstraint extends RobotClosedLoopConstraintBase {
+  type: 'distance';
+  restDistance: number;
+}
+
+export type RobotClosedLoopConstraint =
+  | RobotClosedLoopConnectConstraint
+  | RobotClosedLoopDistanceConstraint;
 
 export interface RobotMaterialState {
   color?: string;
@@ -135,12 +159,27 @@ export interface RobotMjcfInspectionBodySites {
 }
 
 export interface RobotMjcfInspectionTendonSummary {
+  className?: string;
+  group?: number;
   name: string;
   type: 'fixed' | 'spatial';
   limited?: boolean;
   range?: [number, number];
+  width?: number;
+  stiffness?: number;
+  springlength?: number;
+  rgba?: [number, number, number, number];
   attachmentRefs: string[];
+  attachments: RobotMjcfInspectionTendonAttachment[];
   actuatorNames: string[];
+}
+
+export interface RobotMjcfInspectionTendonAttachment {
+  type: 'site' | 'geom' | 'joint' | 'pulley';
+  ref?: string;
+  sidesite?: string;
+  divisor?: number;
+  coef?: number;
 }
 
 export interface RobotInspectionContext {

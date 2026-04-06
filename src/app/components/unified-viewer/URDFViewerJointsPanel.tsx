@@ -24,6 +24,7 @@ export function URDFViewerJointsPanel({
     showOptionsPanel: false,
     showJointPanel,
     showToolbar: false,
+    preferEdgeDockedJointPanel: true,
   });
 
   return (

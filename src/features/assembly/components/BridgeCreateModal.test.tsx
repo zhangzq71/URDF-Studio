@@ -466,6 +466,80 @@ test('bridge create modal keeps the compact grouped layout and removes legacy hi
   }
 });
 
+test('bridge create modal uses friendly MJCF link labels in summaries and selectors', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const assemblyState = createAssemblyState();
+  const mjcfRootLink = assemblyState.components.component_a.robot.links['component_a/base_link'];
+
+  mjcfRootLink.name = 'world_body_0';
+  mjcfRootLink.visual = {
+    ...mjcfRootLink.visual,
+    mjcfMesh: { name: 'bin' },
+  };
+  mjcfRootLink.collision = {
+    ...mjcfRootLink.collision,
+    mjcfMesh: { name: 'bin' },
+  };
+  assemblyState.components.component_a.robot.inspectionContext = {
+    sourceFormat: 'mjcf',
+    mjcf: {
+      siteCount: 0,
+      tendonCount: 0,
+      tendonActuatorCount: 0,
+      bodiesWithSites: [],
+      tendons: [],
+    },
+  };
+
+  useSelectionStore.setState({
+    selection: { type: null, id: null },
+    interactionGuard: null,
+  });
+
+  try {
+    await act(async () => {
+      root.render(
+        React.createElement(BridgeCreateModal, {
+          isOpen: true,
+          onClose: () => {},
+          onCreate: () => {},
+          onPreviewChange: () => {},
+          assemblyState,
+          lang: 'en',
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      useSelectionStore.getState().setSelection({ type: 'link', id: 'component_a/base_link' });
+      await Promise.resolve();
+    });
+
+    const parentCard = container.querySelector<HTMLElement>('[data-bridge-side="parent"]');
+    assert.ok(parentCard, 'parent side card should render');
+    assert.equal(parentCard.dataset.bridgeLinkSummary, 'Bin');
+
+    const parentLinkSelect = container.querySelector<HTMLSelectElement>(
+      '[data-bridge-field="parent-link"] select',
+    );
+    assert.ok(parentLinkSelect, 'parent link select should render');
+
+    const optionLabels = Array.from(parentLinkSelect.options).map((option) => option.text.trim());
+    assert.ok(optionLabels.includes('Bin'), 'friendly MJCF link label should be listed');
+    assert.ok(
+      !optionLabels.includes('world_body_0'),
+      'raw anonymous MJCF body name should stay hidden from the selector',
+    );
+  } finally {
+    useSelectionStore.setState({
+      selection: { type: null, id: null },
+      interactionGuard: null,
+    });
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('bridge create modal keeps joint type compact and omits extra explanation copy', async () => {
   const { dom, container, root } = createComponentRoot();
   const originalConsoleError = console.error;
@@ -1466,6 +1540,99 @@ test('bridge create modal disables confirm when the lower limit exceeds the uppe
     assert.ok(confirmButton, 'confirm button should render');
     assert.equal(confirmButton.disabled, true);
     assert.match(container.textContent ?? '', /下限必须小于或等于上限/);
+  } finally {
+    useSelectionStore.setState({
+      selection: { type: null, id: null },
+      interactionGuard: null,
+    });
+    await destroyComponentRoot(dom, root);
+    console.error = originalConsoleError;
+  }
+});
+
+test('bridge create modal disables confirm for a non-fixed bridge that would close an assembly cycle', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const originalConsoleError = console.error;
+  const assemblyState = createAssemblyState();
+  assemblyState.bridges.bridge_component_a_component_b = {
+    id: 'bridge_component_a_component_b',
+    name: 'Component_A-Component_B',
+    parentComponentId: 'component_a',
+    parentLinkId: 'component_a/tool_link',
+    childComponentId: 'component_b',
+    childLinkId: 'component_b/base_link',
+    joint: {
+      id: 'bridge_component_a_component_b',
+      name: 'bridge_component_a_component_b',
+      type: JointType.FIXED,
+      parentLinkId: 'component_a/tool_link',
+      childLinkId: 'component_b/base_link',
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      dynamics: { damping: 0, friction: 0 },
+      hardware: { armature: 0, motorType: '', motorId: '', motorDirection: 1 },
+    },
+  };
+
+  useSelectionStore.setState({
+    selection: { type: null, id: null },
+    interactionGuard: null,
+  });
+
+  console.error = (...args: unknown[]) => {
+    if (args.some((arg) => typeof arg === 'string' && arg.includes('not wrapped in act'))) {
+      return;
+    }
+
+    originalConsoleError(...args);
+  };
+
+  try {
+    await act(async () => {
+      root.render(
+        React.createElement(BridgeCreateModal, {
+          isOpen: true,
+          onClose: () => {},
+          onCreate: () => {},
+          onPreviewChange: () => {},
+          assemblyState,
+          lang: 'zh',
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      useSelectionStore.getState().setSelection({ type: 'link', id: 'component_b/base_link' });
+      await Promise.resolve();
+    });
+
+    const childButton = findButtonByText(container, '选择子侧');
+    assert.ok(childButton, 'child side picker button should render');
+
+    await act(async () => {
+      childButton.click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      useSelectionStore.getState().setSelection({ type: 'link', id: 'component_a/base_link' });
+      await Promise.resolve();
+    });
+
+    const jointTypeSelect = findJointTypeSelect(container);
+    assert.ok(jointTypeSelect, 'joint type select should render');
+
+    const confirmButton = findButtonByText(container, '确认');
+    assert.ok(confirmButton, 'confirm button should render');
+    assert.equal(confirmButton.disabled, false, 'fixed cyclic bridges should remain allowed');
+
+    await act(async () => {
+      setFormControlValue(dom, jointTypeSelect, JointType.REVOLUTE);
+      await Promise.resolve();
+    });
+
+    assert.equal(confirmButton.disabled, true);
+    assert.match(container.textContent ?? '', /成环桥接仅支持 fixed 关节/);
   } finally {
     useSelectionStore.setState({
       selection: { type: null, id: null },

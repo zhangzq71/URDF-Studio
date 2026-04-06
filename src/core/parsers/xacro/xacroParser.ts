@@ -227,14 +227,14 @@ function parseProperties(content: string, ctx: XacroContext): void {
  * Parse xacro:macro definitions
  */
 function parseMacros(content: string, ctx: XacroContext): void {
-  // Match <xacro:macro name="..." params="...">...</xacro:macro>
+  // Match both parameterized and parameterless macro definitions.
   const macroRegex =
-    /<xacro:macro\s+name=["']([^"']+)["']\s+params=["']([^"']*)["']\s*>([\s\S]*?)<\/xacro:macro>/g;
+    /<xacro:macro\s+name=["']([^"']+)["'](?:\s+params=["']([^"']*)["'])?\s*>([\s\S]*?)<\/xacro:macro>/g;
 
   let match: RegExpExecArray | null;
   while ((match = macroRegex.exec(content)) !== null) {
     const name = match[1];
-    const paramsStr = match[2];
+    const paramsStr = match[2] ?? '';
     const body = match[3];
 
     // Parse params - handle default values like "param:=default"
@@ -246,7 +246,7 @@ function parseMacros(content: string, ctx: XacroContext): void {
 
 function stripMacroDefinitions(content: string): string {
   return content.replace(
-    /<xacro:macro\s+name=["'][^"']+["']\s+params=["'][^"']*["']\s*>[\s\S]*?<\/xacro:macro>/g,
+    /<xacro:macro\s+name=["'][^"']+["'](?:\s+params=["'][^"']*["'])?\s*>[\s\S]*?<\/xacro:macro>/g,
     '',
   );
 }
@@ -612,6 +612,17 @@ function cleanupXacroElements(content: string): string {
     const preview = uniqueUnresolvedTags.slice(0, 5).join(', ');
     throw new Error(
       `[Xacro] Unresolved xacro elements remain after expansion (${uniqueUnresolvedTags.length}): ${preview}`,
+    );
+  }
+
+  const unresolvedArgs = Array.from(content.matchAll(/\$\(arg\s+([^)]+)\)/g))
+    .map((match) => match[1]?.trim())
+    .filter(Boolean) as string[];
+  if (unresolvedArgs.length > 0) {
+    const uniqueUnresolvedArgs = Array.from(new Set(unresolvedArgs));
+    const preview = uniqueUnresolvedArgs.slice(0, 5).join(', ');
+    throw new Error(
+      `[Xacro] Unresolved substitution arguments remain after expansion (${uniqueUnresolvedArgs.length}): ${preview}`,
     );
   }
 

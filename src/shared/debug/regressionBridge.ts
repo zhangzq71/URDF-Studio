@@ -1,5 +1,12 @@
 import { Quaternion, Vector3 } from 'three';
-import type { InteractionHelperKind, RobotFile, RobotState, UrdfJoint, UrdfLink } from '@/types';
+import type {
+  InteractionHelperKind,
+  InteractionSelection,
+  RobotFile,
+  RobotState,
+  UrdfJoint,
+  UrdfLink,
+} from '@/types';
 import { getLatestUsdStageLoadDebugEntry } from './usdStageLoadDebug';
 
 type HighlightMode = 'link' | 'collision';
@@ -32,20 +39,8 @@ interface AppRegressionHandlers {
     preparedUsdCacheKeysByFile: Record<string, string[]>;
   };
   getInteractionState: () => {
-    selection: {
-      type: 'link' | 'joint' | null;
-      id: string | null;
-      subType?: 'visual' | 'collision';
-      objectIndex?: number;
-      helperKind?: InteractionHelperKind;
-    };
-    hoveredSelection: {
-      type: 'link' | 'joint' | null;
-      id: string | null;
-      subType?: 'visual' | 'collision';
-      objectIndex?: number;
-      helperKind?: InteractionHelperKind;
-    };
+    selection: InteractionSelection;
+    hoveredSelection: InteractionSelection;
   };
   loadRobotByName: (fileName: string) => Promise<{ loaded: boolean; selectedFile: string | null }>;
 }
@@ -133,20 +128,8 @@ interface RegressionSnapshot {
   selectedFile: { name: string; format: string } | null;
   store: ReturnType<typeof summarizeRobotState> | null;
   interaction: {
-    selection: {
-      type: 'link' | 'joint' | null;
-      id: string | null;
-      subType: 'visual' | 'collision' | null;
-      objectIndex: number | null;
-      helperKind: InteractionHelperKind | null;
-    };
-    hoveredSelection: {
-      type: 'link' | 'joint' | null;
-      id: string | null;
-      subType: 'visual' | 'collision' | null;
-      objectIndex: number | null;
-      helperKind: InteractionHelperKind | null;
-    };
+    selection: ReturnType<typeof summarizeInteractionSelection>;
+    hoveredSelection: ReturnType<typeof summarizeInteractionSelection>;
   } | null;
   viewer: ViewerControllerSnapshot | null;
   runtime: ReturnType<typeof summarizeRuntimeRobot> | null;
@@ -378,18 +361,7 @@ function summarizeRobotState(robotState: RobotState) {
   };
 }
 
-function summarizeInteractionSelection(
-  selection:
-    | {
-        type: 'link' | 'joint' | null;
-        id: string | null;
-        subType?: 'visual' | 'collision';
-        objectIndex?: number;
-        helperKind?: InteractionHelperKind;
-      }
-    | null
-    | undefined,
-) {
+function summarizeInteractionSelection(selection: InteractionSelection | null | undefined) {
   return {
     type: selection?.type ?? null,
     id: selection?.id ?? null,

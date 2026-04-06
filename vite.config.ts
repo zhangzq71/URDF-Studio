@@ -91,26 +91,6 @@ function createUsdConfigurationProxyPlugin() {
   };
 }
 
-function isUsdViewerChunkModule(normalizedId: string): boolean {
-  return (
-    normalizedId.includes('/src/features/urdf-viewer/components/UsdWasmStage.tsx') ||
-    normalizedId.includes('/src/features/urdf-viewer/utils/usd') ||
-    normalizedId.includes('/src/features/urdf-viewer/runtime/viewer/') ||
-    normalizedId.includes('/src/features/urdf-viewer/runtime/embed/usd-viewer-api.ts') ||
-    normalizedId.includes('/src/features/urdf-viewer/runtime/vendor/usd-text-parser')
-  );
-}
-
-function isSharedUrdfViewerChunkModule(normalizedId: string): boolean {
-  return (
-    normalizedId.includes('/src/features/urdf-viewer/utils/cameraFrame.ts') ||
-    normalizedId.includes('/src/features/urdf-viewer/utils/dispose.ts') ||
-    normalizedId.includes('/src/features/urdf-viewer/utils/materials.ts') ||
-    normalizedId.includes('/src/features/urdf-viewer/utils/stabilizedAutoFrame.ts') ||
-    normalizedId.includes('/src/features/urdf-viewer/utils/visualizationFactories.ts')
-  );
-}
-
 function isMonacoReactChunkModule(normalizedId: string): boolean {
   return normalizedId.includes('/@monaco-editor/react/');
 }
@@ -133,6 +113,19 @@ function isMonacoCoreChunkModule(normalizedId: string): boolean {
 
 function isCodeEditorRuntimeChunkModule(normalizedId: string): boolean {
   return normalizedId.includes('/src/features/code-editor/utils/monacoLoader.ts');
+}
+
+const INITIAL_HTML_MODULE_PRELOAD_BLOCKLIST = [
+  'feature-file-io-',
+  'export-vendor-',
+  'feature-visualizer-runtime-',
+  'feature-urdf-viewer-runtime-',
+  'ViewerSceneConnector-',
+  'URDFViewerJointsPanel-',
+];
+
+function shouldSkipInitialHtmlModulePreload(dependency: string): boolean {
+  return INITIAL_HTML_MODULE_PRELOAD_BLOCKLIST.some((token) => dependency.includes(token));
 }
 
 const GENERATED_ARTIFACT_WATCH_IGNORE_ROOTS = [
@@ -188,24 +181,19 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       chunkSizeWarningLimit: 800,
+      modulePreload: {
+        resolveDependencies(_filename, deps, context) {
+          if (context.hostType !== 'html') {
+            return deps;
+          }
+
+          return deps.filter((dependency) => !shouldSkipInitialHtmlModulePreload(dependency));
+        },
+      },
       rollupOptions: {
         output: {
           manualChunks(id) {
             const normalizedId = id.replace(/\\/g, '/');
-
-            if (normalizedId.includes('/src/features/visualizer/')) {
-              return 'feature-visualizer';
-            }
-
-            if (normalizedId.includes('/src/features/urdf-viewer/')) {
-              if (
-                isUsdViewerChunkModule(normalizedId) ||
-                isSharedUrdfViewerChunkModule(normalizedId)
-              ) {
-                return;
-              }
-              return 'feature-urdf-viewer';
-            }
 
             if (normalizedId.includes('/src/features/property-editor/')) {
               return 'feature-property-editor';

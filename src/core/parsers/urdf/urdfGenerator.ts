@@ -13,7 +13,11 @@ import {
   type UrdfVisualMaterial,
 } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
-import { getVisualGeometryEntries } from '@/core/robot';
+import {
+  getEffectiveGeometryAuthoredMaterials,
+  getVisualGeometryEntries,
+  resolveVisualMaterialOverride,
+} from '@/core/robot';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_PROPERTY_DECIMALS,
@@ -58,26 +62,43 @@ function resolveLinkExportMaterial(
   visual: UrdfLink['visual'],
   options: {
     isPrimaryVisual?: boolean;
-    visualCount?: number;
   } = {},
-): { color?: string; texture?: string } {
-  const material = robot.materials?.[link.id] || robot.materials?.[link.name];
-  const visualCount = options.visualCount ?? getVisualGeometryEntries(link).length;
-  const isPrimaryVisual = options.isPrimaryVisual ?? true;
+): {
+  authoredMaterials?: UrdfVisualMaterial[];
+  color?: string;
+  texture?: string;
+  source: 'authored' | 'legacy-link' | 'inline' | 'none';
+} {
+  const resolvedMaterial = resolveVisualMaterialOverride(robot, link, visual, {
+    isPrimaryVisual: options.isPrimaryVisual,
+  });
 
-  // `robot.materials` is a link-level cache and cannot safely describe multiple
-  // independently colored visuals on the same link. Preserve per-visual
-  // authored colors/materials for additional visuals instead of flattening the
-  // whole link to the primary visual color during source regeneration.
-  if (visualCount > 1 && !isPrimaryVisual) {
+  if (resolvedMaterial.source === 'authored') {
+    return {
+      authoredMaterials: getEffectiveGeometryAuthoredMaterials(visual),
+      color: resolvedMaterial.color,
+      texture: resolvedMaterial.texture,
+      source: 'authored',
+    };
+  }
+
+  if (resolvedMaterial.source === 'legacy-link') {
+    return {
+      color: resolvedMaterial.color,
+      texture: resolvedMaterial.texture,
+      source: 'legacy-link',
+    };
+  }
+
+  if (visual.color) {
     return {
       color: visual.color,
+      source: 'inline',
     };
   }
 
   return {
-    color: material?.color || (!material?.texture ? visual.color : undefined),
-    texture: material?.texture,
+    source: 'none',
   };
 }
 
@@ -345,14 +366,9 @@ export const generateURDF = (
       const visual = entry.geometry;
       const visualMaterial = resolveLinkExportMaterial(robot, link, visual, {
         isPrimaryVisual: entry.bodyIndex === null,
-        visualCount: visualEntries.length,
       });
-      const hasExplicitVisualMaterialOverride = Boolean(
-        visualMaterial.color || visualMaterial.texture,
-      );
-      const authoredMaterials = hasExplicitVisualMaterialOverride
-        ? undefined
-        : visual.authoredMaterials;
+      const authoredMaterials =
+        visualMaterial.source === 'authored' ? visualMaterial.authoredMaterials : undefined;
       const visualNameAttr = visual.name ? ` name="${visual.name}"` : '';
       xml += `    <visual${visualNameAttr}>\n`;
       if (visual.origin) {

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { createJointAxisVisualization } from '../utils/visualizationFactories';
 import { syncRobotGeometryVisibility } from '../utils/robotGeometryVisibilitySync';
@@ -7,19 +7,24 @@ import { getRobotSceneNodeIndex } from '../utils/robotSceneNodeIndex';
 import { getRobotVisualMeshIndex } from '../utils/robotVisualMeshIndex';
 import {
   syncInertiaVisualizationForLinks,
+  syncIkHandleVisualizationForLinks,
   syncJointHelperInteractionStateForJoints,
   syncJointAxesVisualizationForJoints,
   syncLinkHelperInteractionStateForLinks,
+  syncMjcfSiteVisualizationForLinks,
+  syncMjcfTendonVisualizationForRobot,
   syncOriginAxesVisualizationForLinks,
 } from '../utils/visualizationObjectSync';
+import { syncMjcfTendonVisualMeshMap } from '../utils/mjcfTendonVisualMeshMap';
 import {
   isModelOpacitySyncActive,
   shouldRunVisualizationSync,
 } from '../utils/visualizationSyncActivity';
-import type { UrdfLink } from '@/types';
+import type { UrdfJoint, UrdfLink } from '@/types';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import type { URDFViewerProps } from '../types';
 import type { HighlightedMeshSnapshot } from './useHighlightManager';
+import type { ViewerRobotSourceFormat } from '../types';
 
 export interface UseVisualizationEffectsOptions {
   robot: THREE.Object3D | null;
@@ -28,6 +33,8 @@ export interface UseVisualizationEffectsOptions {
   showVisual: boolean;
   showCollisionAlwaysOnTop: boolean;
   showInertia: boolean;
+  showIkHandles: boolean;
+  showIkHandlesAlwaysOnTop?: boolean;
   showInertiaOverlay?: boolean;
   showCenterOfMass: boolean;
   showCoMOverlay?: boolean;
@@ -35,11 +42,15 @@ export interface UseVisualizationEffectsOptions {
   showOrigins: boolean;
   showOriginsOverlay?: boolean;
   originSize: number;
+  showMjcfSites: boolean;
   showJointAxes: boolean;
   showJointAxesOverlay?: boolean;
   jointAxisSize: number;
   modelOpacity: number;
+  sourceFormat: ViewerRobotSourceFormat;
+  showMjcfWorldLink: boolean;
   robotLinks?: Record<string, UrdfLink>;
+  robotJoints?: Record<string, UrdfJoint>;
   selection?: URDFViewerProps['selection'];
   highlightGeometry: (
     linkName: string | null,
@@ -48,6 +59,7 @@ export interface UseVisualizationEffectsOptions {
     meshToHighlight?: THREE.Object3D | null | number,
   ) => void;
   highlightedMeshesRef: React.RefObject<Map<THREE.Mesh, HighlightedMeshSnapshot>>;
+  linkMeshMapRef?: RefObject<Map<string, THREE.Mesh[]>>;
 }
 
 export interface UseVisualizationEffectsResult {
@@ -67,6 +79,8 @@ export function useVisualizationEffects({
   showVisual,
   showCollisionAlwaysOnTop,
   showInertia,
+  showIkHandles,
+  showIkHandlesAlwaysOnTop = true,
   showInertiaOverlay = true,
   showCenterOfMass,
   showCoMOverlay = true,
@@ -74,14 +88,19 @@ export function useVisualizationEffects({
   showOrigins,
   showOriginsOverlay = false,
   originSize,
+  showMjcfSites,
   showJointAxes,
   showJointAxesOverlay = true,
   jointAxisSize,
   modelOpacity,
+  sourceFormat,
+  showMjcfWorldLink,
   robotLinks,
+  robotJoints,
   selection,
   highlightGeometry,
   highlightedMeshesRef,
+  linkMeshMapRef,
 }: UseVisualizationEffectsOptions): UseVisualizationEffectsResult {
   const { invalidate } = useThree();
   const snapshotRenderActive = useSnapshotRenderActive();
@@ -91,28 +110,36 @@ export function useVisualizationEffects({
     id: string | null;
     subType: string | null;
     objectIndex?: number;
+    highlightObjectId?: number;
   }>({ id: null, subType: null });
   const currentHoverRef = useRef<{
     id: string | null;
     subType: string | null;
     objectIndex?: number;
+    highlightObjectId?: number;
   }>({ id: null, subType: null });
   const latestHoverSelectionRef = useRef<URDFViewerProps['selection']>(undefined);
   const selectionRef = useRef(selection);
   const visualMaterialStateRef = useRef<Map<THREE.Material, VisualMaterialState>>(new Map());
+  const fallbackLinkMeshMapRef = useRef<Map<string, THREE.Mesh[]>>(new Map());
   const pooledLinkBoxRef = useRef(new THREE.Box3());
   const pooledLinkSizeRef = useRef(new THREE.Vector3());
   const helperVisibilityActiveRef = useRef(false);
   const modelOpacityActiveRef = useRef(false);
   const inertiaVisualizationActiveRef = useRef(false);
+  const ikHandleVisualizationActiveRef = useRef(false);
   const originAxesActiveRef = useRef(false);
   const jointAxesVisualizationActiveRef = useRef(false);
 
   const effectiveShowInertia = showInertia && !snapshotRenderActive;
+  const effectiveShowIkHandles = showIkHandles && !snapshotRenderActive;
   const effectiveShowCenterOfMass = showCenterOfMass && !snapshotRenderActive;
   const effectiveShowOrigins = showOrigins && !snapshotRenderActive;
+  const effectiveShowMjcfSites = showMjcfSites && !snapshotRenderActive;
+  const effectiveShowMjcfTendons = sourceFormat === 'mjcf' && !snapshotRenderActive;
   const effectiveShowJointAxes = showJointAxes && !snapshotRenderActive;
   const effectiveSelection = snapshotRenderActive ? undefined : selection;
+  const effectiveLinkMeshMapRef = linkMeshMapRef ?? fallbackLinkMeshMapRef;
 
   // Refs for visibility state
   const showVisualRef = useRef(showVisual);
@@ -126,9 +153,21 @@ export function useVisualizationEffects({
     helperVisibilityActiveRef.current = false;
     modelOpacityActiveRef.current = false;
     inertiaVisualizationActiveRef.current = false;
+    ikHandleVisualizationActiveRef.current = false;
     originAxesActiveRef.current = false;
     jointAxesVisualizationActiveRef.current = false;
   }, [robot]);
+
+  const resolveStoredHighlightTarget = useCallback(
+    (highlightObjectId?: number, objectIndex?: number): THREE.Object3D | number | undefined => {
+      if (robot && Number.isInteger(highlightObjectId)) {
+        return robot.getObjectById(highlightObjectId as number) ?? objectIndex;
+      }
+
+      return objectIndex;
+    },
+    [robot],
+  );
 
   const getVisualMaterialState = (material: THREE.Material): VisualMaterialState => {
     const cachedState = visualMaterialStateRef.current.get(material);
@@ -147,26 +186,60 @@ export function useVisualizationEffects({
   const resolveHighlightTarget = useCallback(
     (
       candidate?: URDFViewerProps['selection'],
-    ): { id: string | null; subType: 'visual' | 'collision' | undefined; objectIndex?: number } => {
+      options: {
+        allowHelperSelection?: boolean;
+      } = {},
+    ): {
+      id: string | null;
+      subType: 'visual' | 'collision' | undefined;
+      objectIndex?: number;
+      highlightObjectId?: number;
+    } => {
+      const allowHelperSelection = options.allowHelperSelection ?? true;
+
       if (!robot || !candidate?.id || !candidate.type) {
-        return { id: null, subType: undefined };
+        return { id: null, subType: undefined, highlightObjectId: undefined };
+      }
+
+      if (!allowHelperSelection && candidate.helperKind && !candidate.subType) {
+        return { id: null, subType: undefined, highlightObjectId: undefined };
       }
 
       if (candidate.type === 'link') {
-        return { id: candidate.id, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        return {
+          id: candidate.id,
+          subType: candidate.subType,
+          objectIndex: candidate.objectIndex,
+          highlightObjectId: candidate.highlightObjectId,
+        };
       }
 
       const jointObj = robot.getObjectByName(candidate.id);
       if (!jointObj) {
-        return { id: null, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        return {
+          id: null,
+          subType: candidate.subType,
+          objectIndex: candidate.objectIndex,
+          highlightObjectId: candidate.highlightObjectId,
+        };
       }
 
       const childLink = jointObj.children.find((c: any) => c.isURDFLink);
       if (!childLink) {
-        return { id: null, subType: candidate.subType, objectIndex: candidate.objectIndex };
+        return {
+          id: null,
+          subType: candidate.subType,
+          objectIndex: candidate.objectIndex,
+          highlightObjectId: candidate.highlightObjectId,
+        };
       }
 
-      return { id: childLink.name, subType: candidate.subType, objectIndex: candidate.objectIndex };
+      return {
+        id: childLink.name,
+        subType: candidate.subType,
+        objectIndex: candidate.objectIndex,
+        highlightObjectId: candidate.highlightObjectId,
+      };
     },
     [robot],
   );
@@ -254,8 +327,10 @@ export function useVisualizationEffects({
     const didMutate = syncRobotGeometryVisibility({
       robot,
       robotLinks,
+      sourceFormat: sourceFormat === 'mjcf' ? 'mjcf' : 'urdf',
       showCollision,
       showVisual,
+      showMjcfWorldLink,
       showCollisionAlwaysOnTop,
       highlightedMeshes: highlightedMeshesRef.current,
     });
@@ -267,6 +342,8 @@ export function useVisualizationEffects({
     robot,
     showCollision,
     showVisual,
+    sourceFormat,
+    showMjcfWorldLink,
     showCollisionAlwaysOnTop,
     robotLinks,
     robotVersion,
@@ -453,6 +530,96 @@ export function useVisualizationEffects({
     showInertiaOverlay,
   ]);
 
+  useEffect(() => {
+    if (!robot) return;
+    if (
+      !shouldRunVisualizationSync(effectiveShowIkHandles, ikHandleVisualizationActiveRef.current)
+    ) {
+      return;
+    }
+
+    const didMutate = syncIkHandleVisualizationForLinks({
+      links: getRobotSceneNodeIndex(robot).links,
+      robotLinks,
+      robotJoints,
+      showIkHandles: effectiveShowIkHandles,
+      showIkHandlesAlwaysOnTop,
+    });
+
+    if (didMutate) {
+      invalidate();
+    }
+    ikHandleVisualizationActiveRef.current = effectiveShowIkHandles;
+  }, [
+    effectiveShowIkHandles,
+    invalidate,
+    robot,
+    robotJoints,
+    robotLinks,
+    robotVersion,
+    showIkHandlesAlwaysOnTop,
+  ]);
+
+  useEffect(() => {
+    if (!robot) return;
+
+    const didMutate = syncMjcfSiteVisualizationForLinks({
+      links: getRobotSceneNodeIndex(robot).links,
+      sourceFormat: sourceFormat === 'mjcf' ? 'mjcf' : 'urdf',
+      showMjcfSites: effectiveShowMjcfSites,
+      showMjcfWorldLink,
+    });
+
+    if (didMutate) {
+      invalidate();
+    }
+  }, [effectiveShowMjcfSites, invalidate, robot, robotVersion, showMjcfWorldLink, sourceFormat]);
+
+  useEffect(() => {
+    if (!robot) return;
+
+    const didMutateGeometry = syncMjcfTendonVisualizationForRobot({
+      robot,
+      sourceFormat: sourceFormat === 'mjcf' ? 'mjcf' : 'urdf',
+      showMjcfTendons: effectiveShowMjcfTendons,
+    });
+    const didMutateLinkMeshMap = syncMjcfTendonVisualMeshMap(
+      effectiveLinkMeshMapRef.current,
+      robot,
+    );
+
+    if (didMutateGeometry || didMutateLinkMeshMap) {
+      invalidate();
+    }
+  }, [
+    effectiveShowMjcfTendons,
+    effectiveLinkMeshMapRef,
+    invalidate,
+    robot,
+    robotVersion,
+    sourceFormat,
+  ]);
+
+  useFrame(() => {
+    if (!robot || !effectiveShowMjcfTendons) {
+      return;
+    }
+
+    const didMutateGeometry = syncMjcfTendonVisualizationForRobot({
+      robot,
+      sourceFormat: sourceFormat === 'mjcf' ? 'mjcf' : 'urdf',
+      showMjcfTendons: effectiveShowMjcfTendons,
+    });
+    const didMutateLinkMeshMap = syncMjcfTendonVisualMeshMap(
+      effectiveLinkMeshMapRef.current,
+      robot,
+    );
+
+    if (didMutateGeometry || didMutateLinkMeshMap) {
+      invalidate();
+    }
+  });
+
   // Effect to handle origin axes visualization for each link
   useEffect(() => {
     if (!robot) return;
@@ -517,19 +684,24 @@ export function useVisualizationEffects({
         id: selectionHighlightId,
         subType: selectionHighlightSubType,
         objectIndex: selectionHighlightObjectIndex,
+        highlightObjectId: selectionHighlightObjectId,
       } = resolveHighlightTarget(activeSelection);
 
       if (currentHoverRef.current.id) {
         if (
           currentHoverRef.current.id !== selectionHighlightId ||
           currentHoverRef.current.subType !== selectionHighlightSubType ||
-          currentHoverRef.current.objectIndex !== selectionHighlightObjectIndex
+          currentHoverRef.current.objectIndex !== selectionHighlightObjectIndex ||
+          currentHoverRef.current.highlightObjectId !== selectionHighlightObjectId
         ) {
           highlightGeometry(
             currentHoverRef.current.id,
             true,
             currentHoverRef.current.subType as any,
-            currentHoverRef.current.objectIndex,
+            resolveStoredHighlightTarget(
+              currentHoverRef.current.highlightObjectId,
+              currentHoverRef.current.objectIndex,
+            ),
           );
           didMutateGeometryHighlight = true;
           if (selectionHighlightId) {
@@ -537,7 +709,10 @@ export function useVisualizationEffects({
               selectionHighlightId,
               false,
               selectionHighlightSubType,
-              selectionHighlightObjectIndex,
+              resolveStoredHighlightTarget(
+                selectionHighlightObjectId,
+                selectionHighlightObjectIndex,
+              ),
             );
             didMutateGeometryHighlight = true;
           }
@@ -548,18 +723,26 @@ export function useVisualizationEffects({
         id: hoverTargetId,
         subType: hoverTargetSubType,
         objectIndex: hoverTargetObjectIndex,
-      } = resolveHighlightTarget(nextHoveredSelection);
+        highlightObjectId: hoverTargetHighlightObjectId,
+      } = resolveHighlightTarget(nextHoveredSelection, { allowHelperSelection: false });
 
       if (hoverTargetId) {
         const hoverStateChanged =
           currentHoverRef.current.id !== hoverTargetId ||
           currentHoverRef.current.subType !== (hoverTargetSubType || null) ||
-          currentHoverRef.current.objectIndex !== hoverTargetObjectIndex;
-        highlightGeometry(hoverTargetId, false, hoverTargetSubType, hoverTargetObjectIndex);
+          currentHoverRef.current.objectIndex !== hoverTargetObjectIndex ||
+          currentHoverRef.current.highlightObjectId !== hoverTargetHighlightObjectId;
+        highlightGeometry(
+          hoverTargetId,
+          false,
+          hoverTargetSubType,
+          resolveStoredHighlightTarget(hoverTargetHighlightObjectId, hoverTargetObjectIndex),
+        );
         currentHoverRef.current = {
           id: hoverTargetId,
           subType: hoverTargetSubType || null,
           objectIndex: hoverTargetObjectIndex,
+          highlightObjectId: hoverTargetHighlightObjectId,
         };
         if (hoverStateChanged || didMutateGeometryHighlight) {
           invalidate();
@@ -570,7 +753,8 @@ export function useVisualizationEffects({
       const hadHoverHighlight =
         currentHoverRef.current.id !== null ||
         currentHoverRef.current.subType !== null ||
-        currentHoverRef.current.objectIndex !== undefined;
+        currentHoverRef.current.objectIndex !== undefined ||
+        currentHoverRef.current.highlightObjectId !== undefined;
       currentHoverRef.current = { id: null, subType: null };
       if (didMutateGeometryHighlight || hadHoverHighlight) {
         invalidate();
@@ -579,6 +763,7 @@ export function useVisualizationEffects({
     [
       highlightGeometry,
       resolveHighlightTarget,
+      resolveStoredHighlightTarget,
       robot,
       snapshotRenderActive,
       syncHelperInteractionHighlight,
@@ -594,7 +779,10 @@ export function useVisualizationEffects({
         currentSelectionRef.current.id,
         true,
         currentSelectionRef.current.subType as any,
-        currentSelectionRef.current.objectIndex,
+        resolveStoredHighlightTarget(
+          currentSelectionRef.current.highlightObjectId,
+          currentSelectionRef.current.objectIndex,
+        ),
       );
     }
 
@@ -602,14 +790,21 @@ export function useVisualizationEffects({
       id: targetId,
       subType: targetSubType,
       objectIndex: targetObjectIndex,
+      highlightObjectId: targetHighlightObjectId,
     } = resolveHighlightTarget(effectiveSelection);
 
     if (targetId) {
-      highlightGeometry(targetId, false, targetSubType, targetObjectIndex);
+      highlightGeometry(
+        targetId,
+        false,
+        targetSubType,
+        resolveStoredHighlightTarget(targetHighlightObjectId, targetObjectIndex),
+      );
       currentSelectionRef.current = {
         id: targetId,
         subType: targetSubType || null,
         objectIndex: targetObjectIndex,
+        highlightObjectId: targetHighlightObjectId,
       };
     } else {
       currentSelectionRef.current = { id: null, subType: null };
@@ -617,6 +812,7 @@ export function useVisualizationEffects({
     syncHoverHighlight(latestHoverSelectionRef.current);
   }, [
     effectiveSelection?.helperKind,
+    effectiveSelection?.highlightObjectId,
     effectiveSelection?.id,
     effectiveSelection?.objectIndex,
     effectiveSelection?.subType,
@@ -624,6 +820,7 @@ export function useVisualizationEffects({
     highlightGeometry,
     robot,
     robotVersion,
+    resolveStoredHighlightTarget,
     showCollision,
     showVisual,
     syncHoverHighlight,
@@ -639,10 +836,12 @@ export function useVisualizationEffects({
     showInertiaOverlay,
     showCenterOfMass,
     showCoMOverlay,
+    showIkHandlesAlwaysOnTop,
     centerOfMassSize,
     showOrigins,
     showOriginsOverlay,
     originSize,
+    showMjcfSites,
     showJointAxes,
     showJointAxesOverlay,
     jointAxisSize,
@@ -651,6 +850,7 @@ export function useVisualizationEffects({
     effectiveSelection?.subType,
     effectiveSelection?.objectIndex,
     effectiveSelection?.helperKind,
+    effectiveSelection?.highlightObjectId,
     syncHelperInteractionHighlight,
   ]);
 

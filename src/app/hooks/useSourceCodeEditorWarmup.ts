@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 
 interface UseSourceCodeEditorWarmupParams {
   isSelectedUsdHydrating: boolean;
@@ -33,14 +33,6 @@ export function useSourceCodeEditorWarmup({
 
     return sourceCodeEditorRuntimeWarmupPromiseRef.current;
   }, [onPreloadError, prefetchSourceCodeEditor, preloadRuntime]);
-
-  useEffect(() => {
-    const timeoutId = globalThis.setTimeout(() => {
-      void warmSourceCodeEditorRuntime();
-    }, 1200);
-
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [warmSourceCodeEditorRuntime]);
 
   const handleOpenCodeViewer = useCallback(() => {
     if (isSelectedUsdHydrating) {

@@ -20,7 +20,7 @@ import { resolveUnifiedViewerVisualizerRobot } from '@/app/utils/unifiedViewerSc
 import { resolveUnifiedViewerViewportState } from '@/app/utils/unifiedViewerViewportState';
 import { useUIStore } from '@/store';
 import type { AssemblySelection } from '@/store/assemblySelectionStore';
-import type { DocumentLoadState } from '@/store/assetsStore';
+import type { DocumentLoadLifecycleState } from '@/store/assetsStore';
 import type { UpdateCommitOptions } from '@/types/viewer';
 import { setRegressionViewerResourceScope } from '@/shared/debug/regressionBridge';
 import {
@@ -59,7 +59,7 @@ interface UseUnifiedViewerDerivedStateParams {
     options?: UpdateCommitOptions,
   ) => void;
   viewerReloadKey?: number;
-  documentLoadState: DocumentLoadState;
+  documentLoadState: DocumentLoadLifecycleState;
 }
 
 export function useUnifiedViewerDerivedState({

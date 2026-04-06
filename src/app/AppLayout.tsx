@@ -2,11 +2,11 @@
  * App Layout Component
  * Main application layout with Header and workspace area
  */
-import React, { useRef, useCallback, useEffect, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
 import { AppLayoutOverlays } from './components/AppLayoutOverlays';
-import { DocumentLoadingOverlay } from './components/DocumentLoadingOverlay';
+import { ConnectedDocumentLoadingOverlay } from './components/ConnectedDocumentLoadingOverlay';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import { SnapshotDialog } from './components/SnapshotDialog';
@@ -64,7 +64,6 @@ import {
   useAssemblyStore,
   useAssemblySelectionStore,
   useCollisionTransformStore,
-  useJointInteractionPreviewStore,
 } from '@/store';
 import { generateURDF } from '@/core/parsers';
 import { analyzeAssemblyConnectivity } from '@/core/robot';
@@ -72,6 +71,7 @@ import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransform
 import { rewriteRobotMeshPathsForSource } from '@/core/parsers/meshPathUtils';
 import type {
   BridgeJoint,
+  InteractionSelection,
   RobotData,
   RobotFile,
   UrdfJoint,
@@ -93,10 +93,11 @@ import {
 } from './utils/documentLoadFlow';
 import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
 import type { DocumentLoadState, DocumentLoadStatus } from '@/store/assetsStore';
+import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 import { BRIDGE_PREVIEW_ID, resolveAssemblyViewerComponentSelection } from '@/features/assembly';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
-import { buildStandalonePackageAssetImportWarning } from './utils/importPackageAssetReferences';
-import { applyJointInteractionPreviewToRobot } from './utils/jointInteractionPreview';
+import { buildStandaloneImportAssetWarning } from './utils/importPackageAssetReferences';
+import { buildPropertyEditorSelectionContext } from './utils/propertyEditorSelectionContext';
 
 interface UsdPersistenceBaseline {
   fileName: string | null;
@@ -228,6 +229,7 @@ export function AppLayout({
     motorLibrary,
     availableFiles,
     selectedFile,
+    documentLoadState,
     allFileContents,
     setAvailableFiles,
     setSelectedFile,
@@ -240,7 +242,6 @@ export function AppLayout({
     renameRobotFolder,
     clearRobotLibrary,
     getUsdPreparedExportCache,
-    documentLoadState,
     setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
@@ -248,6 +249,7 @@ export function AppLayout({
       motorLibrary: state.motorLibrary,
       availableFiles: state.availableFiles,
       selectedFile: state.selectedFile,
+      documentLoadState: state.documentLoadState,
       allFileContents: state.allFileContents,
       setAvailableFiles: state.setAvailableFiles,
       setSelectedFile: state.setSelectedFile,
@@ -260,9 +262,12 @@ export function AppLayout({
       renameRobotFolder: state.renameRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
       getUsdPreparedExportCache: state.getUsdPreparedExportCache,
-      documentLoadState: state.documentLoadState,
       setDocumentLoadState: state.setDocumentLoadState,
     })),
+  );
+  const documentLoadLifecycleState = useMemo(
+    () => toDocumentLoadLifecycleState(documentLoadState),
+    [documentLoadState],
   );
 
   // Robot Store
@@ -359,8 +364,8 @@ export function AppLayout({
   const isSelectedUsdHydrating = shouldUseEmptyRobotForUsdHydration({
     selectedFileFormat: selectedFile?.format ?? null,
     selectedFileName: selectedFile?.name ?? null,
-    documentLoadStatus: documentLoadState.status,
-    documentLoadFileName: documentLoadState.fileName,
+    documentLoadStatus: documentLoadLifecycleState.status,
+    documentLoadFileName: documentLoadLifecycleState.fileName,
   });
 
   useEffect(() => {
@@ -959,6 +964,7 @@ export function AppLayout({
             : null,
         phase: event.phase ?? null,
         message: event.message ?? null,
+        progressMode: event.progressMode ?? null,
         progressPercent: event.progressPercent ?? null,
         loadedCount: event.loadedCount ?? null,
         totalCount: event.totalCount ?? null,
@@ -980,6 +986,7 @@ export function AppLayout({
         currentDocumentLoadState.error !== nextDocumentLoadState.error ||
         currentDocumentLoadState.phase !== nextDocumentLoadState.phase ||
         currentDocumentLoadState.message !== nextDocumentLoadState.message ||
+        currentDocumentLoadState.progressMode !== nextDocumentLoadState.progressMode ||
         currentDocumentLoadState.progressPercent !== nextDocumentLoadState.progressPercent ||
         currentDocumentLoadState.loadedCount !== nextDocumentLoadState.loadedCount ||
         currentDocumentLoadState.totalCount !== nextDocumentLoadState.totalCount
@@ -1008,13 +1015,14 @@ export function AppLayout({
     ],
   );
 
+  // Keep drag-time joint previews scoped to the active viewer runtime. Feeding them
+  // through AppLayout forces the tree and property sidebars into high-frequency re-render.
   const previewContextRobot = previewRobot ?? robot;
-  const liveJointInteractionPreview = useJointInteractionPreviewStore((state) => state.preview);
-  const previewContextRobotWithJointInteraction = React.useMemo(
-    () => applyJointInteractionPreviewToRobot(previewContextRobot, liveJointInteractionPreview),
-    [liveJointInteractionPreview, previewContextRobot, previewRobot],
-  );
   const isPreviewingWorkspaceSource = Boolean(previewRobot);
+  const propertyEditorSelectionContext = useMemo(
+    () => buildPropertyEditorSelectionContext(previewContextRobot, assemblyState),
+    [assemblyState, previewContextRobot],
+  );
 
   const {
     handleSelect,
@@ -1033,11 +1041,15 @@ export function AppLayout({
   });
   const trySelectViewerAssemblyComponent = useCallback(
     (nextSelection: {
-      type: 'link' | 'joint';
+      type: Exclude<InteractionSelection['type'], null>;
       id: string;
       subType?: 'visual' | 'collision';
       objectIndex?: number;
     }) => {
+      if (nextSelection.type === 'tendon') {
+        return false;
+      }
+
       if (!shouldRenderAssembly || !assemblyState) {
         return false;
       }
@@ -1062,7 +1074,7 @@ export function AppLayout({
         return;
       }
 
-      if (trySelectViewerAssemblyComponent({ type, id, subType })) {
+      if (type !== 'tendon' && trySelectViewerAssemblyComponent({ type, id, subType })) {
         return;
       }
 
@@ -1400,16 +1412,16 @@ export function AppLayout({
 
   const handlePreviewFileWithFeedback = useCallback(
     (file: RobotFile) => {
-      const standalonePackageAssetWarning = buildStandalonePackageAssetImportWarning(
+      const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
         file,
         Object.keys(assets),
       );
-      if (standalonePackageAssetWarning) {
-        const packageLabel =
-          standalonePackageAssetWarning.packageNames.length > 3
-            ? `${standalonePackageAssetWarning.packageNames.slice(0, 3).join(', ')}, …`
-            : standalonePackageAssetWarning.packageNames.join(', ');
-        const warningMessage = t.importPackageAssetBundleHint.replace('{packages}', packageLabel);
+      if (standaloneImportAssetWarning) {
+        const assetLabel =
+          standaloneImportAssetWarning.missingAssetPaths.length > 3
+            ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
+            : standaloneImportAssetWarning.missingAssetPaths.join(', ');
+        const warningMessage = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
 
         setDocumentLoadState({
           status: 'error',
@@ -1566,7 +1578,7 @@ export function AppLayout({
       {/* Main Workspace */}
       <div className="flex-1 flex overflow-hidden">
         <TreeEditor
-          robot={previewContextRobotWithJointInteraction}
+          robot={previewContextRobot}
           onSelect={handleSelectWithAssemblyClear}
           onSelectGeometry={handleSelectGeometryWithAssemblyClear}
           onFocus={handleFocus}
@@ -1663,16 +1675,16 @@ export function AppLayout({
             pendingViewerToolMode={pendingViewerToolMode}
             onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
             viewerReloadKey={viewerReloadKey}
-            documentLoadState={documentLoadState}
+            documentLoadState={documentLoadLifecycleState}
           />
-          {(previewFileName ?? selectedFile?.name) &&
-          documentLoadState.fileName === (previewFileName ?? selectedFile?.name) ? (
-            <DocumentLoadingOverlay state={documentLoadState} lang={lang} />
-          ) : null}
+          <ConnectedDocumentLoadingOverlay
+            lang={lang}
+            targetFileName={previewFileName ?? selectedFile?.name ?? null}
+          />
         </div>
 
         <PropertyEditor
-          robot={previewContextRobotWithJointInteraction}
+          robot={propertyEditorSelectionContext.robot}
           onUpdate={handleUpdate}
           onSelect={handleSelectWithAssemblyClear}
           onHover={handleHover}
@@ -1685,6 +1697,7 @@ export function AppLayout({
           collapsed={sidebar.rightCollapsed}
           onToggle={() => toggleSidebar('right')}
           readOnlyMessage={isPreviewingWorkspaceSource ? t.previewReadOnlyHint : undefined}
+          jointTypeLocked={Boolean(propertyEditorSelectionContext.selectedClosedLoopBridge)}
         />
       </div>
 

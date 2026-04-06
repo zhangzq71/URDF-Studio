@@ -2,10 +2,10 @@
  * File Export Hook
  * Handles exporting robot as URDF, extended URDF, BOM, and MuJoCo XML
  */
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import JSZip from 'jszip';
 import { useShallow } from 'zustand/react/shallow';
-import type { RobotFile, RobotState } from '@/types';
+import type { AssemblyState, RobotFile, RobotState } from '@/types';
 import {
   generateSDF,
   generateSdfModelConfig,
@@ -18,6 +18,7 @@ import { analyzeAssemblyConnectivity } from '@/core/robot';
 import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 import { rewriteUrdfAssetPathsForExport } from '@/core/parsers/meshPathUtils';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
+import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 import { prepareMjcfMeshExportAssets, type ExportDialogConfig } from '@/features/file-io';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer';
 import { translations } from '@/shared/i18n';
@@ -95,6 +96,10 @@ export function useFileExport() {
       originalUrdfContent: state.originalUrdfContent,
       originalFileFormat: state.originalFileFormat,
     })),
+  );
+  const documentLoadLifecycleState = useMemo(
+    () => toDocumentLoadLifecycleState(documentLoadState),
+    [documentLoadState],
   );
   const { assemblyState, assemblyHistory, assemblyActivity, getMergedRobotData } = useAssemblyStore(
     useShallow((state) => ({
@@ -186,8 +191,8 @@ export function useFileExport() {
 
   const isCurrentUsdHydrating =
     selectedFile?.format === 'usd' &&
-    documentLoadState.status === 'hydrating' &&
-    documentLoadState.fileName === selectedFile.name;
+    documentLoadLifecycleState.status === 'hydrating' &&
+    documentLoadLifecycleState.fileName === selectedFile.name;
   const currentUsdExportMode =
     selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
       ? resolveCurrentUsdExportMode({
@@ -230,6 +235,33 @@ export function useFileExport() {
     const trimmed = robot.name?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : 'robot';
   }, []);
+
+  const assertUrdfExportSupported = useCallback(
+    (robot: Pick<RobotState, 'name' | 'closedLoopConstraints'>, exportName?: string): void => {
+      const closedLoopConstraintCount = robot.closedLoopConstraints?.length ?? 0;
+      if (closedLoopConstraintCount === 0) {
+        return;
+      }
+
+      const resolvedExportName = exportName?.trim() || robot.name?.trim() || 'robot';
+      throw new Error(
+        replaceTemplate(t.exportClosedLoopUrdfUnsupported, {
+          name: resolvedExportName,
+          count: closedLoopConstraintCount,
+        }),
+      );
+    },
+    [replaceTemplate, t.exportClosedLoopUrdfUnsupported],
+  );
+
+  const assertAssemblyUrdfExportSupported = useCallback(
+    (assembly: AssemblyState): void => {
+      Object.values(assembly.components).forEach((component) => {
+        assertUrdfExportSupported(component.robot, component.name?.trim() || component.id);
+      });
+    },
+    [assertUrdfExportSupported],
+  );
 
   const resolveDisconnectedWorkspaceUrdfAction = useCallback(
     (target: ExportTarget, config: ExportDialogConfig): ExportActionRequired | null => {
@@ -647,6 +679,8 @@ export function useFileExport() {
         throw new Error(t.exportFailedParse);
       }
 
+      assertAssemblyUrdfExportSupported(assemblyState);
+
       const zip = new JSZip();
       const assemblyExportName = assemblyState.name?.trim() || 'assembly';
       const archiveRoot = createArchiveRoot(zip, assemblyExportName);
@@ -726,6 +760,7 @@ export function useFileExport() {
     [
       addMeshesToZip,
       addSkeletonToZip,
+      assertAssemblyUrdfExportSupported,
       assemblyState,
       availableFiles,
       buildUrdfSourceExportContent,
@@ -775,6 +810,15 @@ export function useFileExport() {
           downloadBlob,
           markCurrentTargetSaved,
         });
+      }
+
+      if (
+        config.format === 'urdf' &&
+        target.type === 'current' &&
+        sidebarTab === 'workspace' &&
+        assemblyState
+      ) {
+        assertAssemblyUrdfExportSupported(assemblyState);
       }
 
       const disconnectedWorkspaceUrdfAction = resolveDisconnectedWorkspaceUrdfAction(
@@ -836,6 +880,10 @@ export function useFileExport() {
             : config.format === 'xacro'
               ? config.xacro.includeMeshes
               : config.sdf.includeMeshes;
+
+      if (config.format === 'urdf') {
+        assertUrdfExportSupported(robot, exportName);
+      }
 
       if (config.includeSkeleton) {
         addSkeletonToZip(robot, archiveRoot, exportName, skeletonUsesMeshes);
@@ -1172,6 +1220,8 @@ export function useFileExport() {
       availableFiles,
       assets,
       allFileContents,
+      assertAssemblyUrdfExportSupported,
+      assertUrdfExportSupported,
       getFileBaseName,
       generateZipBlobWithProgress,
       generateBOM,

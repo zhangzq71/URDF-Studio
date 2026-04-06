@@ -12,6 +12,7 @@ import {
 import * as THREE from 'three';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import { setRegressionProjectedInteractionTargetsProvider } from '@/shared/debug/regressionBridge';
+import { normalizeLoadingProgress } from '@/shared/components/3d/loadingHudState';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import type { RobotFile, UrdfLink } from '@/types';
 import { disposeObject3D } from '@/shared/utils/three/dispose';
@@ -921,6 +922,11 @@ export function UsdWasmStage({
   });
   const lastPointerDownMeshMetaRef = useRef<RuntimeMeshMeta | null>(null);
   const lastRuntimeJointAnglesRef = useRef<Record<string, number>>({});
+  const pendingRuntimeJointPreviewRef = useRef<{
+    linkPath: string | null;
+    jointInfo: UsdStageJointInfoLike | null;
+  } | null>(null);
+  const runtimeJointPreviewFrameRef = useRef<number | null>(null);
   const lastRuntimeHoverRef = useRef<URDFViewerProps['hoveredSelection']>({
     type: null,
     id: null,
@@ -975,6 +981,8 @@ export function UsdWasmStage({
   const loadingHudState = useMemo(
     () =>
       buildViewerLoadingHudState({
+        phase: loadingProgress?.phase,
+        progressMode: loadingProgress?.progressMode,
         loadedCount: loadingProgress?.loadedCount,
         totalCount: loadingProgress?.totalCount,
         progressPercent: loadingProgress?.progressPercent,
@@ -1926,6 +1934,16 @@ export function UsdWasmStage({
     invalidate();
   }, [invalidate]);
 
+  const clearScheduledRuntimeJointPreview = useCallback(() => {
+    pendingRuntimeJointPreviewRef.current = null;
+    if (runtimeJointPreviewFrameRef.current === null) {
+      return;
+    }
+
+    window.cancelAnimationFrame(runtimeJointPreviewFrameRef.current);
+    runtimeJointPreviewFrameRef.current = null;
+  }, []);
+
   const scheduleRuntimeDecorationRefresh = useCallback(() => {
     clearScheduledRuntimeDecorationRefresh();
     runtimeDecorationRefreshTimerRef.current = window.setTimeout(() => {
@@ -2072,6 +2090,40 @@ export function UsdWasmStage({
       }
     },
     [onRuntimeActiveJointChange, onRuntimeJointAnglesChange],
+  );
+
+  const flushRuntimeJointPreview = useCallback(() => {
+    runtimeJointPreviewFrameRef.current = null;
+    const pendingPreview = pendingRuntimeJointPreviewRef.current;
+    pendingRuntimeJointPreviewRef.current = null;
+    if (!pendingPreview) {
+      return;
+    }
+
+    emitRuntimeJointPreviewRef.current(pendingPreview.linkPath, pendingPreview.jointInfo);
+  }, []);
+
+  const scheduleRuntimeJointPreview = useCallback(
+    (linkPath: string | null, jointInfo: UsdStageJointInfoLike | null | undefined) => {
+      pendingRuntimeJointPreviewRef.current = {
+        linkPath,
+        jointInfo: jointInfo ?? null,
+      };
+
+      if (runtimeJointPreviewFrameRef.current !== null) {
+        return;
+      }
+
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushRuntimeJointPreview();
+        return;
+      }
+
+      runtimeJointPreviewFrameRef.current = window.requestAnimationFrame(() => {
+        flushRuntimeJointPreview();
+      });
+    },
+    [flushRuntimeJointPreview],
   );
 
   const pickRuntimeInteractionTargetAtLocalPoint = useCallback(
@@ -2222,8 +2274,9 @@ export function UsdWasmStage({
   useEffect(() => {
     return () => {
       clearScheduledRuntimeDecorationRefresh();
+      clearScheduledRuntimeJointPreview();
     };
-  }, [clearScheduledRuntimeDecorationRefresh]);
+  }, [clearScheduledRuntimeDecorationRefresh, clearScheduledRuntimeJointPreview]);
 
   useEffect(() => {
     syncRuntimeJointPanelRobotRef.current = syncRuntimeJointPanelRobot;
@@ -2666,19 +2719,22 @@ export function UsdWasmStage({
     setErrorMessage(null);
     setLoadingProgress({
       phase: 'checking-path',
+      progressMode: 'indeterminate',
       progressPercent: null,
       message: null,
       loadedCount: null,
       totalCount: null,
     });
-    emitDocumentLoadEvent({
-      status: 'loading',
-      phase: 'checking-path',
-      progressPercent: null,
-      message: null,
-      loadedCount: null,
-      totalCount: null,
-    });
+    emitDocumentLoadEvent(
+      normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+        status: 'loading',
+        phase: 'checking-path',
+        progressPercent: null,
+        message: null,
+        loadedCount: null,
+        totalCount: null,
+      }),
+    );
     setVisibleStagePath(null);
 
     const clearCurrentStage = () => {
@@ -2697,6 +2753,7 @@ export function UsdWasmStage({
       gizmoTargetsRef.current = [];
       gizmoTargetsCacheKeyRef.current = '';
       gizmoTargetsUpdatedAtRef.current = 0;
+      clearScheduledRuntimeJointPreview();
       revertUsdHighlights();
       lastRuntimeSelectionRef.current = {
         type: null,
@@ -2933,33 +2990,43 @@ export function UsdWasmStage({
               renderFrame: () => invalidate(),
               onProgress: (nextProgress) => {
                 if (!isActive()) return;
-                setLoadingProgress((current) => ({
-                  phase: nextProgress.phase,
-                  progressPercent:
-                    nextProgress.progressPercent !== undefined
-                      ? (nextProgress.progressPercent ?? null)
-                      : (current?.progressPercent ?? null),
-                  message:
-                    nextProgress.message !== undefined
-                      ? (nextProgress.message ?? null)
-                      : (current?.message ?? null),
-                  loadedCount:
-                    nextProgress.loadedCount !== undefined
-                      ? (nextProgress.loadedCount ?? null)
-                      : (current?.loadedCount ?? null),
-                  totalCount:
-                    nextProgress.totalCount !== undefined
-                      ? (nextProgress.totalCount ?? null)
-                      : (current?.totalCount ?? null),
-                }));
-                emitDocumentLoadEvent({
-                  status: 'loading',
-                  phase: nextProgress.phase,
-                  progressPercent: nextProgress.progressPercent ?? null,
-                  message: nextProgress.message ?? null,
-                  loadedCount: nextProgress.loadedCount ?? null,
-                  totalCount: nextProgress.totalCount ?? null,
-                });
+                const normalizedProgress =
+                  nextProgress.phase === 'ready'
+                    ? normalizeLoadingProgress<UsdLoadingProgress>({
+                        phase: 'finalizing-scene',
+                        progressMode: 'indeterminate',
+                        progressPercent: null,
+                        message: nextProgress.message ?? null,
+                        loadedCount: null,
+                        totalCount: null,
+                      })
+                    : normalizeLoadingProgress<UsdLoadingProgress>({
+                        phase: nextProgress.phase,
+                        progressMode: nextProgress.progressMode ?? null,
+                        progressPercent:
+                          nextProgress.progressPercent !== undefined
+                            ? (nextProgress.progressPercent ?? null)
+                            : null,
+                        message:
+                          nextProgress.message !== undefined
+                            ? (nextProgress.message ?? null)
+                            : null,
+                        loadedCount:
+                          nextProgress.loadedCount !== undefined
+                            ? (nextProgress.loadedCount ?? null)
+                            : null,
+                        totalCount:
+                          nextProgress.totalCount !== undefined
+                            ? (nextProgress.totalCount ?? null)
+                            : null,
+                      });
+                setLoadingProgress(normalizedProgress);
+                emitDocumentLoadEvent(
+                  normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+                    status: 'loading',
+                    ...normalizedProgress,
+                  }),
+                );
               },
             }),
           resolveDetail: (result) => ({
@@ -3033,14 +3100,16 @@ export function UsdWasmStage({
           linkRotationController.setOnSelectionChanged(
             (linkPath: string | null, jointInfo?: UsdStageJointInfoLike | null) => {
               emitRuntimeSelectionChangeRef.current(linkPath);
-              emitRuntimeJointPreviewRef.current(linkPath, jointInfo);
 
               if (linkRotationController.dragging) {
+                scheduleRuntimeJointPreview(linkPath, jointInfo);
                 setIsDragging?.(true);
                 clearRuntimeHover();
                 return;
               }
 
+              clearScheduledRuntimeJointPreview();
+              emitRuntimeJointPreviewRef.current(linkPath, jointInfo);
               setIsDragging?.(false);
               markUsdHoverRaycastDirty(hoverNeedsRaycastRef, invalidate);
               if (!linkRotationController.dragging) {
@@ -3114,23 +3183,29 @@ export function UsdWasmStage({
         // Release the retained placeholder once the stage, runtime meshes,
         // and first RobotData publish are ready. Camera auto-frame can settle
         // afterwards, but it must not block the initial stage reveal.
-        setLoadingProgress({
-          phase: 'ready',
-          progressPercent: 100,
-          message: null,
-          loadedCount: null,
-          totalCount: null,
-        });
+        setLoadingProgress(
+          normalizeLoadingProgress<UsdLoadingProgress>({
+            phase: 'ready',
+            progressMode: 'percent',
+            progressPercent: 100,
+            message: null,
+            loadedCount: null,
+            totalCount: null,
+          }),
+        );
         setVisibleStagePath(sourceFile.name);
         setIsLoading(false);
-        emitDocumentLoadEvent({
-          status: 'ready',
-          phase: 'ready',
-          progressPercent: 100,
-          message: null,
-          loadedCount: null,
-          totalCount: null,
-        });
+        emitDocumentLoadEvent(
+          normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+            status: 'ready',
+            phase: 'ready',
+            progressMode: 'percent',
+            progressPercent: 100,
+            message: null,
+            loadedCount: null,
+            totalCount: null,
+          }),
+        );
         recordUsdStageLoadDebug(runtimeWindow, {
           sourceFileName: sourceFile.name,
           step: 'ready',
@@ -3365,6 +3440,7 @@ export function UsdWasmStage({
               title={loadingLabel}
               detail={loadingDetail}
               progress={loadingHudState.progress}
+              progressMode={loadingHudState.progressMode}
               statusLabel={loadingHudState.statusLabel}
               stageLabel={loadingStageLabel}
               delayMs={0}

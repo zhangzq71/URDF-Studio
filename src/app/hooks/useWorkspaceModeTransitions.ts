@@ -18,11 +18,96 @@ import {
 } from './workspaceSourceSyncUtils';
 import { buildGeneratedWorkspaceFileState } from './workspaceGeneratedSourceState';
 import { useAssemblyStore, useAssetsStore, useUIStore } from '@/store';
-import type { RobotData, RobotFile, UrdfJoint, UrdfLink } from '@/types';
+import type { RobotData, RobotFile, UrdfJoint, UrdfLink, UsdPreparedExportCache } from '@/types';
 
 export interface ProModeRoundtripSession {
   baselineSnapshot: string;
   generatedFileName: string | null;
+}
+
+interface ResolveUsdAssemblySeedRobotDataOptions {
+  activeFile: RobotFile | null;
+  selectedFile: RobotFile | null;
+  currentRobotData: RobotData | null;
+  getUsdPreparedExportCache: (
+    fileName: string,
+  ) => { robotData?: RobotData | null } | null | undefined;
+  getCurrentSceneSnapshot?: typeof getCurrentUsdViewerSceneSnapshot;
+  prepareExportCacheFromSnapshot?: typeof prepareUsdExportCacheFromSnapshot;
+}
+
+interface ResolveUsdAssemblySeedRobotDataResult {
+  preResolvedRobotData: RobotData | null;
+  preparedCache: UsdPreparedExportCache | null;
+  requiresRobotReload: boolean;
+}
+
+function hasUsableRobotData(robotData: RobotData | null | undefined): robotData is RobotData {
+  return Boolean(
+    robotData?.rootLinkId &&
+    robotData.links &&
+    typeof robotData.links === 'object' &&
+    Object.keys(robotData.links).length > 0,
+  );
+}
+
+export function resolveUsdAssemblySeedRobotData({
+  activeFile,
+  selectedFile,
+  currentRobotData,
+  getUsdPreparedExportCache,
+  getCurrentSceneSnapshot = getCurrentUsdViewerSceneSnapshot,
+  prepareExportCacheFromSnapshot = prepareUsdExportCacheFromSnapshot,
+}: ResolveUsdAssemblySeedRobotDataOptions): ResolveUsdAssemblySeedRobotDataResult {
+  if (activeFile?.format !== 'usd') {
+    return {
+      preResolvedRobotData: null,
+      preparedCache: null,
+      requiresRobotReload: false,
+    };
+  }
+
+  const cachedRobotData = getUsdPreparedExportCache(activeFile.name)?.robotData ?? null;
+  if (hasUsableRobotData(cachedRobotData)) {
+    return {
+      preResolvedRobotData: cachedRobotData,
+      preparedCache: null,
+      requiresRobotReload: false,
+    };
+  }
+
+  if (
+    selectedFile?.format === 'usd' &&
+    selectedFile.name === activeFile.name &&
+    hasUsableRobotData(currentRobotData)
+  ) {
+    return {
+      preResolvedRobotData: currentRobotData,
+      preparedCache: null,
+      requiresRobotReload: false,
+    };
+  }
+
+  const fallbackSceneSnapshot = getCurrentSceneSnapshot({
+    stageSourcePath: activeFile.name,
+  });
+  const preparedCache = fallbackSceneSnapshot
+    ? prepareExportCacheFromSnapshot(fallbackSceneSnapshot, { fileName: activeFile.name })
+    : null;
+
+  if (hasUsableRobotData(preparedCache?.robotData ?? null)) {
+    return {
+      preResolvedRobotData: preparedCache?.robotData ?? null,
+      preparedCache,
+      requiresRobotReload: false,
+    };
+  }
+
+  return {
+    preResolvedRobotData: null,
+    preparedCache: null,
+    requiresRobotReload: true,
+  };
 }
 
 interface UseWorkspaceModeTransitionsTranslations {
@@ -74,6 +159,7 @@ interface UseWorkspaceModeTransitionsParams {
       assets?: Record<string, string>;
       allFileContents?: Record<string, string>;
       preResolvedRobotData?: RobotData | null;
+      queueAutoGround?: boolean;
       preparedComponent?: unknown;
     },
   ) => { id: string; name: string; robot: { rootLinkId: string } } | null;
@@ -331,27 +417,36 @@ export function useWorkspaceModeTransitions({
     }
 
     void (async () => {
-      let preResolvedRobotData =
-        activeFile.format === 'usd'
-          ? (getUsdPreparedExportCache(activeFile.name)?.robotData ?? null)
-          : null;
+      let preResolvedRobotData: RobotData | null = null;
 
-      if (activeFile.format === 'usd' && !preResolvedRobotData) {
-        const fallbackSceneSnapshot = getCurrentUsdViewerSceneSnapshot({
-          stageSourcePath: activeFile.name,
+      if (activeFile.format === 'usd') {
+        const usdAssemblySeed = resolveUsdAssemblySeedRobotData({
+          activeFile,
+          selectedFile,
+          currentRobotData: {
+            name: robotName,
+            links: robotLinks,
+            joints: robotJoints,
+            rootLinkId,
+            materials: robotMaterials,
+            closedLoopConstraints,
+          },
+          getUsdPreparedExportCache,
         });
-        const preparedCache = fallbackSceneSnapshot
-          ? prepareUsdExportCacheFromSnapshot(fallbackSceneSnapshot, { fileName: activeFile.name })
-          : null;
 
-        if (!preparedCache?.robotData) {
+        if (usdAssemblySeed.preparedCache) {
+          useAssetsStore
+            .getState()
+            .setUsdPreparedExportCache(activeFile.name, usdAssemblySeed.preparedCache);
+        }
+
+        preResolvedRobotData = usdAssemblySeed.preResolvedRobotData;
+
+        if (usdAssemblySeed.requiresRobotReload || !preResolvedRobotData) {
           pendingUsdAssemblyFileRef.current = activeFile;
           onLoadRobot(activeFile);
           return;
         }
-
-        useAssetsStore.getState().setUsdPreparedExportCache(activeFile.name, preparedCache);
-        preResolvedRobotData = preparedCache.robotData;
       }
 
       const preparedComponent = await prepareAssemblyComponentForInsert(activeFile, {
@@ -367,6 +462,7 @@ export function useWorkspaceModeTransitions({
         assets,
         allFileContents,
         preResolvedRobotData,
+        queueAutoGround: false,
         preparedComponent,
       });
 

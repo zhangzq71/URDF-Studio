@@ -59,19 +59,39 @@ export {
   getVisualGeometryByObjectIndex,
   updateVisualGeometryByObjectIndex,
 } from './visualBodies';
+export {
+  canEditGeometryBaseTexture,
+  collectGeometryTexturePaths,
+  getEffectiveGeometryAuthoredMaterials,
+  getGeometryAuthoredMaterials,
+  hasMultipleAuthoredMaterials,
+  resolveVisualMaterialOverride,
+  updateVisualBaseTextureByObjectIndex,
+} from './visualMaterials';
 
 export { resolveJointKey, resolveLinkKey } from './identity';
 
 export {
   computeLinkWorldMatrices,
+  extractJointActualAngleFromQuaternion,
+  extractJointMotionAngleFromQuaternion,
+  extractSignedAngleAroundAxis,
+  getJointActualAngleFromMotionAngle,
   getJointMotionPose,
+  getJointMotionAngleFromActualAngle,
+  getJointReferencePosition,
+  getNormalizedJointAxis,
   getChildJointsByParentLink,
   getParentJointByChildLink,
 } from './kinematics';
 
+export { resolveMimicJointAngleTargets } from './mimic';
+
 export {
   createRobotClosedLoopConstraint,
+  createRobotDistanceClosedLoopConstraint,
   solveClosedLoopMotionCompensation,
+  resolveClosedLoopDrivenJointMotion,
   resolveClosedLoopJointMotionCompensation,
   resolveClosedLoopJointAngleCompensation,
   resolveClosedLoopJointOriginCompensation,
@@ -90,8 +110,25 @@ export {
 } from './assemblyComponentPreparation';
 export {
   buildDefaultAssemblyComponentPlacementTransform,
+  estimateLinkCollisionBounds,
+  estimateLinkRenderableBounds,
+  estimateLinkVisualBounds,
   estimateRobotGroundOffset,
+  resolveLinkRenderableBounds,
 } from './assemblyPlacement';
+
+export {
+  resolveLinkIkHandleDescriptor,
+  resolveLinkIkHandleDescriptors,
+  solveLinkIkPositionTarget,
+} from './linkIk';
+export type {
+  LinkIkHandleDescriptor,
+  LinkIkHandleAnchorSource,
+  LinkIkPositionSolveRequest,
+  LinkIkPositionSolveResult,
+  LinkIkSolveFailureReason,
+} from './linkIk';
 
 // Transforms - Coordinate transformation utilities
 export {

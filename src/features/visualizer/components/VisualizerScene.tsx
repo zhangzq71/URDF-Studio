@@ -5,7 +5,9 @@ import type { AppMode, AssemblyState, AssemblyTransform, RobotState, UrdfJoint }
 import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
 import { translations } from '@/shared/i18n';
 import type { Language } from '@/shared/i18n';
+import type { ViewerHelperKind } from '@/features/urdf-viewer';
 import {
+  LinkIkTransformControls,
   LoadingHud,
   SceneCompileWarmup,
   UnifiedTransformControls,
@@ -13,8 +15,9 @@ import {
   buildLoadingHudState,
 } from '@/shared/components/3d';
 import { buildColladaRootNormalizationHints } from '@/core/loaders/colladaRootNormalization';
+import { resolveLinkIkHandleDescriptor } from '@/core/robot';
 import type { UpdateCommitOptions } from '@/types/viewer';
-import { useUIStore } from '@/store';
+import { useAssemblyStore, useUIStore } from '@/store';
 import { useSelectionStore } from '@/store/selectionStore';
 import { RobotNode } from './nodes';
 import { ClosedLoopConstraintsOverlay } from './constraints';
@@ -22,6 +25,7 @@ import { AssemblyTransformControls, JointTransformControls } from './controls';
 import { VisualizerHoverController } from './VisualizerHoverController';
 import type { VisualizerController } from '../hooks/useVisualizerController';
 import {
+  buildAssemblyAutoGroundMeshSignatureMap,
   createInitialAssemblyAutoGroundTrackingState,
   resolveAssemblyAutoGrounding,
   resolveReadyAssemblyAutoGroundComponentIds,
@@ -30,12 +34,16 @@ import {
 import { buildAssemblyComponentLinkOwnerMap } from '../utils/assemblyMeshLoadState';
 import { shouldRenderMergedVisualizerConstraintOverlay } from '../utils/mergedVisualizerSceneMode';
 import { resolveMergedVisualizerRootPlacements } from '../utils/mergedVisualizerLayout';
-import { mergeResolvedMeshLoadKeys } from '../utils/meshResolutionState';
+import {
+  mergeResolvedMeshLoadKeys,
+  reconcileResolvedMeshLoadKeys,
+} from '../utils/meshResolutionState';
 import { collectVisualizerMeshLoadKeys } from '../utils/visualizerMeshLoading';
 import { buildVisualizerDocumentLoadEvent } from '../utils/visualizerDocumentLoad';
 import type { AssemblySelection } from '@/store/assemblySelectionStore';
 import { useCollisionMeshPrewarm } from '../hooks/useCollisionMeshPrewarm';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
+import { applyMjcfWorldVisibility } from '@/shared/utils/robot/mjcfWorldVisibility';
 
 const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode }>(
   function GroundedGroup({ children }, ref) {
@@ -45,7 +53,12 @@ const GroundedGroup = React.forwardRef<THREE.Group, { children: React.ReactNode 
 
 interface VisualizerSceneProps {
   robot: RobotState;
-  onSelect: (type: 'link' | 'joint', id: string, subType?: 'visual' | 'collision') => void;
+  onSelect: (
+    type: 'link' | 'joint',
+    id: string,
+    subType?: 'visual' | 'collision',
+    helperKind?: ViewerHelperKind,
+  ) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   mode: AppMode;
   assets: Record<string, string>;
@@ -121,12 +134,21 @@ export const VisualizerScene = React.memo(
   }: VisualizerSceneProps) => {
     const t = translations[lang];
     const snapshotRenderActive = useSnapshotRenderActive();
+    const pendingAutoGroundComponentIds = useAssemblyStore(
+      (storeState) => storeState.pendingAutoGroundComponentIds,
+    );
+    const consumePendingAutoGroundComponentIds = useAssemblyStore(
+      (storeState) => storeState.consumePendingAutoGroundComponentIds,
+    );
     const groundPlaneOffset = useUIStore((state) => state.groundPlaneOffset);
+    const showMjcfWorldLink = useUIStore((state) => state.viewOptions.showMjcfWorldLink);
     const hoveredSelection = useSelectionStore((state) =>
       state.hoverFrozen ? state.deferredHoveredSelection : state.hoveredSelection,
     );
     const setHoverFrozen = useSelectionStore((state) => state.setHoverFrozen);
     const collisionTransformControlRef = React.useRef<any>(null);
+    const linkIkHandleObjectsRef = React.useRef(new Map<string, THREE.Object3D>());
+    const [linkIkHandleVersion, setLinkIkHandleVersion] = React.useState(0);
     const [assemblyRootObject, setAssemblyRootObject] = React.useState<THREE.Group | null>(null);
     const [sourceSceneComponentRootObject, setSourceSceneComponentRootObject] =
       React.useState<THREE.Group | null>(null);
@@ -147,10 +169,14 @@ export const VisualizerScene = React.memo(
       handleCollisionTransformEnd,
       requestGroundRealignment,
     } = controller;
+    const displayRobot = React.useMemo(
+      () => applyMjcfWorldVisibility(robot, showMjcfWorldLink),
+      [robot, showMjcfWorldLink],
+    );
     const childJointsByParent = React.useMemo<Record<string, UrdfJoint[]>>(() => {
       const grouped: Record<string, UrdfJoint[]> = {};
 
-      Object.values(robot.joints).forEach((joint) => {
+      Object.values(displayRobot.joints).forEach((joint) => {
         if (!grouped[joint.parentLinkId]) {
           grouped[joint.parentLinkId] = [];
         }
@@ -159,25 +185,25 @@ export const VisualizerScene = React.memo(
       });
 
       return grouped;
-    }, [robot.joints]);
+    }, [displayRobot.joints]);
     const rootPlacements = React.useMemo(
-      () => resolveMergedVisualizerRootPlacements(robot),
-      [robot.joints, robot.links, robot.rootLinkId],
+      () => resolveMergedVisualizerRootPlacements(displayRobot),
+      [displayRobot.joints, displayRobot.links, displayRobot.rootLinkId],
     );
     const colladaRootNormalizationHints = React.useMemo(
-      () => buildColladaRootNormalizationHints(robot.links),
-      [robot.links],
+      () => buildColladaRootNormalizationHints(displayRobot.links),
+      [displayRobot.links],
     );
     const expectedMeshLoadKeys = React.useMemo(
       () =>
         collectVisualizerMeshLoadKeys({
-          robot,
+          robot: displayRobot,
           mode,
           showGeometry: state.showGeometry,
           showCollision: state.showCollision,
           assets,
         }),
-      [assets, mode, robot, state.showCollision, state.showGeometry],
+      [assets, displayRobot, mode, state.showCollision, state.showGeometry],
     );
     const expectedMeshLoadSignature = React.useMemo(
       () => expectedMeshLoadKeys.join('\u0000'),
@@ -186,6 +212,14 @@ export const VisualizerScene = React.memo(
     const expectedMeshLoadKeySet = React.useMemo(
       () => new Set(expectedMeshLoadKeys),
       [expectedMeshLoadKeys],
+    );
+    const assemblyAutoGroundMeshSignatureMap = React.useMemo(
+      () =>
+        buildAssemblyAutoGroundMeshSignatureMap({
+          assemblyState,
+          meshLoadKeys: expectedMeshLoadKeys,
+        }),
+      [assemblyState, expectedMeshLoadKeys],
     );
     const collisionRevealComponentIdByLinkId = React.useMemo(
       () => buildAssemblyComponentLinkOwnerMap(assemblyState),
@@ -268,6 +302,8 @@ export const VisualizerScene = React.memo(
     const loadingHudState = React.useMemo(
       () =>
         buildLoadingHudState({
+          phase: resolvedMeshCount === 0 ? 'preparing-scene' : 'streaming-meshes',
+          progressMode: resolvedMeshCount === 0 ? 'indeterminate' : 'count',
           loadedCount: resolvedMeshCount,
           totalCount: expectedMeshLoadKeys.length,
           fallbackDetail: t.loadingRobotPreparing,
@@ -282,20 +318,20 @@ export const VisualizerScene = React.memo(
       () =>
         [
           mode,
-          robot.rootLinkId,
-          String(Object.keys(robot.links).length),
-          String(Object.keys(robot.joints).length),
+          displayRobot.rootLinkId,
+          String(Object.keys(displayRobot.links).length),
+          String(Object.keys(displayRobot.joints).length),
           expectedMeshLoadSignature || 'inline-geometry',
           state.showGeometry ? 'geometry-on' : 'geometry-off',
           state.showVisual ? 'visual-on' : 'visual-off',
           state.showCollision ? 'collision-on' : 'collision-off',
         ].join('|'),
       [
+        displayRobot.joints,
+        displayRobot.links,
+        displayRobot.rootLinkId,
         expectedMeshLoadSignature,
         mode,
-        robot.joints,
-        robot.links,
-        robot.rootLinkId,
         state.showCollision,
         state.showGeometry,
         state.showVisual,
@@ -309,19 +345,25 @@ export const VisualizerScene = React.memo(
         window.cancelAnimationFrame(meshResolutionFlushFrameRef.current);
         meshResolutionFlushFrameRef.current = null;
       }
-      setMeshLoadingState({
-        signature: expectedMeshLoadSignature,
-        resolvedKeys: new Set<string>(),
-      });
-    }, [expectedMeshLoadSignature]);
+      setMeshLoadingState((current) =>
+        reconcileResolvedMeshLoadKeys({
+          currentResolvedKeys: current.resolvedKeys,
+          expectedMeshLoadKeySet,
+          expectedSignature: expectedMeshLoadSignature,
+        }),
+      );
+    }, [expectedMeshLoadKeySet, expectedMeshLoadSignature]);
 
     React.useEffect(() => {
       pendingPrewarmedResolvedMeshLoadKeysRef.current.clear();
-      setPrewarmedMeshLoadingState({
-        signature: prewarmedCollisionMeshLoadSignature,
-        resolvedKeys: new Set<string>(),
-      });
-    }, [prewarmedCollisionMeshLoadSignature]);
+      setPrewarmedMeshLoadingState((current) =>
+        reconcileResolvedMeshLoadKeys({
+          currentResolvedKeys: current.resolvedKeys,
+          expectedMeshLoadKeySet: prewarmedCollisionMeshLoadKeys,
+          expectedSignature: prewarmedCollisionMeshLoadSignature,
+        }),
+      );
+    }, [prewarmedCollisionMeshLoadKeys, prewarmedCollisionMeshLoadSignature]);
 
     React.useEffect(() => {
       return () => {
@@ -456,20 +498,48 @@ export const VisualizerScene = React.memo(
     );
 
     React.useEffect(() => {
-      assemblyAutoGroundTrackingRef.current = resolveNextAssemblyAutoGroundTrackingState({
+      const nextTrackingState = resolveNextAssemblyAutoGroundTrackingState({
         previousState: assemblyAutoGroundTrackingRef.current,
         assemblyState,
       });
-    }, [assemblyState]);
+
+      nextTrackingState.settledMeshSignatureByComponentId.forEach(
+        (settledMeshSignature, componentId) => {
+          const currentMeshSignature = assemblyAutoGroundMeshSignatureMap.get(componentId);
+          if (currentMeshSignature !== undefined && currentMeshSignature !== settledMeshSignature) {
+            nextTrackingState.settledMeshSignatureByComponentId.delete(componentId);
+            nextTrackingState.pendingComponentIds.add(componentId);
+          }
+        },
+      );
+
+      if (assemblyState) {
+        pendingAutoGroundComponentIds.forEach((componentId) => {
+          if (!assemblyState.components[componentId]) {
+            return;
+          }
+
+          nextTrackingState.pendingComponentIds.add(componentId);
+          nextTrackingState.settledMeshSignatureByComponentId.delete(componentId);
+        });
+      }
+
+      assemblyAutoGroundTrackingRef.current = nextTrackingState;
+    }, [assemblyAutoGroundMeshSignatureMap, assemblyState, pendingAutoGroundComponentIds]);
 
     React.useEffect(() => {
       if (!assemblyWorkspaceActive || !assemblyState || !onComponentTransform) {
         return;
       }
 
+      const trackingState = assemblyAutoGroundTrackingRef.current;
+      if (trackingState.pendingComponentIds.size === 0) {
+        return;
+      }
+
       const readyComponentIds = resolveReadyAssemblyAutoGroundComponentIds({
         assemblyState,
-        pendingComponentIds: assemblyAutoGroundTrackingRef.current.pendingComponentIds,
+        pendingComponentIds: trackingState.pendingComponentIds,
         expectedMeshLoadKeys,
         resolvedMeshLoadKeys: effectiveResolvedMeshLoadKeys,
       });
@@ -489,8 +559,13 @@ export const VisualizerScene = React.memo(
       }
 
       measuredComponentIds.forEach((componentId) => {
-        assemblyAutoGroundTrackingRef.current.pendingComponentIds.delete(componentId);
+        trackingState.pendingComponentIds.delete(componentId);
+        trackingState.settledMeshSignatureByComponentId.set(
+          componentId,
+          assemblyAutoGroundMeshSignatureMap.get(componentId) ?? '',
+        );
       });
+      consumePendingAutoGroundComponentIds(measuredComponentIds);
       adjustments.forEach(({ componentId, transform }) => {
         onComponentTransform(componentId, transform, {
           skipHistory: true,
@@ -498,12 +573,14 @@ export const VisualizerScene = React.memo(
       });
     }, [
       assemblyState,
+      assemblyAutoGroundMeshSignatureMap,
       assemblyWorkspaceActive,
       effectiveResolvedMeshLoadKeys,
       expectedMeshLoadKeys,
       groundPlaneOffset,
       jointPivots,
       onComponentTransform,
+      consumePendingAutoGroundComponentIds,
       robot,
     ]);
     const shouldRenderConstraintOverlay = shouldRenderMergedVisualizerConstraintOverlay(mode);
@@ -543,6 +620,53 @@ export const VisualizerScene = React.memo(
     const handleSourceSceneComponentRootRef = React.useCallback((node: THREE.Group | null) => {
       setSourceSceneComponentRootObject((current) => (current === node ? current : node));
     }, []);
+    const handleRegisterIkHandle = React.useCallback(
+      (linkId: string, handle: THREE.Object3D | null) => {
+        const current = linkIkHandleObjectsRef.current.get(linkId) ?? null;
+        if (current === handle) {
+          return;
+        }
+
+        if (handle) {
+          linkIkHandleObjectsRef.current.set(linkId, handle);
+        } else {
+          linkIkHandleObjectsRef.current.delete(linkId);
+        }
+
+        setLinkIkHandleVersion((value) => value + 1);
+      },
+      [],
+    );
+    const selectedIkHandleLinkId =
+      robot.selection.type === 'link' && robot.selection.helperKind === 'ik-handle'
+        ? robot.selection.id
+        : null;
+    const selectedIkHandle = React.useMemo(() => {
+      if (!selectedIkHandleLinkId) {
+        return null;
+      }
+
+      return linkIkHandleObjectsRef.current.get(selectedIkHandleLinkId) ?? null;
+    }, [linkIkHandleVersion, selectedIkHandleLinkId]);
+    const selectedIkHandleDescriptor = React.useMemo(
+      () =>
+        selectedIkHandleLinkId
+          ? resolveLinkIkHandleDescriptor(displayRobot, selectedIkHandleLinkId)
+          : null,
+      [displayRobot, selectedIkHandleLinkId],
+    );
+    const selectedIkCoordinateRoot = React.useMemo(() => {
+      let current: THREE.Object3D | null = selectedIkHandle;
+
+      while (current) {
+        if (current.userData?.visualizerIkCoordinateRoot === true) {
+          return current;
+        }
+        current = current.parent;
+      }
+
+      return null;
+    }, [selectedIkHandle]);
 
     return (
       <>
@@ -579,17 +703,27 @@ export const VisualizerScene = React.memo(
             ]}
           >
             <GroundedGroup ref={robotRootRef}>
-              {shouldRenderConstraintOverlay && <ClosedLoopConstraintsOverlay robot={robot} />}
+              {shouldRenderConstraintOverlay && (
+                <ClosedLoopConstraintsOverlay robot={displayRobot} />
+              )}
               {rootPlacements.map(({ linkId, position }) => (
-                <group key={linkId} position={position}>
+                <group
+                  key={linkId}
+                  position={position}
+                  userData={{
+                    visualizerIkCoordinateRoot: true,
+                    visualizerRootLinkId: linkId,
+                  }}
+                >
                   <RobotNode
                     linkId={linkId}
-                    robot={robot}
+                    robot={displayRobot}
                     onSelect={onSelect}
                     onUpdate={onUpdate}
                     mode={mode}
                     showGeometry={state.showGeometry}
                     showVisual={state.showVisual}
+                    showIkHandles={state.showIkHandles}
                     showOrigin={state.showOrigin}
                     showLabels={state.showLabels}
                     showJointAxes={state.showJointAxes}
@@ -613,6 +747,7 @@ export const VisualizerScene = React.memo(
                     onRegisterJointPivot={handleRegisterJointPivot}
                     onRegisterJointMotion={handleRegisterJointMotion}
                     onRegisterCollisionRef={handleRegisterCollisionRef}
+                    onRegisterIkHandle={handleRegisterIkHandle}
                     onMeshResolved={handleMeshResolved}
                     onPrewarmedMeshResolved={handlePrewarmedMeshResolved}
                   />
@@ -628,6 +763,7 @@ export const VisualizerScene = React.memo(
                 title={t.loadingRobot}
                 detail={loadingDetail}
                 progress={loadingHudState.progress}
+                progressMode={loadingHudState.progressMode}
                 statusLabel={loadingHudState.statusLabel}
                 stageLabel={loadingStageLabel}
                 delayMs={0}
@@ -644,6 +780,21 @@ export const VisualizerScene = React.memo(
             robot={robot}
             transformMode="universal"
             transformControlsState={transformControlsState}
+          />
+        )}
+
+        {!snapshotRenderActive && !shouldRenderAssemblyTransformControls && (
+          <LinkIkTransformControls
+            selectedLinkId={selectedIkHandleLinkId}
+            selectedHandle={selectedIkHandle}
+            coordinateRoot={selectedIkCoordinateRoot}
+            ikRobotState={robot}
+            enabled={active && Boolean(selectedIkHandleDescriptor?.jointIds.length)}
+            historyLabel="Move IK handle"
+            onPreviewKinematicOverrides={(overrides) =>
+              controller.previewLinkIkKinematics(overrides.angles, overrides.quaternions)
+            }
+            onClearPreviewKinematicOverrides={controller.clearLinkIkKinematicsPreview}
           />
         )}
 

@@ -433,14 +433,26 @@ export function resolveVisualizerInteractionTargetFromHits(
   options: VisualizerHoverResolutionOptions = {},
 ): VisualizerHoverTarget | null {
   const directTarget = getVisualizerHoverTarget(object);
+  const resolvedTarget = findNearestVisualizerTargetFromHits(hits, options);
+
+  // Mesh inertia helpers use a visual fill plus an outline, so let the
+  // narrowed hit list decide whether the user was actually targeting the
+  // visible helper edge instead of blindly trusting the first mesh hit.
   if (
     directTarget &&
     !(directTarget.helperKind === 'inertia' && (object as THREE.Mesh | null)?.isMesh)
   ) {
+    // When multiple helpers overlap, the front-most event target is not
+    // enough. Re-run helper/helper conflicts through the shared hit resolver
+    // so interaction-layer priority can pick the intended helper.
+    if (directTarget.helperKind && resolvedTarget?.helperKind) {
+      return resolvedTarget;
+    }
+
     return directTarget;
   }
 
-  return findNearestVisualizerTargetFromHits(hits, options);
+  return resolvedTarget;
 }
 
 export function findNearestVisualizerHoverTarget(

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import {
   computeLinkWorldMatrices,
-  estimateRobotGroundOffset,
   isSyntheticWorldRoot,
   mergeAssembly,
   prepareAssemblyRobotData,
@@ -13,6 +12,7 @@ import {
 import {
   buildExportableAssemblyRobotData,
   cloneAssemblyTransform,
+  isAssemblyComponentIndividuallyTransformable,
   isIdentityAssemblyTransform,
 } from '@/core/robot/assemblyTransforms';
 import { generateURDF } from '@/core/parsers';
@@ -72,6 +72,7 @@ function sortKeysDeep(value: unknown): JsonLike {
 
 const GENERATED_WORKSPACE_URDF_FOLDER = 'generated';
 const GENERATED_WORKSPACE_URDF_SUFFIX = '.generated.urdf';
+const ASSEMBLY_TRANSFORM_MATCH_EPSILON = 1e-9;
 
 function sanitizeGeneratedWorkspaceUrdfStem(value: string): string {
   const sanitized = value
@@ -563,6 +564,23 @@ function buildAssemblyTransformMatrix(
   );
 }
 
+function semanticRootMatrixMatchesAssemblyTransform(
+  matrix: THREE.Matrix4,
+  transform?: AssemblyComponent['transform'] | AssemblyState['transform'],
+): boolean {
+  const normalized = cloneAssemblyTransform(transform);
+  const origin = decomposeMatrixToOrigin(matrix);
+
+  return (
+    Math.abs(origin.xyz.x - normalized.position.x) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON &&
+    Math.abs(origin.xyz.y - normalized.position.y) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON &&
+    Math.abs(origin.xyz.z - normalized.position.z) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON &&
+    Math.abs(origin.rpy.r - normalized.rotation.r) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON &&
+    Math.abs(origin.rpy.p - normalized.rotation.p) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON &&
+    Math.abs(origin.rpy.y - normalized.rotation.y) <= ASSEMBLY_TRANSFORM_MATCH_EPSILON
+  );
+}
+
 function buildVisibleAssemblyComponentMap(assemblyState: AssemblyState) {
   return Object.fromEntries(
     Object.entries(assemblyState.components).filter(([, component]) => component.visible !== false),
@@ -750,22 +768,8 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
 
     const rootOffsetX = rootOffsetByComponentId.get(componentId) ?? 0;
     const offsetMatrix = new THREE.Matrix4().makeTranslation(rootOffsetX, 0, 0);
-    const groundLiftMatrix =
-      !hasIncomingBridge(assemblyState, componentId) &&
-      isIdentityAssemblyTransform(rootComponent.transform)
-        ? new THREE.Matrix4().makeTranslation(
-            0,
-            0,
-            estimateRobotGroundOffset(rootComponent.robot, {
-              renderableBounds: rootComponent.renderableBounds,
-            }),
-          )
-        : new THREE.Matrix4().identity();
 
-    rootDisplayMatrixByComponentId.set(
-      componentId,
-      offsetMatrix.clone().multiply(groundLiftMatrix),
-    );
+    rootDisplayMatrixByComponentId.set(componentId, offsetMatrix);
   });
 
   const links: RobotData['links'] = {
@@ -790,16 +794,23 @@ export function buildWorkspaceAssemblyViewerDisplayRobotData({
       rootDisplayMatrixByComponentId.get(rootComponentId)?.clone() ??
       new THREE.Matrix4().identity();
     const componentHasIncomingBridge = hasIncomingBridge(assemblyState, componentId);
-    // Incoming bridge alignment is authored onto the component transform for
-    // both root-link and non-root child-link bridges. Re-applying the merged
-    // robot's semantic root matrix here can double-apply reroot semantics for
-    // complex imported robots, so bridged components should render from their
-    // authored component transform directly.
+    const componentIsIndividuallyTransformable = isAssemblyComponentIndividuallyTransformable(
+      assemblyState,
+      componentId,
+    );
     const componentTransformMatrix = buildAssemblyTransformMatrix(component.transform);
-    const shouldPreferAlignedBridgeTransform = componentHasIncomingBridge;
-    const worldMatrix = shouldPreferAlignedBridgeTransform
+    // Incoming bridge alignment is authored onto the component transform for
+    // both root-link and non-root child-link bridges. By contrast, isolated
+    // components already have their authored transform wrapped into the
+    // exportable merged robot's semantic root matrix.
+    const mergedRootAlreadyEncodesComponentTransform =
+      componentIsIndividuallyTransformable &&
+      semanticRootMatrixMatchesAssemblyTransform(semanticRootMatrix, component.transform);
+    const worldMatrix = componentHasIncomingBridge
       ? rootDisplayMatrix.clone().multiply(componentTransformMatrix)
-      : rootDisplayMatrix.clone().multiply(componentTransformMatrix).multiply(semanticRootMatrix);
+      : mergedRootAlreadyEncodesComponentTransform
+        ? rootDisplayMatrix.clone().multiply(semanticRootMatrix)
+        : rootDisplayMatrix.clone().multiply(componentTransformMatrix).multiply(semanticRootMatrix);
     const syntheticJointId = buildWorkspaceViewerComponentRootJointId(componentId);
 
     joints[syntheticJointId] = {

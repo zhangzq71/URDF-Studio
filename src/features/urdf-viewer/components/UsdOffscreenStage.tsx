@@ -9,6 +9,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
+import { normalizeLoadingProgress } from '@/shared/components/3d/loadingHudState';
 import { JointType, type RobotFile } from '@/types';
 import type {
   ToolMode,
@@ -211,7 +212,8 @@ export function UsdOffscreenStage({
     status: 'loading',
     phase: 'checking-path',
     message: null,
-    progressPercent: 0,
+    progressMode: 'indeterminate',
+    progressPercent: null,
     loadedCount: null,
     totalCount: null,
   });
@@ -299,33 +301,42 @@ export function UsdOffscreenStage({
 
       switch (message.type) {
         case 'progress': {
-          setLoadingProgress({
-            status: 'loading',
-            phase: message.progress.phase,
-            message: message.progress.message ?? null,
-            progressPercent: message.progress.progressPercent ?? null,
-            loadedCount: message.progress.loadedCount ?? null,
-            totalCount: message.progress.totalCount ?? null,
-          });
+          setLoadingProgress(
+            normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+              status: 'loading',
+              phase: message.progress.phase,
+              progressMode: message.progress.progressMode ?? null,
+              message: message.progress.message ?? null,
+              progressPercent: message.progress.progressPercent ?? null,
+              loadedCount: message.progress.loadedCount ?? null,
+              totalCount: message.progress.totalCount ?? null,
+            }),
+          );
           return;
         }
         case 'document-load': {
+          const normalizedDocumentLoadEvent =
+            message.event.status === 'loading'
+              ? normalizeLoadingProgress<ViewerDocumentLoadEvent>(message.event)
+              : message.event;
           const normalizedBootstrapEvent = normalizeUsdBootstrapDocumentLoadEvent(message.event, {
             useUsdOffscreenBootstrap: retainReadyAsLoadingDuringBootstrapHandoff,
           });
-          if (message.event.status === 'loading') {
+          if (normalizedDocumentLoadEvent.status === 'loading') {
             setIsLoading(true);
-            setLoadingProgress(message.event);
-          } else if (message.event.status === 'ready') {
+            setLoadingProgress(normalizedDocumentLoadEvent);
+          } else if (normalizedDocumentLoadEvent.status === 'ready') {
             setIsLoading(normalizedBootstrapEvent.status === 'loading');
             setErrorMessage(null);
             setLoadingProgress(normalizedBootstrapEvent);
-          } else if (message.event.status === 'error') {
+          } else if (normalizedDocumentLoadEvent.status === 'error') {
             setIsLoading(false);
-            setErrorMessage(message.event.error || 'Failed to load USD stage in offscreen worker');
-            setLoadingProgress(message.event);
+            setErrorMessage(
+              normalizedDocumentLoadEvent.error || 'Failed to load USD stage in offscreen worker',
+            );
+            setLoadingProgress(normalizedDocumentLoadEvent);
           }
-          onDocumentLoadEventRef.current?.(message.event);
+          onDocumentLoadEventRef.current?.(normalizedDocumentLoadEvent);
           return;
         }
         case 'robot-data': {
@@ -544,7 +555,8 @@ export function UsdOffscreenStage({
           status: 'loading',
           phase: 'checking-path',
           message: null,
-          progressPercent: 0,
+          progressMode: 'indeterminate',
+          progressPercent: null,
           loadedCount: null,
           totalCount: null,
         });
@@ -695,6 +707,8 @@ export function UsdOffscreenStage({
   const loadingHudState = useMemo(
     () =>
       buildViewerLoadingHudState({
+        phase: loadingProgress?.phase,
+        progressMode: loadingProgress?.progressMode,
         fallbackDetail: loadingDetailLabel,
         loadedCount: loadingProgress?.loadedCount,
         progressPercent: loadingProgress?.progressPercent,
@@ -824,6 +838,7 @@ export function UsdOffscreenStage({
               title={loadingLabel}
               detail={loadingDetail}
               progress={loadingHudState.progress}
+              progressMode={loadingHudState.progressMode}
               statusLabel={loadingHudState.statusLabel}
               stageLabel={loadingStageLabel}
               delayMs={0}

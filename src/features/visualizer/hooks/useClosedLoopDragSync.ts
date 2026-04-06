@@ -18,6 +18,9 @@ interface UseClosedLoopDragSyncParams {
 
 const TEMP_EULER = new THREE.Euler(0, 0, 0, 'ZYX');
 const PREVIEW_EPSILON = 1e-6;
+// AppLayout no longer consumes this global preview store during drag, so keeping
+// per-frame cross-app preview writes only burns main-thread time.
+const APP_WIDE_JOINT_INTERACTION_PREVIEW_ENABLED = false;
 
 function applyJointOriginToPivot(pivot: THREE.Group, origin: UrdfJoint['origin']): void {
   pivot.position.set(origin.xyz.x ?? 0, origin.xyz.y ?? 0, origin.xyz.z ?? 0);
@@ -63,8 +66,6 @@ export function useClosedLoopDragSync({
   const previewedMotionAnglesRef = useRef<Record<string, number>>({});
   const previewedMotionQuaternionsRef = useRef<Record<string, JointQuaternion>>({});
   const motionPreviewSessionRef = useRef(createClosedLoopMotionPreviewSession());
-  const pendingMotionPreviewRef = useRef<{ jointId: string; angle: number } | null>(null);
-  const motionPreviewFrameRef = useRef<number | null>(null);
   const previewSessionIdCounterRef = useRef(0);
   const activePreviewSessionIdRef = useRef<string | null>(null);
 
@@ -85,6 +86,10 @@ export function useClosedLoopDragSync({
       jointQuaternions?: Record<string, JointQuaternion>;
       jointOrigins?: Record<string, UrdfJoint['origin']>;
     }) => {
+      if (!APP_WIDE_JOINT_INTERACTION_PREVIEW_ENABLED) {
+        return;
+      }
+
       useJointInteractionPreviewStore.getState().publishPreview({
         source: 'visualizer',
         dragSessionId: ensurePreviewSessionId(),
@@ -98,6 +103,11 @@ export function useClosedLoopDragSync({
   );
 
   const clearPublishedJointInteractionPreview = useCallback(() => {
+    if (!APP_WIDE_JOINT_INTERACTION_PREVIEW_ENABLED) {
+      activePreviewSessionIdRef.current = null;
+      return;
+    }
+
     const activeSessionId = activePreviewSessionIdRef.current;
     activePreviewSessionIdRef.current = null;
 
@@ -237,16 +247,30 @@ export function useClosedLoopDragSync({
   );
 
   const resetConstraintPreview = useCallback(() => {
-    if (motionPreviewFrameRef.current !== null && typeof window !== 'undefined') {
-      window.cancelAnimationFrame(motionPreviewFrameRef.current);
-      motionPreviewFrameRef.current = null;
-    }
-    pendingMotionPreviewRef.current = null;
     motionPreviewSessionRef.current.reset();
     clearOriginPreview();
     clearMotionPreview();
     clearPublishedJointInteractionPreview();
   }, [clearMotionPreview, clearOriginPreview, clearPublishedJointInteractionPreview]);
+
+  const previewJointKinematics = useCallback(
+    (jointAngles: Record<string, number>, jointQuaternions: Record<string, JointQuaternion>) => {
+      clearOriginPreview();
+      reconcileMotionPreview(jointAngles, jointQuaternions);
+      publishJointInteractionPreview({
+        activeJointId: null,
+        jointAngles,
+        jointQuaternions,
+      });
+    },
+    [clearOriginPreview, publishJointInteractionPreview, reconcileMotionPreview],
+  );
+
+  const clearJointKinematicsPreview = useCallback(() => {
+    clearOriginPreview();
+    reconcileMotionPreview({}, {});
+    clearPublishedJointInteractionPreview();
+  }, [clearOriginPreview, clearPublishedJointInteractionPreview, reconcileMotionPreview]);
 
   const previewConstraintCompensation = useCallback(
     (selectedObject: THREE.Group, selectionId: string | null | undefined) => {
@@ -305,65 +329,32 @@ export function useClosedLoopDragSync({
       if (!selectedJointId) {
         reconcileMotionPreview({}, {});
         clearPublishedJointInteractionPreview();
-        return;
+        return { appliedAngle: selectedAngle, constrained: false };
       }
+
       motionPreviewSessionRef.current.setBaseRobot(robot);
-      pendingMotionPreviewRef.current = {
-        jointId: selectedJointId,
-        angle: selectedAngle,
-      };
 
-      if (motionPreviewFrameRef.current !== null) {
-        return;
+      try {
+        const compensation = motionPreviewSessionRef.current.solve(selectedJointId, selectedAngle);
+        reconcileMotionPreview(compensation.angles, compensation.quaternions);
+        publishJointInteractionPreview({
+          activeJointId: selectedJointId,
+          jointAngles: compensation.angles,
+          jointQuaternions: compensation.quaternions,
+        });
+        return {
+          appliedAngle: compensation.appliedAngle ?? selectedAngle,
+          constrained: compensation.constrained,
+        };
+      } catch (error) {
+        console.warn(
+          '[useClosedLoopDragSync] Closed-loop motion preview solve failed; clearing preview compensation.',
+          error,
+        );
+        reconcileMotionPreview({}, {});
+        clearPublishedJointInteractionPreview();
+        return { appliedAngle: selectedAngle, constrained: false };
       }
-
-      const runPreviewSolve = () => {
-        motionPreviewFrameRef.current = null;
-        const pendingPreview = pendingMotionPreviewRef.current;
-        pendingMotionPreviewRef.current = null;
-        if (!pendingPreview) {
-          return;
-        }
-
-        try {
-          const compensation = motionPreviewSessionRef.current.solve(
-            pendingPreview.jointId,
-            pendingPreview.angle,
-          );
-          reconcileMotionPreview(compensation.angles, compensation.quaternions);
-          publishJointInteractionPreview({
-            activeJointId: pendingPreview.jointId,
-            jointAngles: {
-              ...compensation.angles,
-              [pendingPreview.jointId]: pendingPreview.angle,
-            },
-            jointQuaternions: compensation.quaternions,
-          });
-        } catch (error) {
-          console.warn(
-            '[useClosedLoopDragSync] Closed-loop motion preview solve failed; clearing preview compensation.',
-            error,
-          );
-          reconcileMotionPreview({}, {});
-          clearPublishedJointInteractionPreview();
-        }
-
-        if (pendingMotionPreviewRef.current) {
-          if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-            runPreviewSolve();
-            return;
-          }
-
-          motionPreviewFrameRef.current = window.requestAnimationFrame(runPreviewSolve);
-        }
-      };
-
-      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-        runPreviewSolve();
-        return;
-      }
-
-      motionPreviewFrameRef.current = window.requestAnimationFrame(runPreviewSolve);
     },
     [
       clearOriginPreview,
@@ -375,6 +366,8 @@ export function useClosedLoopDragSync({
   );
 
   return {
+    previewJointKinematics,
+    clearJointKinematicsPreview,
     previewConstraintCompensation,
     previewConstraintMotionCompensation,
     resetConstraintPreview,

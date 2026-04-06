@@ -1,15 +1,15 @@
 import React from 'react';
 
-import type { RobotFile, RobotState } from '@/types';
-import {
-  type URDFViewerController,
-  type ViewerDocumentLoadEvent,
-  type ViewerHelperKind,
-  type ViewerResourceScope,
-  type ViewerRobotDataResolution,
-  type ViewerRobotSourceFormat,
-  URDFViewerScene,
-} from '@/features/urdf-viewer';
+import type { InteractionSelection, RobotFile, RobotState } from '@/types';
+import type { URDFViewerController } from '@/features/urdf-viewer/hooks/useURDFViewerController';
+import type {
+  ViewerDocumentLoadEvent,
+  ViewerHelperKind,
+  ViewerRobotSourceFormat,
+} from '@/features/urdf-viewer/types';
+import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
+import type { ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
+import { URDFViewerScene } from '@/features/urdf-viewer/components/URDFViewerScene';
 import { useSelectionStore } from '@/store/selectionStore';
 
 import { buildUnifiedViewerSceneProps } from '@/app/utils/unifiedViewerSceneProps';
@@ -31,18 +31,19 @@ interface ViewerSceneConnectorProps {
   onRuntimeRobotLoaded?: (robot: import('three').Object3D) => void;
   mode: 'editor';
   selection?: {
-    type: 'link' | 'joint' | null;
+    type: InteractionSelection['type'];
     id: string | null;
     subType?: 'visual' | 'collision';
     objectIndex?: number;
     helperKind?: ViewerHelperKind;
   };
   onHover?: (
-    type: 'link' | 'joint' | null,
+    type: InteractionSelection['type'],
     id: string | null,
     subType?: 'visual' | 'collision',
     objectIndex?: number,
     helperKind?: ViewerHelperKind,
+    highlightObjectId?: number,
   ) => void;
   onMeshSelect?: (
     linkId: string,

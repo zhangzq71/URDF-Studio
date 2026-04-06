@@ -17,6 +17,7 @@ import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread'
 import {
   disposeTemporaryTexturePromiseCache,
   disposeTransientObject3D,
+  isMJCFLoadAbortedError,
   type MJCFLoadAbortSignal,
   throwIfMJCFLoadAborted,
 } from './mjcfLoadLifecycle';
@@ -48,12 +49,23 @@ export interface MJCFHierarchyJoint {
   pos?: [number, number, number];
 }
 
+export interface MJCFHierarchySite {
+  name: string;
+  type: string;
+  size?: number[];
+  rgba?: [number, number, number, number];
+  pos?: [number, number, number];
+  quat?: [number, number, number, number];
+  group?: number;
+}
+
 export interface MJCFHierarchyBody {
   name: string;
   pos: [number, number, number];
   quat?: [number, number, number, number];
   euler?: [number, number, number];
   geoms: MJCFHierarchyGeom[];
+  sites?: MJCFHierarchySite[];
   joints: MJCFHierarchyJoint[];
   children: MJCFHierarchyBody[];
 }
@@ -71,12 +83,23 @@ interface BuildMJCFHierarchyOptions {
   sourceFileDir?: string;
   onProgress?: (progress: { processedGeoms: number; totalGeoms: number }) => void;
   yieldIfNeeded?: () => Promise<void>;
+  onAsyncSceneMutation?: () => void;
 }
 
 export interface MJCFHierarchyResult {
   linksMap: Record<string, THREE.Object3D>;
   jointsMap: Record<string, THREE.Object3D>;
+  deferredTextureApplicationsReady: Promise<void>;
 }
+
+type RuntimeJointMetadataNode = THREE.Object3D & {
+  parentLinkId?: string | null;
+  parentName?: string | null;
+  childLinkId?: string;
+  childName?: string;
+  parentLink?: THREE.Object3D | null;
+  child?: THREE.Object3D;
+};
 
 function restackLinkVisualRoots(linkTarget: THREE.Object3D): void {
   const visualRoots = linkTarget.children
@@ -118,6 +141,36 @@ function restackRobotVisualRoots(root: THREE.Object3D): void {
 
 function countBodyGeoms(body: MJCFHierarchyBody): number {
   return body.geoms.length + body.children.reduce((sum, child) => sum + countBodyGeoms(child), 0);
+}
+
+function cloneSiteData(sites: MJCFHierarchySite[] | undefined): MJCFHierarchySite[] {
+  if (!sites || sites.length === 0) {
+    return [];
+  }
+
+  return sites.map((site) => ({
+    ...site,
+    size: Array.isArray(site.size) ? [...site.size] : undefined,
+    rgba: Array.isArray(site.rgba)
+      ? ([...site.rgba] as [number, number, number, number])
+      : undefined,
+    pos: Array.isArray(site.pos) ? ([...site.pos] as [number, number, number]) : undefined,
+    quat: Array.isArray(site.quat)
+      ? ([...site.quat] as [number, number, number, number])
+      : undefined,
+  }));
+}
+
+function walkMJCFBodies(
+  bodies: MJCFHierarchyBody[],
+  visitor: (body: MJCFHierarchyBody) => void,
+): void {
+  for (const body of bodies) {
+    visitor(body);
+    if (body.children.length > 0) {
+      walkMJCFBodies(body.children, visitor);
+    }
+  }
 }
 
 function mjcfQuatToThreeQuat(mjcfQuat: [number, number, number, number]): THREE.Quaternion {
@@ -174,7 +227,46 @@ function resolveInitialRuntimeJointValue(joint: MJCFHierarchyJoint): number | nu
 }
 
 const textureLoader = new THREE.TextureLoader();
+let imageBitmapTextureLoader: THREE.ImageBitmapLoader | null = null;
 type MJCFTextureLoadCache = Map<string, Promise<THREE.Texture | null>>;
+
+function canUseImageBitmapTextureLoading(): boolean {
+  return typeof createImageBitmap === 'function';
+}
+
+function getImageBitmapTextureLoader(): THREE.ImageBitmapLoader {
+  if (!imageBitmapTextureLoader) {
+    imageBitmapTextureLoader = new THREE.ImageBitmapLoader();
+    imageBitmapTextureLoader.setOptions({ imageOrientation: 'flipY', premultiplyAlpha: 'none' });
+  }
+
+  return imageBitmapTextureLoader;
+}
+
+function configureLoadedTexture(texture: THREE.Texture): THREE.Texture {
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+async function loadTextureWithPreferredLoader(assetUrl: string): Promise<THREE.Texture | null> {
+  if (canUseImageBitmapTextureLoading()) {
+    try {
+      const imageBitmap = await getImageBitmapTextureLoader().loadAsync(assetUrl);
+      return configureLoadedTexture(new THREE.Texture(imageBitmap));
+    } catch (error) {
+      console.warn(
+        `[MJCFLoader] ImageBitmap texture decode failed, falling back to TextureLoader: ${assetUrl}`,
+        error,
+      );
+    }
+  }
+
+  const texture = await textureLoader.loadAsync(assetUrl);
+  return configureLoadedTexture(texture);
+}
 
 function getTexturePromise(
   assetUrl: string,
@@ -185,19 +277,10 @@ function getTexturePromise(
     return cached;
   }
 
-  const promise = textureLoader
-    .loadAsync(assetUrl)
-    .then((texture) => {
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.needsUpdate = true;
-      return texture;
-    })
-    .catch((error) => {
-      console.error(`[MJCFLoader] Failed to load texture asset: ${assetUrl}`, error);
-      return null;
-    });
+  const promise = loadTextureWithPreferredLoader(assetUrl).catch((error) => {
+    console.error(`[MJCFLoader] Failed to load texture asset: ${assetUrl}`, error);
+    return null;
+  });
 
   textureLoadCache.set(assetUrl, promise);
   return promise;
@@ -221,6 +304,68 @@ function cloneTextureWithMaterialSettings(
 
   texture.needsUpdate = true;
   return texture;
+}
+
+function collectReferencedTextureAssetUrls(
+  bodies: MJCFHierarchyBody[],
+  materialMap: Map<string, MJCFMaterial>,
+  textureMap: Map<string, MJCFTexture>,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+): string[] {
+  const assetUrls = new Set<string>();
+
+  walkMJCFBodies(bodies, (body) => {
+    body.geoms.forEach((geom) => {
+      if (!geom.material) {
+        return;
+      }
+
+      const materialDef = materialMap.get(geom.material);
+      if (!materialDef?.texture) {
+        return;
+      }
+
+      const textureDef = textureMap.get(materialDef.texture);
+      if (!textureDef?.file) {
+        return;
+      }
+
+      const assetUrl = findAssetByPath(textureDef.file, assets, sourceFileDir);
+      if (assetUrl) {
+        assetUrls.add(assetUrl);
+      }
+    });
+  });
+
+  return [...assetUrls];
+}
+
+function resolveMJCFGeomType(geom: MJCFHierarchyGeom): string {
+  return geom.type?.trim() || (geom.mesh ? 'mesh' : '');
+}
+
+function collectFirstMeshGeomByMeshName(
+  bodies: MJCFHierarchyBody[],
+): Map<string, MJCFHierarchyGeom> {
+  const firstMeshGeomByName = new Map<string, MJCFHierarchyGeom>();
+
+  walkMJCFBodies(bodies, (body) => {
+    body.geoms.forEach((geom) => {
+      if (!geom.mesh || firstMeshGeomByName.has(geom.mesh)) {
+        return;
+      }
+
+      const geomType = resolveMJCFGeomType(geom);
+      if (geomType !== 'mesh' && geomType !== 'sdf') {
+        return;
+      }
+
+      firstMeshGeomByName.set(geom.mesh, geom);
+    });
+  });
+
+  return firstMeshGeomByName;
 }
 
 async function loadMaterialTexture(
@@ -267,6 +412,12 @@ async function applyMaterialAssetToMesh(
   materialName?: string,
   inheritedGeomRgba?: [number, number, number, number],
   hasExplicitGeomRgba: boolean = false,
+  options: {
+    deferTextureLoad?: boolean;
+    enqueueDeferredTextureApplication?: ((job: () => Promise<void>) => void) | undefined;
+    yieldIfNeeded?: (() => Promise<void>) | undefined;
+    onAsyncSceneMutation?: (() => void) | undefined;
+  } = {},
 ): Promise<void> {
   const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
   const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
@@ -282,6 +433,100 @@ async function applyMaterialAssetToMesh(
       ? inheritedGeomRgba[3]
       : null;
   const alpha = Math.max(0, Math.min(1, inheritedAlphaOverride ?? rgba[3] ?? 1));
+  const roughness =
+    materialDef.shininess != null ? Math.max(0, Math.min(1, 1 - materialDef.shininess)) : undefined;
+  const metalness =
+    materialDef.reflectance != null ? Math.max(0, Math.min(1, materialDef.reflectance)) : undefined;
+  const emission =
+    materialDef.emission != null ? Math.max(0, Math.min(1, materialDef.emission)) : undefined;
+  const materialTargets: THREE.Mesh[] = [];
+  mesh.traverse((child: any) => {
+    if (child.isMesh) {
+      materialTargets.push(child as THREE.Mesh);
+    }
+  });
+
+  const applyResolvedMaterial = (
+    resolvedTexture: THREE.Texture | null,
+    mode: 'create' | 'update' = 'create',
+  ) => {
+    materialTargets.forEach((targetMesh) => {
+      const preferDoubleSide = alpha < 1 || Boolean(targetMesh.userData?.mjcfPreferDoubleSide);
+      const existingMaterial =
+        targetMesh.material instanceof THREE.MeshStandardMaterial ? targetMesh.material : null;
+
+      if (mode === 'update' && existingMaterial) {
+        existingMaterial.map = resolvedTexture;
+        existingMaterial.needsUpdate = true;
+        applyVisualMeshShadowPolicy(targetMesh);
+        return;
+      }
+
+      targetMesh.material = createMatteMaterial({
+        color: createThreeColorFromSRGB(r, g, b),
+        opacity: alpha,
+        transparent: alpha < 1,
+        side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
+        map: resolvedTexture,
+        name: materialName || materialDef.name || 'mjcf_material_asset',
+        preserveExactColor: hasAuthoredRgba || Boolean(materialDef.texture),
+      });
+      if (!(targetMesh.material instanceof THREE.MeshStandardMaterial)) {
+        return;
+      }
+      if (roughness != null) {
+        targetMesh.material.roughness = roughness;
+      }
+      if (metalness != null) {
+        targetMesh.material.metalness = metalness;
+      }
+      if (emission != null) {
+        targetMesh.material.emissive = new THREE.Color(r, g, b);
+        targetMesh.material.emissiveIntensity = emission;
+      }
+      targetMesh.material.needsUpdate = true;
+      applyVisualMeshShadowPolicy(targetMesh);
+    });
+  };
+
+  if (
+    options.deferTextureLoad &&
+    materialDef.texture &&
+    options.enqueueDeferredTextureApplication
+  ) {
+    // Start the texture request immediately so network/decode can overlap with
+    // the rest of hierarchy construction, but don't block first scene readiness.
+    const deferredTexturePromise = loadMaterialTexture(
+      materialDef,
+      textureMap,
+      assets,
+      sourceFileDir,
+      textureLoadCache,
+      abortSignal,
+    );
+    applyResolvedMaterial(null);
+    options.enqueueDeferredTextureApplication(async () => {
+      const deferredTexture = await deferredTexturePromise;
+      if (abortSignal?.aborted) {
+        deferredTexture?.dispose?.();
+        throwIfMJCFLoadAborted(abortSignal);
+      }
+      if (!deferredTexture) {
+        return;
+      }
+
+      await options.yieldIfNeeded?.();
+      if (abortSignal?.aborted) {
+        deferredTexture.dispose?.();
+        throwIfMJCFLoadAborted(abortSignal);
+      }
+
+      applyResolvedMaterial(deferredTexture, 'update');
+      options.onAsyncSceneMutation?.();
+    });
+    return;
+  }
+
   const texture = await loadMaterialTexture(
     materialDef,
     textureMap,
@@ -294,38 +539,8 @@ async function applyMaterialAssetToMesh(
     texture?.dispose?.();
     throwIfMJCFLoadAborted(abortSignal);
   }
-  const roughness =
-    materialDef.shininess != null ? Math.max(0, Math.min(1, 1 - materialDef.shininess)) : undefined;
-  const metalness =
-    materialDef.reflectance != null ? Math.max(0, Math.min(1, materialDef.reflectance)) : undefined;
-  const emission =
-    materialDef.emission != null ? Math.max(0, Math.min(1, materialDef.emission)) : undefined;
 
-  mesh.traverse((child: any) => {
-    if (!child.isMesh) return;
-    const preferDoubleSide = alpha < 1 || Boolean(child.userData?.mjcfPreferDoubleSide);
-    child.material = createMatteMaterial({
-      color: createThreeColorFromSRGB(r, g, b),
-      opacity: alpha,
-      transparent: alpha < 1,
-      side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
-      map: texture,
-      name: materialName || materialDef.name || 'mjcf_material_asset',
-      preserveExactColor: hasAuthoredRgba || Boolean(texture),
-    });
-    if (roughness != null) {
-      child.material.roughness = roughness;
-    }
-    if (metalness != null) {
-      child.material.metalness = metalness;
-    }
-    if (emission != null) {
-      child.material.emissive = new THREE.Color(r, g, b);
-      child.material.emissiveIntensity = emission;
-    }
-    child.material.needsUpdate = true;
-    applyVisualMeshShadowPolicy(child as THREE.Mesh);
-  });
+  applyResolvedMaterial(texture);
 }
 
 function objectHasVisibleMaterial(mesh: THREE.Object3D): boolean {
@@ -361,10 +576,14 @@ export async function buildMJCFHierarchy(
     onProgress,
     yieldIfNeeded = createMainThreadYieldController(),
     abortSignal,
+    onAsyncSceneMutation,
   } = options;
   const linksMap: Record<string, THREE.Object3D> = {};
   const jointsMap: Record<string, THREE.Object3D> = {};
   const textureLoadCache: MJCFTextureLoadCache = new Map();
+  const deferredTextureApplications: Array<() => Promise<void>> = [];
+  const prewarmedMeshByName = new Map<string, Promise<THREE.Object3D | null>>();
+  let textureCacheOwnershipTransferred = false;
   const totalGeoms = bodies.reduce((sum, body) => sum + countBodyGeoms(body), 0);
   let processedGeoms = 0;
 
@@ -374,6 +593,41 @@ export async function buildMJCFHierarchy(
 
   const throwIfAborted = () => {
     throwIfMJCFLoadAborted(abortSignal);
+  };
+
+  const prewarmedTextureAssetUrls = collectReferencedTextureAssetUrls(
+    bodies,
+    materialMap,
+    textureMap,
+    assets,
+    sourceFileDir,
+  );
+  for (const assetUrl of prewarmedTextureAssetUrls) {
+    getTexturePromise(assetUrl, textureLoadCache);
+  }
+
+  const firstMeshGeomByName = collectFirstMeshGeomByMeshName(bodies);
+  for (const [meshName, firstMeshGeom] of firstMeshGeomByName.entries()) {
+    prewarmedMeshByName.set(
+      meshName,
+      createGeometryMesh(firstMeshGeom, meshMap, assets, meshCache, sourceFileDir, abortSignal),
+    );
+  }
+
+  const consumePrewarmedMesh = async (
+    geom: MJCFHierarchyGeom,
+  ): Promise<THREE.Object3D | null | undefined> => {
+    if (!geom.mesh) {
+      return undefined;
+    }
+
+    const prewarmedMeshPromise = prewarmedMeshByName.get(geom.mesh);
+    if (!prewarmedMeshPromise) {
+      return undefined;
+    }
+
+    prewarmedMeshByName.delete(geom.mesh);
+    return await prewarmedMeshPromise;
   };
 
   async function addGeomsToGroup(
@@ -389,14 +643,17 @@ export async function buildMJCFHierarchy(
       throwIfAborted();
       let mesh: THREE.Object3D | null = null;
       try {
-        mesh = await createGeometryMesh(
-          geom,
-          meshMap,
-          assets,
-          meshCache,
-          sourceFileDir,
-          abortSignal,
-        );
+        mesh = await consumePrewarmedMesh(geom);
+        if (mesh === undefined) {
+          mesh = await createGeometryMesh(
+            geom,
+            meshMap,
+            assets,
+            meshCache,
+            sourceFileDir,
+            abortSignal,
+          );
+        }
         if (!mesh) {
           continue;
         }
@@ -416,6 +673,14 @@ export async function buildMJCFHierarchy(
             geom.material,
             geom.rgba,
             Boolean(geom.hasExplicitRgba),
+            {
+              deferTextureLoad: true,
+              enqueueDeferredTextureApplication: (job) => {
+                deferredTextureApplications.push(job);
+              },
+              yieldIfNeeded,
+              onAsyncSceneMutation,
+            },
           );
           throwIfAborted();
         }
@@ -540,6 +805,60 @@ export async function buildMJCFHierarchy(
     return linkGroup;
   }
 
+  function createImplicitFixedJointName(parentLinkId: string, childLinkId: string): string {
+    const baseName = `${parentLinkId}_to_${childLinkId}`;
+    let candidate = baseName;
+    let suffix = 2;
+
+    while (jointsMap[candidate]) {
+      candidate = `${baseName}_${suffix}`;
+      suffix += 1;
+    }
+
+    return candidate;
+  }
+
+  function applyRuntimeJointLinkMetadata(
+    jointNode: RuntimeJointMetadataNode,
+    {
+      parentLink,
+      parentLinkId,
+      childLink,
+      childLinkId,
+    }: {
+      parentLink: THREE.Object3D | null;
+      parentLinkId: string | null;
+      childLink: THREE.Object3D;
+      childLinkId: string;
+    },
+  ): void {
+    jointNode.parentLinkId = parentLinkId;
+    jointNode.parentName = parentLinkId;
+    jointNode.childLinkId = childLinkId;
+    jointNode.childName = childLinkId;
+    jointNode.parentLink = parentLink;
+    jointNode.child = childLink;
+  }
+
+  function registerImplicitFixedJointMetadata(
+    parentLink: THREE.Object3D,
+    childLink: THREE.Object3D,
+  ): void {
+    const jointNode = new THREE.Group();
+    jointNode.name = createImplicitFixedJointName(parentLink.name, childLink.name);
+    (jointNode as any).isURDFJoint = true;
+    (jointNode as any).type = 'URDFJoint';
+    (jointNode as any).jointType = 'fixed';
+    (jointNode as any).angle = 0;
+    applyRuntimeJointLinkMetadata(jointNode as RuntimeJointMetadataNode, {
+      parentLink,
+      parentLinkId: parentLink.name,
+      childLink,
+      childLinkId: childLink.name,
+    });
+    jointsMap[jointNode.name] = jointNode;
+  }
+
   function createJointNode(
     joint: MJCFHierarchyJoint,
     bodyName: string,
@@ -644,7 +963,11 @@ export async function buildMJCFHierarchy(
     return { jointNode, attachmentGroup };
   }
 
-  async function buildBody(body: MJCFHierarchyBody, parentGroup: THREE.Group): Promise<void> {
+  async function buildBody(
+    body: MJCFHierarchyBody,
+    parentGroup: THREE.Group,
+    parentLink: THREE.Object3D | null,
+  ): Promise<void> {
     throwIfAborted();
     const bodyOffsetGroup = new THREE.Group();
     bodyOffsetGroup.name = `body_offset_${body.name}`;
@@ -652,22 +975,38 @@ export async function buildMJCFHierarchy(
     parentGroup.add(bodyOffsetGroup);
 
     let attachmentGroup: THREE.Group = bodyOffsetGroup;
+    const runtimeJointNodes: THREE.Group[] = [];
     body.joints
       .filter((joint) => joint.type !== 'fixed')
       .forEach((joint, jointIndex) => {
         const jointLayer = createJointNode(joint, body.name, bodyOffsetGroup, jointIndex);
         attachmentGroup.add(jointLayer.jointNode);
         attachmentGroup = jointLayer.attachmentGroup;
+        runtimeJointNodes.push(jointLayer.jointNode);
       });
 
     const linkGroup = createLinkGroup(body.name);
+    linkGroup.userData.__mjcfSitesData = cloneSiteData(body.sites);
     await addGeomsToGroup(body.geoms, linkGroup);
     restackLinkVisualRoots(linkGroup);
     attachmentGroup.add(linkGroup);
 
+    runtimeJointNodes.forEach((jointNode) => {
+      applyRuntimeJointLinkMetadata(jointNode as RuntimeJointMetadataNode, {
+        parentLink,
+        parentLinkId: parentLink?.name ?? null,
+        childLink: linkGroup,
+        childLinkId: body.name,
+      });
+    });
+
+    if (runtimeJointNodes.length === 0 && parentLink) {
+      registerImplicitFixedJointMetadata(parentLink, linkGroup);
+    }
+
     for (const childBody of body.children) {
       throwIfAborted();
-      await buildBody(childBody, linkGroup);
+      await buildBody(childBody, linkGroup, linkGroup);
       await yieldIfNeeded();
     }
   }
@@ -676,15 +1015,58 @@ export async function buildMJCFHierarchy(
     // Build all top-level bodies
     for (const body of bodies) {
       throwIfAborted();
-      await buildBody(body, rootGroup);
+      await buildBody(body, rootGroup, null);
       await yieldIfNeeded();
     }
 
     throwIfAborted();
     restackRobotVisualRoots(rootGroup);
 
-    return { linksMap, jointsMap };
+    let deferredTextureApplicationsReady: Promise<void> = Promise.resolve();
+    if (deferredTextureApplications.length > 0) {
+      textureCacheOwnershipTransferred = true;
+      deferredTextureApplicationsReady = (async () => {
+        try {
+          const settledApplications = await Promise.allSettled(
+            deferredTextureApplications.map((applyDeferredTexture) => applyDeferredTexture()),
+          );
+          settledApplications.forEach((result) => {
+            if (result.status === 'rejected' && !isMJCFLoadAbortedError(result.reason)) {
+              console.error(
+                '[MJCFLoader] Failed to apply deferred material texture.',
+                result.reason,
+              );
+            }
+          });
+        } finally {
+          disposeTemporaryTexturePromiseCache(textureLoadCache);
+        }
+      })();
+    } else {
+      disposeTemporaryTexturePromiseCache(textureLoadCache);
+      textureCacheOwnershipTransferred = true;
+    }
+
+    return { linksMap, jointsMap, deferredTextureApplicationsReady };
   } finally {
-    disposeTemporaryTexturePromiseCache(textureLoadCache);
+    if (prewarmedMeshByName.size > 0) {
+      const unresolvedPrewarmedMeshes = [...prewarmedMeshByName.values()];
+      prewarmedMeshByName.clear();
+
+      const settledPrewarmedMeshes = await Promise.allSettled(unresolvedPrewarmedMeshes);
+      settledPrewarmedMeshes.forEach((result) => {
+        if (result.status !== 'fulfilled') {
+          return;
+        }
+
+        if (result.value) {
+          disposeTransientObject3D(result.value);
+        }
+      });
+    }
+
+    if (!textureCacheOwnershipTransferred && textureLoadCache.size > 0) {
+      disposeTemporaryTexturePromiseCache(textureLoadCache);
+    }
   }
 }

@@ -6,10 +6,12 @@ import { Link2, Minus, Plus } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { SegmentedControl } from '@/shared/components/ui';
 import { useDraggableWindow } from '@/shared/hooks';
+import { getMjcfLinkDisplayName } from '@/shared/utils/robot/mjcfDisplayNames';
 import { useSelectionStore } from '@/store/selectionStore';
 import { useAssemblySelectionStore } from '@/store/assemblySelectionStore';
 import type { Language } from '@/store';
 import { resolveSuggestedBridgeOriginForVisualContact } from '@/core/robot/assemblyBridgeAlignment';
+import { wouldBridgeCreateUnsupportedAssemblyCycle } from '@/core/robot/assemblyBridgeTopology';
 import { degToRad, radToDeg } from '@/core/robot/transforms';
 import { formatNumberWithMaxDecimals, roundToMaxDecimals } from '@/core/utils/numberPrecision';
 import {
@@ -109,6 +111,34 @@ function resolveBridgeComponentDefaultLinkId(
   }
 
   return assemblyState.components[componentId]?.robot.rootLinkId ?? '';
+}
+
+function getBridgeLinkDisplayName(
+  robot: AssemblyState['components'][string]['robot'] | null | undefined,
+  linkId: string | null | undefined,
+): string {
+  if (!robot || !linkId) {
+    return '--';
+  }
+
+  const link = robot.links[linkId];
+  if (!link) {
+    return linkId;
+  }
+
+  return robot.inspectionContext?.sourceFormat === 'mjcf'
+    ? getMjcfLinkDisplayName(link)
+    : link.name;
+}
+
+function hasIncomingStructuralBridge(assemblyState: AssemblyState, componentId: string): boolean {
+  if (!componentId) {
+    return false;
+  }
+
+  return Object.values(assemblyState.bridges).some(
+    (bridge) => bridge.childComponentId === componentId,
+  );
 }
 
 interface BridgeInlineFieldRowProps {
@@ -1082,14 +1112,19 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     () => filterSelectableBridgeComponents(comps, childCompId || null),
     [childCompId, comps],
   );
+  const childComponentHasIncomingBridge = useMemo(
+    () => hasIncomingStructuralBridge(assemblyState, childCompId),
+    [assemblyState, childCompId],
+  );
   const childComponentOptions = useMemo(
-    () => filterSelectableBridgeComponents(comps, parentCompId || null),
-    [comps, parentCompId],
+    () =>
+      filterSelectableBridgeComponents(comps, parentCompId || null).filter(
+        (component) => !hasIncomingStructuralBridge(assemblyState, component.id),
+      ),
+    [assemblyState, comps, parentCompId],
   );
   const parentLinks = parentComp ? Object.values(parentComp.robot.links) : [];
   const childLinks = childComp ? Object.values(childComp.robot.links) : [];
-  const parentLink = parentLinkId ? (parentComp?.robot.links[parentLinkId] ?? null) : null;
-  const childLink = childLinkId ? (childComp?.robot.links[childLinkId] ?? null) : null;
   const suggestedBridgeName = useMemo(
     () =>
       buildSuggestedBridgeName({
@@ -1102,13 +1137,32 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   const effectiveBridgeName = name.trim() || suggestedBridgeName;
   const parentSummary = parentComp?.name ?? '--';
   const childSummary = childComp?.name ?? '--';
-  const parentLinkSummary = parentLink?.name ?? '--';
-  const childLinkSummary = childLink?.name ?? '--';
+  const parentLinkSummary = getBridgeLinkDisplayName(parentComp?.robot, parentLinkId);
+  const childLinkSummary = getBridgeLinkDisplayName(childComp?.robot, childLinkId);
   const jointSupportsAxisAndLimits = jointType !== JointType.FIXED;
   const jointSupportsPositionLimits =
     jointType === JointType.REVOLUTE || jointType === JointType.PRISMATIC;
   const isLimitRangeInvalid = jointSupportsPositionLimits && limitLower > limitUpper;
   const limitRangeValidationMessage = isLimitRangeInvalid ? t.bridgeLimitRangeInvalid : null;
+  const hasUnsupportedNonFixedCycle = useMemo(
+    () =>
+      Boolean(parentCompId) &&
+      Boolean(childCompId) &&
+      parentCompId !== childCompId &&
+      wouldBridgeCreateUnsupportedAssemblyCycle(
+        Object.values(assemblyState.bridges),
+        {
+          id: '__bridge_preview__',
+          parentComponentId: parentCompId,
+          childComponentId: childCompId,
+        },
+        jointType,
+      ),
+    [assemblyState.bridges, childCompId, jointType, parentCompId],
+  );
+  const nonFixedCycleValidationMessage = hasUnsupportedNonFixedCycle
+    ? t.bridgeNonFixedCycleUnsupported
+    : null;
   const positionLowerLabel = lang === 'zh' ? '位置下限' : 'Position Lower Limit';
   const positionUpperLabel = lang === 'zh' ? '位置上限' : 'Position Upper Limit';
   const rollRad = useMemo(() => degToRad(rollDeg), [rollDeg]);
@@ -1371,10 +1425,19 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
     ],
   );
   const isBridgeSelectionIncomplete =
-    !parentCompId || !parentLinkId || !childCompId || !childLinkId || parentCompId === childCompId;
+    !parentCompId ||
+    !parentLinkId ||
+    !childCompId ||
+    !childLinkId ||
+    parentCompId === childCompId ||
+    childComponentHasIncomingBridge;
 
   const isConfirmActuallyDisabled =
-    isBridgeSelectionIncomplete || !effectiveBridgeName || !submitJoint || isLimitRangeInvalid;
+    isBridgeSelectionIncomplete ||
+    !effectiveBridgeName ||
+    !submitJoint ||
+    isLimitRangeInvalid ||
+    hasUnsupportedNonFixedCycle;
 
   const handleSubmit = useCallback(() => {
     if (!submitJoint || isConfirmActuallyDisabled) {
@@ -1730,7 +1793,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       id: component.id,
                       name: component.name,
                     }))}
-                    linkOptions={parentLinks.map((link) => ({ id: link.id, name: link.name }))}
+                    linkOptions={parentLinks.map((link) => ({
+                      id: link.id,
+                      name: getBridgeLinkDisplayName(parentComp?.robot, link.id),
+                    }))}
                   />
 
                   <BridgeRelationConnector />
@@ -1760,7 +1826,10 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       id: component.id,
                       name: component.name,
                     }))}
-                    linkOptions={childLinks.map((link) => ({ id: link.id, name: link.name }))}
+                    linkOptions={childLinks.map((link) => ({
+                      id: link.id,
+                      name: getBridgeLinkDisplayName(childComp?.robot, link.id),
+                    }))}
                   />
                 </div>
               </BridgeSection>
@@ -2059,6 +2128,11 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                     {limitRangeValidationMessage ? (
                       <p className="mt-1 text-[9px] font-medium text-red-500">
                         {limitRangeValidationMessage}
+                      </p>
+                    ) : null}
+                    {nonFixedCycleValidationMessage ? (
+                      <p className="mt-1 text-[9px] font-medium text-red-500">
+                        {nonFixedCycleValidationMessage}
                       </p>
                     ) : null}
                   </BridgeSection>

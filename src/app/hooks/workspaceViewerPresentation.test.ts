@@ -58,6 +58,17 @@ test('shouldAnimateWorkspaceViewerRobot skips the first workspace render', () =>
   );
 });
 
+test('shouldAnimateWorkspaceViewerRobot disables transitions while bridge creation preview is active', () => {
+  assert.equal(
+    shouldAnimateWorkspaceViewerRobot({
+      shouldRenderAssembly: true,
+      previouslyRenderedAssembly: true,
+      isPreviewingAssemblyBridge: true,
+    }),
+    false,
+  );
+});
+
 test('resolveWorkspaceViewerRobot keeps the live scene while workspace display data is still settling', () => {
   const liveRobot = createRobotState('live-robot');
 

@@ -176,8 +176,22 @@ const VISUAL_HIGHLIGHT_TINT_COLOR = new THREE.Color(0x93c5fd); // Blue-300
 const VISUAL_HIGHLIGHT_EMISSIVE_COLOR = new THREE.Color(0x60a5fa); // Blue-400
 const COLLISION_HIGHLIGHT_TINT_COLOR = new THREE.Color(0xfde047); // Yellow-300
 const COLLISION_HIGHLIGHT_EMISSIVE_COLOR = new THREE.Color(0xfacc15); // Yellow-400
+const MJCF_TENDON_HIGHLIGHT_TINT_COLOR = new THREE.Color(0xffffff);
+const MJCF_TENDON_HIGHLIGHT_EMISSIVE_COLOR = new THREE.Color(0xfef08a); // Amber-200
 
-function getHighlightTintConfig(role: HighlightMaterialRole) {
+function getHighlightTintConfig(role: HighlightMaterialRole, sourceMaterial?: THREE.Material) {
+  if (role === 'visual' && sourceMaterial?.userData?.isMjcfTendonMaterial === true) {
+    return {
+      tintColor: MJCF_TENDON_HIGHLIGHT_TINT_COLOR,
+      tintStrength: 0.72,
+      emissiveColor: MJCF_TENDON_HIGHLIGHT_EMISSIVE_COLOR,
+      emissiveStrength: 0.82,
+      emissiveIntensityFloor: 0.9,
+      forceOverlay: true,
+      minOpacity: 0.98,
+    };
+  }
+
   if (role === 'collision') {
     return {
       tintColor: COLLISION_HIGHLIGHT_TINT_COLOR,
@@ -206,7 +220,7 @@ export function createHighlightOverrideMaterial(
   role: HighlightMaterialRole,
 ): THREE.Material {
   const highlightMaterialOverride = sourceMaterial.clone();
-  const tintConfig = getHighlightTintConfig(role);
+  const tintConfig = getHighlightTintConfig(role, sourceMaterial);
   const materialWithLighting = highlightMaterialOverride as THREE.Material & {
     color?: THREE.Color;
     emissive?: THREE.Color;

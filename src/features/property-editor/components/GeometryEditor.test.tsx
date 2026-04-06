@@ -8,8 +8,9 @@ import { JSDOM } from 'jsdom';
 import type { RobotState, UrdfLink } from '@/types';
 import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
-import { useUIStore } from '@/store';
+import { useCollisionTransformStore, useSelectionStore, useUIStore } from '@/store';
 import { GeometryEditor } from './GeometryEditor.tsx';
+import { __resetMeshAnalysisWorkerBridgeForTests } from '../utils/meshAnalysisWorkerBridge.ts';
 
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
 
@@ -132,7 +133,23 @@ function installDom() {
   return dom;
 }
 
+function resetGeometryEditorTestState() {
+  __resetMeshAnalysisWorkerBridgeForTests();
+  useCollisionTransformStore.setState({ pendingCollisionTransform: null });
+  useSelectionStore.setState({
+    selection: { type: null, id: null },
+    hoveredSelection: { type: null, id: null },
+    deferredHoveredSelection: { type: null, id: null },
+    hoverFrozen: false,
+    attentionSelection: { type: null, id: null },
+    focusTarget: null,
+    interactionGuard: null,
+  });
+  useUIStore.setState({ rotationDisplayMode: 'euler_deg' });
+}
+
 function createComponentRoot() {
+  resetGeometryEditorTestState();
   const dom = installDom();
   const container = dom.window.document.getElementById('root');
   assert.ok(container, 'root container should exist');
@@ -145,6 +162,7 @@ async function destroyComponentRoot(dom: JSDOM, root: Root) {
   await act(async () => {
     root.unmount();
   });
+  resetGeometryEditorTestState();
   dom.window.close();
 }
 
@@ -405,6 +423,10 @@ async function renderGeometryEditor(
   onUpdate: (nextLink: UrdfLink) => void,
   robot: RobotState = createRobot(link),
   category: 'visual' | 'collision' = 'visual',
+  options: {
+    assets?: Record<string, string>;
+    onUploadAsset?: (file: File) => void;
+  } = {},
 ) {
   await act(async () => {
     root.render(
@@ -413,13 +435,19 @@ async function renderGeometryEditor(
         robot,
         category,
         onUpdate,
-        assets: {},
-        onUploadAsset: () => {},
+        assets: options.assets ?? {},
+        onUploadAsset: options.onUploadAsset ?? (() => {}),
         t: translations.en,
         lang: 'en',
         isTabbed: true,
       }),
     );
+  });
+}
+
+async function clickElement(element: Element) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   });
 }
 
@@ -909,7 +937,6 @@ test('GeometryEditor uses the matching visual mesh orientation when converting a
     assert.equal(nextLink.collisionBodies?.[0]?.type, GeometryType.CYLINDER);
     assert.deepEqual(nextLink.collisionBodies?.[0]?.origin?.rpy, link.visualBodies[0]?.origin?.rpy);
   } finally {
-    fakeWorker.emitError(new Error('dispose mesh analysis worker after GeometryEditor test'));
     Object.defineProperty(globalThis, 'Worker', {
       configurable: true,
       writable: true,
@@ -988,7 +1015,6 @@ for (const targetType of [GeometryType.BOX, GeometryType.ELLIPSOID] as const) {
       assert.equal(nextLink.collisionBodies?.[0]?.type, targetType);
       assert.deepEqual(nextLink.collisionBodies?.[0]?.origin?.rpy, MATCHED_VISUAL_MESH_ORIGIN.rpy);
     } finally {
-      fakeWorker.emitError(new Error('dispose mesh analysis worker after GeometryEditor test'));
       Object.defineProperty(globalThis, 'Worker', {
         configurable: true,
         writable: true,
@@ -1090,7 +1116,6 @@ for (const sourceType of [
           MATCHED_VISUAL_MESH_ORIGIN.rpy,
         );
       } finally {
-        fakeWorker.emitError(new Error('dispose mesh analysis worker after GeometryEditor test'));
         Object.defineProperty(globalThis, 'Worker', {
           configurable: true,
           writable: true,
@@ -1232,7 +1257,18 @@ test('GeometryEditor shows authored material colors instead of a white fallback 
     assert.ok(container.textContent?.includes('#bebebe'));
     assert.ok(container.textContent?.includes('#ffffff'));
     assert.ok(container.textContent?.includes('#000000'));
+    assert.ok(
+      container.textContent?.includes(
+        'This visual uses multiple authored materials. Base texture editing is read-only here.',
+      ),
+    );
     assert.equal(container.querySelector('input[type="color"][aria-label="Color"]'), null);
+    assert.equal(
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('Upload Image'),
+      ),
+      false,
+    );
 
     const inputValues = Array.from(container.querySelectorAll('input')).map((input) =>
       (input as HTMLInputElement).value.trim().toLowerCase(),
@@ -1241,6 +1277,95 @@ test('GeometryEditor shows authored material colors instead of a white fallback 
       !inputValues.includes('#ffffff'),
       'multi-material meshes should not appear as editable white',
     );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor shows the primary visual legacy texture and promotes edits into authored materials', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+    robot.materials = {
+      base_link: {
+        texture: 'textures/legacy.png',
+      },
+    };
+
+    const updates: UrdfLink[] = [];
+    await renderGeometryEditor(
+      root,
+      link,
+      (nextLink) => {
+        updates.push(nextLink);
+      },
+      robot,
+      'visual',
+      {
+        assets: {
+          'textures/legacy.png': 'blob:legacy-texture',
+          'textures/updated.png': 'blob:updated-texture',
+        },
+      },
+    );
+
+    assert.ok(container.textContent?.includes('textures/legacy.png'));
+
+    const nextTextureButton = container.querySelector('[title="textures/updated.png"]');
+    assert.ok(nextTextureButton, 'updated texture asset should render');
+    await clickElement(nextTextureButton);
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'texture selection should emit an updated link');
+    assert.equal(nextLink.visual.authoredMaterials?.[0]?.texture, 'textures/updated.png');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor keeps secondary visual textures independent from the link-level legacy fallback', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    const robot = createRobot(link);
+    robot.materials = {
+      base_link: {
+        texture: 'textures/legacy.png',
+      },
+    };
+
+    const updates: UrdfLink[] = [];
+    await renderGeometryEditor(
+      root,
+      link,
+      (nextLink) => {
+        updates.push(nextLink);
+      },
+      robot,
+      'visual',
+      {
+        assets: {
+          'textures/legacy.png': 'blob:legacy-texture',
+          'textures/secondary.png': 'blob:secondary-texture',
+        },
+      },
+    );
+
+    assert.ok(!container.textContent?.includes('textures/legacy.png'));
+
+    const secondaryTextureButton = container.querySelector('[title="textures/secondary.png"]');
+    assert.ok(secondaryTextureButton, 'secondary texture asset should render');
+    await clickElement(secondaryTextureButton);
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'secondary texture selection should emit an updated link');
+    assert.equal(
+      nextLink.visualBodies?.[0]?.authoredMaterials?.[0]?.texture,
+      'textures/secondary.png',
+    );
+    assert.equal(nextLink.visual.authoredMaterials, undefined);
   } finally {
     await destroyComponentRoot(dom, root);
   }

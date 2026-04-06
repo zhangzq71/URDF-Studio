@@ -7,7 +7,12 @@ import { JSDOM } from 'jsdom';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
 import { disposeRobotImportWorker } from '@/app/hooks/robotImportWorkerBridge';
 import { parseURDF } from '@/core/parsers';
-import { computeLinkWorldMatrices, mergeAssembly, prepareAssemblyRobotData } from '@/core/robot';
+import {
+  computeLinkWorldMatrices,
+  estimateRobotGroundOffset,
+  mergeAssembly,
+  prepareAssemblyRobotData,
+} from '@/core/robot';
 import { resolveAlignedAssemblyComponentTransformForBridge } from '@/core/robot/assemblyBridgeAlignment';
 import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
 import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
@@ -1238,7 +1243,7 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData moves child components with s
   );
   assert.equal(
     displayRobot?.joints['__workspace_world__::component::comp_other']?.origin.xyz.z,
-    0.55,
+    0.3,
   );
 
   const normalizedDisplayRobot = normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource(
@@ -1488,8 +1493,8 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData preserves the anchor componen
   );
   assertNearlyEqual(
     anchorRootJoint.origin.xyz.z,
-    0.25,
-    'identity anchor should receive the viewer ground lift from its default geometry',
+    0,
+    'anchor component z should remain at the authored origin',
   );
   assertNearlyEqual(
     placedRootJoint.origin.xyz.x,
@@ -1508,7 +1513,90 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData preserves the anchor componen
   );
 });
 
-test('buildWorkspaceAssemblyViewerDisplayRobotData adds display-only ground lift for identity root components in multi-component mode', () => {
+test('buildWorkspaceAssemblyViewerDisplayRobotData does not double-apply isolated component transforms already encoded into the merged robot', () => {
+  const assemblyState = createAssemblyState('robots/demo/demo.urdf');
+  assemblyState.components.comp_demo.robot.links.base_link = {
+    ...assemblyState.components.comp_demo.robot.links.base_link,
+    visual: {
+      ...assemblyState.components.comp_demo.robot.links.base_link.visual,
+      type: GeometryType.BOX,
+      dimensions: { x: 0.4, y: 0.3, z: 0.2 },
+      origin: {
+        xyz: { x: 0, y: 0, z: 0.35 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    },
+  };
+  assemblyState.components.comp_demo.transform = {
+    position: { x: 0, y: 0, z: -0.25 },
+    rotation: { r: 0, p: 0, y: 0 },
+  };
+  assemblyState.components.comp_other = {
+    id: 'comp_other',
+    name: 'other',
+    sourceFile: 'robots/demo/other.urdf',
+    robot: {
+      name: 'other',
+      rootLinkId: 'comp_other_base_link',
+      links: {
+        comp_other_base_link: {
+          ...DEFAULT_LINK,
+          id: 'comp_other_base_link',
+          name: 'other_base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+            origin: {
+              xyz: { x: 0, y: 0, z: 0.4 },
+              rpy: { r: 0, p: 0, y: 0 },
+            },
+          },
+        },
+      },
+      joints: {},
+    },
+    transform: {
+      position: { x: 0.22, y: 0, z: -0.3 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  };
+
+  const mergedRobotData = buildExportableAssemblyRobotData(assemblyState);
+  const displayRobot = buildWorkspaceAssemblyViewerDisplayRobotData({
+    assemblyState,
+    mergedRobotData,
+  });
+
+  const anchorRootJoint = displayRobot?.joints['__workspace_world__::component::comp_demo'];
+  const placedRootJoint = displayRobot?.joints['__workspace_world__::component::comp_other'];
+
+  assert.ok(anchorRootJoint, 'expected a synthetic root joint for the first component');
+  assert.ok(placedRootJoint, 'expected a synthetic root joint for the second component');
+  assertNearlyEqual(
+    anchorRootJoint.origin.xyz.z,
+    -0.25,
+    'first component z should match its authored transform exactly once',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.x,
+    0.22,
+    'second component x should keep its authored placement',
+  );
+  assertNearlyEqual(
+    placedRootJoint.origin.xyz.z,
+    -0.3,
+    'second component z should match its authored transform exactly once',
+  );
+  assertNearlyEqual(
+    estimateRobotGroundOffset(displayRobot!),
+    0,
+    'display robot should already be grounded after composing the workspace view',
+  );
+});
+
+test('buildWorkspaceAssemblyViewerDisplayRobotData does not inject viewer-only ground lift for identity root components in multi-component mode', () => {
   const assemblyState = createAssemblyState('robots/demo/demo.urdf');
   assemblyState.components.comp_demo.robot.links.base_link = {
     ...assemblyState.components.comp_demo.robot.links.base_link,
@@ -1567,8 +1655,8 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData adds display-only ground lift
   );
   assertNearlyEqual(
     anchorRootJoint.origin.xyz.z,
-    0.6,
-    'identity anchor should receive a viewer-only ground lift',
+    0,
+    'identity anchor z should remain at the authored origin',
   );
   assertNearlyEqual(
     placedRootJoint.origin.xyz.z,
@@ -1577,7 +1665,7 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData adds display-only ground lift
   );
 });
 
-test('buildWorkspaceAssemblyViewerDisplayRobotData uses component renderable bounds for mesh ground lift', () => {
+test('buildWorkspaceAssemblyViewerDisplayRobotData preserves authored transforms even when component renderable bounds are available', () => {
   const assemblyState = createAssemblyState('robots/demo/demo.urdf');
   assemblyState.components.comp_demo.robot.links.base_link = {
     ...assemblyState.components.comp_demo.robot.links.base_link,
@@ -1629,8 +1717,8 @@ test('buildWorkspaceAssemblyViewerDisplayRobotData uses component renderable bou
   assert.ok(anchorRootJoint, 'expected a synthetic root joint for the mesh anchor component');
   assertNearlyEqual(
     anchorRootJoint.origin.xyz.z,
-    1.15,
-    'mesh anchor should use the provided renderable bounds instead of placeholder mesh extents',
+    0,
+    'mesh anchor should preserve its authored height instead of receiving display-only mesh lift',
   );
 });
 

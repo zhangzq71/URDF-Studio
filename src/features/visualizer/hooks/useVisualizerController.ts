@@ -201,6 +201,8 @@ export const useVisualizerController = ({
     handleRegisterJointMotion,
     handleRegisterCollisionRef,
     transformControlsState,
+    previewLinkIkKinematics: closedLoopDragSync.previewJointKinematics,
+    clearLinkIkKinematicsPreview: closedLoopDragSync.clearJointKinematicsPreview,
     handleAutoFitGround,
     requestGroundRealignment,
     handleCollisionTransformEnd,

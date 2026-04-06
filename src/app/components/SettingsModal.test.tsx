@@ -295,3 +295,51 @@ test('SettingsModal keeps the detail pane scrollable within a bounded container'
     dom.window.close();
   }
 });
+
+test('SettingsModal toggles the MJCF world visibility preference from the view page', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const initialState = useUIStore.getState();
+
+  try {
+    useUIStore.setState({
+      isSettingsOpen: true,
+      settingsPos: { x: 48, y: 64 },
+      viewOptions: {
+        ...initialState.viewOptions,
+        showMjcfWorldLink: false,
+      },
+    });
+
+    await act(async () => {
+      root.render(React.createElement(SettingsModal));
+    });
+
+    const viewButton = container.querySelector(
+      '[data-settings-page="view"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(viewButton, 'settings navigation should expose a view page');
+
+    await act(async () => {
+      viewButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const switches = Array.from(container.querySelectorAll('[role="switch"]'));
+    assert.ok(switches.length >= 3, 'view settings should render the expected toggle controls');
+
+    const mjcfWorldSwitch = switches[1] as HTMLButtonElement;
+    assert.equal(mjcfWorldSwitch.getAttribute('aria-checked'), 'false');
+
+    await act(async () => {
+      mjcfWorldSwitch.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    assert.equal(useUIStore.getState().viewOptions.showMjcfWorldLink, true);
+    assert.equal(mjcfWorldSwitch.getAttribute('aria-checked'), 'true');
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    useUIStore.setState(initialState);
+    dom.window.close();
+  }
+});

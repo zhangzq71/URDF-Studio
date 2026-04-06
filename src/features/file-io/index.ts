@@ -29,6 +29,9 @@ export type {
   ExportRobotToUsdProgress,
   ProjectExportProgress,
   ProjectExportProgressPhase,
+  ProjectImportResult,
+  ImportedProjectArchiveData,
+  ImportedProjectLibraryFile,
   UsdMeshCompressionOptions,
   ExportProjectParams,
 } from './utils';
@@ -60,6 +63,8 @@ export {
   exportProject,
   exportProjectWithWorker,
   importProject,
+  importProjectWithWorker,
+  disposeProjectImportWorker,
   USD_EXPORT_WORKER_SUPPORTED_MESH_EXTENSIONS,
 } from './utils';
 

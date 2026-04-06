@@ -4,6 +4,11 @@ import * as THREE from 'three';
 import { UnifiedTransformControls } from '@/shared/components/3d';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { hasEffectivelyFiniteJointLimits } from '@/shared/utils/jointUnits';
+import {
+  extractSignedAngleAroundAxis,
+  getJointActualAngleFromMotionAngle,
+  getJointMotionAngleFromActualAngle,
+} from '@/core/robot';
 import type { JointInteractionProps } from '../types';
 
 export const JointInteraction: React.FC<JointInteractionProps> = ({
@@ -45,6 +50,10 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
     if (absY >= absX && absY >= absZ) return 'Y';
     return 'Z';
   }, [axisNormalized]);
+  const displayedMotionAngle = useMemo(
+    () => getJointMotionAngleFromActualAngle(joint, value),
+    [joint, value],
+  );
 
   // Function to update dummy position and orientation
   const updateDummyTransform = useCallback(() => {
@@ -72,14 +81,14 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
           dummyRef.current.quaternion.multiply(alignQ);
 
           // Apply the current joint angle rotation
-          const rotQ = new THREE.Quaternion().setFromAxisAngle(alignVector, value); // Rotate around LOCAL axis
+          const rotQ = new THREE.Quaternion().setFromAxisAngle(alignVector, displayedMotionAngle);
           dummyRef.current.quaternion.multiply(rotQ);
         }
       } catch (e) {
         // Prevent crash on math error
       }
     }
-  }, [joint, rotationAxis, axisNormalized, value]);
+  }, [axisNormalized, displayedMotionAngle, joint, rotationAxis]);
 
   // Force update on mount to ensure TransformControls has the dummy object
   useEffect(() => {
@@ -158,12 +167,8 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
       // Q_delta = Q_zero^-1 * Q_current
       const deltaQuat = zeroQuat.clone().invert().multiply(dummyRef.current.quaternion);
 
-      // Extract angle from deltaQuat
-      // 2 * atan2(q.component, q.w) gives the angle
-      let newValue = 0;
-      if (rotationAxis === 'X') newValue = 2 * Math.atan2(deltaQuat.x, deltaQuat.w);
-      else if (rotationAxis === 'Y') newValue = 2 * Math.atan2(deltaQuat.y, deltaQuat.w);
-      else newValue = 2 * Math.atan2(deltaQuat.z, deltaQuat.w);
+      const motionAngle = extractSignedAngleAroundAxis(deltaQuat, alignVector);
+      let newValue = getJointActualAngleFromMotionAngle(joint, motionAngle);
 
       // Apply limits for revolute joints
       const limit = joint.limit;

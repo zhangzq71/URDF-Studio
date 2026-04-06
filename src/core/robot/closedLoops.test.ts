@@ -10,12 +10,14 @@ import { parseMJCF } from '@/core/parsers/mjcf/mjcfParser.ts';
 import { computeLinkWorldMatrices } from '@/core/robot/kinematics.ts';
 
 import {
+  resolveClosedLoopDrivenJointMotion,
   resolveClosedLoopJointMotionCompensation,
   resolveClosedLoopJointAngleCompensation,
   resolveClosedLoopJointOriginCompensation,
   resolveClosedLoopJointOriginCompensationDetailed,
   solveClosedLoopMotionCompensation,
 } from './closedLoops.ts';
+import { resolveMimicJointAngleTargets } from './mimic.ts';
 
 function installDomGlobals(): void {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { contentType: 'text/html' });
@@ -35,6 +37,174 @@ function createNoneVisual(): UrdfVisual {
     color: '#000000',
     origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
   };
+}
+
+const MENAGERIE_ROOT = 'test/mujoco_menagerie-main';
+const EXPECTED_MENAGERIE_CLOSED_LOOP_FIXTURE_PATHS = [
+  'test/mujoco_menagerie-main/agility_cassie/cassie.xml',
+  'test/mujoco_menagerie-main/iit_softfoot/softfoot.xml',
+  'test/mujoco_menagerie-main/robotiq_2f85/2f85.xml',
+  'test/mujoco_menagerie-main/robotiq_2f85_v4/2f85.xml',
+  'test/mujoco_menagerie-main/robotiq_2f85_v4/mjx_2f85.xml',
+  'test/mujoco_menagerie-main/stanford_tidybot/tidybot.xml',
+  'test/mujoco_menagerie-main/ufactory_xarm7/hand.xml',
+  'test/mujoco_menagerie-main/ufactory_xarm7/xarm7.xml',
+] as const satisfies readonly string[];
+
+function collectXmlFixturePaths(dirPath: string): string[] {
+  return fs
+    .readdirSync(dirPath, { withFileTypes: true })
+    .flatMap((entry) => {
+      const nextPath = `${dirPath}/${entry.name}`;
+      if (entry.isDirectory()) {
+        return collectXmlFixturePaths(nextPath);
+      }
+
+      return entry.isFile() && nextPath.endsWith('.xml') ? [nextPath] : [];
+    })
+    .sort();
+}
+
+function sortFixturePaths(paths: readonly string[]): string[] {
+  return [...paths].sort((left, right) => left.localeCompare(right));
+}
+
+function hasWorldBody(xml: string): boolean {
+  return /<worldbody\b/i.test(xml);
+}
+
+function isDrivenJointCandidate(joint: RobotState['joints'][string] | undefined): boolean {
+  const jointType = String(joint?.type ?? '').toLowerCase();
+  return jointType === 'revolute' || jointType === 'continuous' || jointType === 'prismatic';
+}
+
+function buildParentJointEntries(
+  robot: Pick<RobotState, 'joints'>,
+): Map<string, { jointId: string; joint: RobotState['joints'][string] }> {
+  const parentJointEntries = new Map<
+    string,
+    { jointId: string; joint: RobotState['joints'][string] }
+  >();
+
+  Object.entries(robot.joints).forEach(([jointId, joint]) => {
+    parentJointEntries.set(joint.childLinkId, { jointId, joint });
+  });
+
+  return parentJointEntries;
+}
+
+function findNearestDrivenJointCandidate(
+  linkId: string,
+  parentJointEntries: Map<string, { jointId: string; joint: RobotState['joints'][string] }>,
+): string | null {
+  const visitedLinkIds = new Set<string>();
+  let currentLinkId: string | null = linkId;
+
+  while (currentLinkId && !visitedLinkIds.has(currentLinkId)) {
+    visitedLinkIds.add(currentLinkId);
+    const parentJointEntry = parentJointEntries.get(currentLinkId);
+    if (!parentJointEntry) {
+      return null;
+    }
+
+    if (isDrivenJointCandidate(parentJointEntry.joint)) {
+      return parentJointEntry.jointId;
+    }
+
+    currentLinkId = parentJointEntry.joint.parentLinkId;
+  }
+
+  return null;
+}
+
+function chooseDrivenJointTestAngle(joint: RobotState['joints'][string]): number {
+  const lower = Number.isFinite(joint.limit?.lower) ? joint.limit!.lower : -1;
+  const upper = Number.isFinite(joint.limit?.upper) ? joint.limit!.upper : 1;
+  const current = Number.isFinite(joint.angle) ? joint.angle! : 0;
+  const span = upper - lower;
+  const step = Math.min(0.3, Math.abs(span) > 1e-6 ? Math.max(0.05, Math.abs(span) * 0.12) : 0.1);
+
+  let selectedAngle = current + step;
+  if (selectedAngle > upper) {
+    selectedAngle = current - step;
+  }
+  if (selectedAngle < lower) {
+    selectedAngle = (lower + upper) / 2;
+  }
+  if (Math.abs(selectedAngle - current) <= 1e-9 && upper > current) {
+    selectedAngle = Math.min(upper, current + 0.05);
+  }
+  if (Math.abs(selectedAngle - current) <= 1e-9 && lower < current) {
+    selectedAngle = Math.max(lower, current - 0.05);
+  }
+
+  return selectedAngle;
+}
+
+function discoverClosedLoopMenagerieFixtures() {
+  return collectXmlFixturePaths(MENAGERIE_ROOT)
+    .flatMap((fixturePath) => {
+      const xml = fs.readFileSync(fixturePath, 'utf8');
+      if (!hasWorldBody(xml)) {
+        return [];
+      }
+
+      const robot = parseMJCF(xml);
+      return robot?.closedLoopConstraints?.length ? [{ fixturePath, robot }] : [];
+    })
+    .sort((left, right) => left.fixturePath.localeCompare(right.fixturePath));
+}
+
+function pickDrivenJointSolveCase(
+  robot: RobotState,
+  fixturePath: string,
+): {
+  selectedJointId: string;
+  selectedAngle: number;
+  drivenMotion: ReturnType<typeof resolveMimicJointAngleTargets>;
+  solution: ReturnType<typeof solveClosedLoopMotionCompensation>;
+} {
+  const parentJointEntries = buildParentJointEntries(robot);
+  const candidateJointIds = [
+    ...new Set(
+      (robot.closedLoopConstraints ?? []).flatMap((constraint) => [
+        findNearestDrivenJointCandidate(constraint.linkAId, parentJointEntries),
+        findNearestDrivenJointCandidate(constraint.linkBId, parentJointEntries),
+      ]),
+    ),
+  ].filter((jointId): jointId is string => Boolean(jointId));
+
+  const attemptedJointIds: string[] = [];
+
+  for (const selectedJointId of candidateJointIds) {
+    const joint = robot.joints[selectedJointId];
+    if (!joint) {
+      continue;
+    }
+
+    attemptedJointIds.push(selectedJointId);
+    const selectedAngle = chooseDrivenJointTestAngle(joint);
+    const drivenMotion = resolveMimicJointAngleTargets(robot, selectedJointId, selectedAngle);
+    const solution = solveClosedLoopMotionCompensation(robot, {
+      angles: drivenMotion.angles,
+      lockedJointIds: drivenMotion.lockedJointIds,
+    });
+    const compensationCount =
+      Object.keys(solution.angles).length + Object.keys(solution.quaternions).length;
+
+    if (solution.converged && compensationCount > 0) {
+      return {
+        selectedJointId,
+        selectedAngle,
+        drivenMotion,
+        solution,
+      };
+    }
+  }
+
+  assert.fail(
+    `expected ${fixturePath} to expose a loop-relevant driven joint candidate, attempted=${attemptedJointIds.join(', ') || 'none'}`,
+  );
 }
 
 const robotWithClosedLoop: RobotState = {
@@ -122,6 +292,41 @@ const robotWithClosedLoop: RobotState = {
   ],
 };
 
+const robotWithDistanceLoop: RobotState = {
+  ...robotWithClosedLoop,
+  joints: {
+    joint_a: {
+      ...robotWithClosedLoop.joints.joint_a,
+      type: JointType.PRISMATIC,
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      axis: { x: 1, y: 0, z: 0 },
+      limit: { lower: -2, upper: 2, effort: 1, velocity: 1 },
+      angle: 0,
+    },
+    joint_b: {
+      ...robotWithClosedLoop.joints.joint_b,
+      type: JointType.PRISMATIC,
+      origin: { xyz: { x: 1.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      axis: { x: 1, y: 0, z: 0 },
+      limit: { lower: -2, upper: 2, effort: 1, velocity: 1 },
+      angle: 0,
+    },
+  },
+  closedLoopConstraints: [
+    {
+      id: 'distance-link-a-link-b',
+      type: 'distance',
+      linkAId: 'link_a',
+      linkBId: 'link_b',
+      restDistance: 1.2,
+      anchorWorld: { x: 0, y: 0, z: 0 },
+      anchorLocalA: { x: 0, y: 0, z: 0 },
+      anchorLocalB: { x: 0, y: 0, z: 0 },
+      source: { format: 'mjcf', body1Name: 'link_a', body2Name: 'link_b' },
+    },
+  ],
+};
+
 test(
   'resolveClosedLoopJointOriginCompensation moves the opposite branch to preserve a connect loop',
   { concurrency: false },
@@ -134,6 +339,28 @@ test(
     assert.deepEqual(compensation, {
       joint_b: {
         xyz: { x: 2.2, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    });
+  },
+);
+
+test(
+  'resolveClosedLoopJointOriginCompensation moves the opposite branch to preserve a distance loop',
+  { concurrency: false },
+  () => {
+    const compensation = resolveClosedLoopJointOriginCompensation(
+      robotWithDistanceLoop,
+      'joint_a',
+      {
+        xyz: { x: 0.3, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    );
+
+    assert.deepEqual(compensation, {
+      joint_b: {
+        xyz: { x: 1.5, y: 0, z: 0 },
         rpy: { r: 0, p: 0, y: 0 },
       },
     });
@@ -174,6 +401,20 @@ test(
     });
 
     assert.deepEqual(compensation, {});
+  },
+);
+
+test(
+  'resolveClosedLoopJointAngleCompensation solves a distance loop by adjusting the opposite prismatic joint',
+  { concurrency: false },
+  () => {
+    const compensation = resolveClosedLoopJointAngleCompensation(
+      robotWithDistanceLoop,
+      'joint_a',
+      0.3,
+    );
+
+    assert.ok(Math.abs((compensation.joint_b ?? 0) - 0.3) < 1e-3);
   },
 );
 
@@ -361,6 +602,102 @@ test(
 );
 
 test(
+  'resolveClosedLoopDrivenJointMotion clamps an infeasible Robotiq coupler drag to the closed-loop boundary',
+  { concurrency: false },
+  () => {
+    installDomGlobals();
+
+    const xml = fs.readFileSync('test/mujoco_menagerie-main/robotiq_2f85/2f85.xml', 'utf8');
+    const robot = parseMJCF(xml);
+
+    assert.ok(robot);
+
+    const requestedAngle = -1.57;
+    const requestedDrivenMotion = resolveMimicJointAngleTargets(
+      robot,
+      'right_coupler_joint',
+      requestedAngle,
+    );
+    const unconstrainedSolution = solveClosedLoopMotionCompensation(robot, {
+      angles: requestedDrivenMotion.angles,
+      lockedJointIds: requestedDrivenMotion.lockedJointIds,
+    });
+    assert.equal(unconstrainedSolution.converged, false);
+
+    const constrained = resolveClosedLoopDrivenJointMotion(
+      robot,
+      'right_coupler_joint',
+      requestedAngle,
+    );
+
+    assert.equal(constrained.constrained, true);
+    assert.equal(constrained.converged, true);
+    assert.ok(
+      constrained.residual < 1e-4,
+      `expected residual to stay small, residual=${constrained.residual}`,
+    );
+    assert.ok(
+      (constrained.angles.right_coupler_joint ?? 0) > -0.8,
+      `expected right_coupler_joint to move materially toward the feasible boundary, angle=${constrained.angles.right_coupler_joint}`,
+    );
+    assert.ok(
+      (constrained.angles.right_coupler_joint ?? 0) < -0.4,
+      `expected right_coupler_joint to remain meaningfully closed, angle=${constrained.angles.right_coupler_joint}`,
+    );
+    assert.ok(
+      typeof constrained.angles.right_driver_joint === 'number' &&
+        (constrained.angles.right_driver_joint ?? 0) > 0.3 &&
+        (constrained.angles.right_driver_joint ?? 0) < 0.8,
+      `expected right_driver_joint to be driven by the constrained solution, angle=${constrained.angles.right_driver_joint}`,
+    );
+    assert.ok(
+      Math.abs((constrained.angles.right_follower_joint ?? 0) - 0.872664) < 1e-6,
+      `expected right_follower_joint to be pushed onto its upper feasible boundary, angle=${constrained.angles.right_follower_joint}`,
+    );
+  },
+);
+
+test(
+  'resolveClosedLoopDrivenJointMotion constrains Robotiq follower drags using the rebased connect anchor',
+  { concurrency: false },
+  () => {
+    installDomGlobals();
+
+    const xml = fs.readFileSync('test/mujoco_menagerie-main/robotiq_2f85/2f85.xml', 'utf8');
+    const robot = parseMJCF(xml);
+
+    assert.ok(robot);
+
+    const constrained = resolveClosedLoopDrivenJointMotion(robot, 'right_follower_joint', -0.8);
+    assert.equal(constrained.constrained, true);
+    assert.equal(constrained.converged, true);
+    assert.ok(
+      Math.abs(constrained.angles.right_follower_joint ?? 0) < 0.01,
+      `expected right_follower_joint to clamp near the feasible boundary, angle=${constrained.angles.right_follower_joint}`,
+    );
+
+    const coupled = resolveClosedLoopDrivenJointMotion(robot, 'right_follower_joint', 0.8);
+    assert.equal(coupled.converged, true);
+    assert.ok(
+      Math.abs((coupled.angles.right_follower_joint ?? 0) - 0.8) < 1e-9,
+      `expected feasible follower request to be preserved, angle=${coupled.angles.right_follower_joint}`,
+    );
+    assert.ok(
+      typeof coupled.angles.right_coupler_joint === 'number',
+      'expected follower drag to drive right_coupler_joint compensation',
+    );
+    assert.ok(
+      typeof coupled.angles.right_driver_joint === 'number',
+      'expected follower drag to drive right_driver_joint compensation',
+    );
+    assert.ok(
+      typeof coupled.angles.right_spring_link_joint === 'number',
+      'expected follower drag to drive right_spring_link_joint compensation',
+    );
+  },
+);
+
+test(
   'resolveClosedLoopJointOriginCompensationDetailed previews Cassie ball-joint closure during origin drag',
   { concurrency: false },
   () => {
@@ -420,37 +757,42 @@ test(
 );
 
 test(
-  'solveClosedLoopMotionCompensation keeps representative body-connect menagerie models stable and scoped',
+  'parseMJCF discovers every closed-loop menagerie fixture under test/mujoco_menagerie-main',
   { concurrency: false },
   () => {
     installDomGlobals();
 
-    const cases = [
-      {
-        fixturePath: 'test/mujoco_menagerie-main/robotiq_2f85/2f85.xml',
-        selectedJointId: 'right_driver_joint',
-        selectedAngle: 0.3,
-      },
-      {
-        fixturePath: 'test/mujoco_menagerie-main/stanford_tidybot/tidybot.xml',
-        selectedJointId: 'right_driver_joint',
-        selectedAngle: 0.3,
-      },
-      {
-        fixturePath: 'test/mujoco_menagerie-main/ufactory_xarm7/xarm7.xml',
-        selectedJointId: 'right_driver_joint',
-        selectedAngle: 0.2,
-      },
-    ] as const;
+    const fixtures = discoverClosedLoopMenagerieFixtures();
 
-    cases.forEach(({ fixturePath, selectedJointId, selectedAngle }) => {
-      const robot = parseMJCF(fs.readFileSync(fixturePath, 'utf8'));
+    assert.deepEqual(
+      fixtures.map(({ fixturePath }) => fixturePath),
+      sortFixturePaths(EXPECTED_MENAGERIE_CLOSED_LOOP_FIXTURE_PATHS),
+    );
+  },
+);
 
-      assert.ok(robot, `expected ${fixturePath} to parse`);
+test(
+  'solveClosedLoopMotionCompensation keeps every discovered menagerie closed-loop model stable and scoped',
+  { concurrency: false },
+  () => {
+    installDomGlobals();
 
-      const solution = solveClosedLoopMotionCompensation(robot, {
-        angles: { [selectedJointId]: selectedAngle },
-      });
+    const fixtures = discoverClosedLoopMenagerieFixtures();
+    assert.deepEqual(
+      fixtures.map(({ fixturePath }) => fixturePath),
+      sortFixturePaths(EXPECTED_MENAGERIE_CLOSED_LOOP_FIXTURE_PATHS),
+    );
+
+    fixtures.forEach(({ fixturePath, robot }) => {
+      const { selectedJointId, selectedAngle, drivenMotion, solution } = pickDrivenJointSolveCase(
+        robot,
+        fixturePath,
+      );
+
+      assert.ok(
+        Math.abs((drivenMotion.angles[selectedJointId] ?? selectedAngle) - selectedAngle) < 1e-9,
+        `expected ${fixturePath} to drive the selected loop-relevant joint directly, jointId=${selectedJointId}`,
+      );
 
       assert.ok(solution.converged, `expected ${fixturePath} to converge`);
       assert.ok(
@@ -469,10 +811,17 @@ test(
         );
       });
 
+      const compensationCount =
+        Object.keys(solution.angles).length + Object.keys(solution.quaternions).length;
+      assert.ok(
+        compensationCount > 0,
+        `expected ${fixturePath} to emit non-empty closed-loop compensation for jointId=${selectedJointId}`,
+      );
+
       [...Object.keys(solution.angles), ...Object.keys(solution.quaternions)].forEach((jointId) => {
         assert.ok(
-          jointId.startsWith('right_'),
-          `expected ${fixturePath} compensation to stay on the driven side, jointId=${jointId}`,
+          !drivenMotion.lockedJointIds.includes(jointId),
+          `expected ${fixturePath} compensation to avoid explicitly driven joints, jointId=${jointId}`,
         );
       });
     });

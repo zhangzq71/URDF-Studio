@@ -29,6 +29,20 @@ const SNAPSHOT_RENDER_TARGET_SAMPLES = {
   ultra: 8,
 } as const;
 
+const SNAPSHOT_HDR_PRELOAD_FILE = '/potsdamer_platz_1k.hdr';
+
+let snapshotHdrPreloadPromise: Promise<void> | null = null;
+
+function ensureSnapshotHdrPreloaded(): Promise<void> {
+  if (!snapshotHdrPreloadPromise) {
+    snapshotHdrPreloadPromise = Promise.resolve().then(() => {
+      useEnvironment.preload({ files: SNAPSHOT_HDR_PRELOAD_FILE });
+    });
+  }
+
+  return snapshotHdrPreloadPromise;
+}
+
 interface SnapshotManagerProps {
   actionRef?: RefObject<SnapshotCaptureAction | null>;
   robotName: string;
@@ -48,10 +62,6 @@ export const SnapshotManager = ({
     typeof normalizeSnapshotCaptureOptions
   > | null>(null);
   const { setSnapshotRenderActive } = useSnapshotRenderContext();
-
-  useEffect(() => {
-    useEnvironment.preload({ files: '/potsdamer_platz_1k.hdr' });
-  }, []);
 
   useEffect(() => {
     if (!actionRef) return;
@@ -390,6 +400,7 @@ export const SnapshotManager = ({
     actionRef.current = async (requestedOptions) => {
       const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
       const frozenCamera = cloneSnapshotCamera(get().camera);
+      await ensureSnapshotHdrPreloaded();
       clearPendingFrames();
       setSnapshotRenderActive(true);
       setActiveSnapshotOptions(snapshotOptions);

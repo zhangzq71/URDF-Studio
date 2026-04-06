@@ -3,10 +3,16 @@ import type { RobotData, RobotState } from '@/types';
 export function shouldAnimateWorkspaceViewerRobot({
   shouldRenderAssembly,
   previouslyRenderedAssembly,
+  isPreviewingAssemblyBridge = false,
 }: {
   shouldRenderAssembly: boolean;
   previouslyRenderedAssembly: boolean;
+  isPreviewingAssemblyBridge?: boolean;
 }): boolean {
+  if (isPreviewingAssemblyBridge) {
+    return false;
+  }
+
   return shouldRenderAssembly && previouslyRenderedAssembly;
 }
 

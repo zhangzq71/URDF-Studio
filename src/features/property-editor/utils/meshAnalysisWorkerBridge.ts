@@ -383,6 +383,14 @@ export function createMeshAnalysisWorkerClient({
     dispose: (rejectPendingWith?: unknown) => {
       disposeWorkerPool(rejectPendingWith);
     },
+    reset: () => {
+      disposeWorkerPool();
+      meshAnalysisCache.clear();
+      pendingWorkerRequests.clear();
+      requestIdCounter = 0;
+      workerUnavailable = false;
+      maxWorkerCount = null;
+    },
   };
 }
 
@@ -400,4 +408,8 @@ export async function analyzeMeshBatchWithWorker({
     options,
     signal,
   });
+}
+
+export function __resetMeshAnalysisWorkerBridgeForTests(): void {
+  sharedMeshAnalysisWorkerClient.reset();
 }

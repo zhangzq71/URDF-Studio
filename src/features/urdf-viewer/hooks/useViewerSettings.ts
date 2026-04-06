@@ -6,6 +6,7 @@ import { resolveInteractiveLayerPriority } from '../utils/interactiveLayerPriori
 const ACTIVE_OVERLAY_LAYER_STORAGE_KEY = 'urdf_viewer_active_overlay_layer_v1';
 const ORIGIN_OVERLAY_STORAGE_KEY = 'urdf_viewer_origin_overlay_v2';
 const COLLISION_ALWAYS_ON_TOP_STORAGE_KEY = 'urdf_viewer_collision_always_on_top';
+const IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY = 'urdf_viewer_ik_handle_always_on_top';
 const CENTER_OF_MASS_OVERLAY_STORAGE_KEY = 'urdf_viewer_com_overlay';
 const INERTIA_OVERLAY_STORAGE_KEY = 'urdf_viewer_inertia_overlay';
 const JOINT_AXIS_OVERLAY_STORAGE_KEY = 'urdf_viewer_joint_axis_overlay';
@@ -15,6 +16,7 @@ const SHOW_CENTER_OF_MASS_STORAGE_KEY = 'urdf_viewer_show_center_of_mass';
 const SHOW_INERTIA_STORAGE_KEY = 'urdf_viewer_show_inertia';
 const SHOW_ORIGINS_STORAGE_KEY = 'urdf_viewer_show_origins';
 const SHOW_JOINT_AXES_STORAGE_KEY = 'urdf_viewer_show_joint_axes';
+const SHOW_MJCF_SITES_STORAGE_KEY = 'urdf_viewer_show_mjcf_sites';
 
 const OVERLAY_LAYER_PRIORITY: readonly ViewerOverlayLayer[] = [
   'collision',
@@ -24,7 +26,7 @@ const OVERLAY_LAYER_PRIORITY: readonly ViewerOverlayLayer[] = [
   'inertia',
 ];
 
-type ViewerOverlayLayer = Exclude<ViewerInteractiveLayer, 'visual'>;
+type ViewerOverlayLayer = Exclude<ViewerInteractiveLayer, 'visual' | 'ik-handle'>;
 
 function isViewerOverlayLayer(value: unknown): value is ViewerOverlayLayer {
   return typeof value === 'string' && OVERLAY_LAYER_PRIORITY.includes(value as ViewerOverlayLayer);
@@ -83,6 +85,10 @@ export interface ViewerSettings {
   setShowCollisionAlwaysOnTop: React.Dispatch<React.SetStateAction<boolean>>;
   localShowVisual: boolean;
   setLocalShowVisual: React.Dispatch<React.SetStateAction<boolean>>;
+  showIkHandles: boolean;
+  setShowIkHandles: React.Dispatch<React.SetStateAction<boolean>>;
+  showIkHandlesAlwaysOnTop: boolean;
+  setShowIkHandlesAlwaysOnTop: React.Dispatch<React.SetStateAction<boolean>>;
   showCenterOfMass: boolean;
   setShowCenterOfMass: React.Dispatch<React.SetStateAction<boolean>>;
   showCoMOverlay: boolean;
@@ -99,6 +105,8 @@ export interface ViewerSettings {
   setShowOriginsOverlay: React.Dispatch<React.SetStateAction<boolean>>;
   originSize: number;
   setOriginSize: React.Dispatch<React.SetStateAction<number>>;
+  showMjcfSites: boolean;
+  setShowMjcfSites: React.Dispatch<React.SetStateAction<boolean>>;
   showJointAxes: boolean;
   setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>>;
   showJointAxesOverlay: boolean;
@@ -121,7 +129,14 @@ export function useViewerSettings(): ViewerSettings {
   const viewOptions = useUIStore((state) => state.viewOptions);
   const setViewOption = useUIStore((state) => state.setViewOption);
 
-  const { showCollision, showJointAxes, showInertia, showCenterOfMass, modelOpacity } = viewOptions;
+  const {
+    showCollision,
+    showIkHandles,
+    showJointAxes,
+    showInertia,
+    showCenterOfMass,
+    modelOpacity,
+  } = viewOptions;
 
   const [activeOverlayLayer, setActiveOverlayLayerState] = useState<ViewerOverlayLayer | null>(() =>
     resolveInitialActiveOverlayLayer(),
@@ -130,6 +145,13 @@ export function useViewerSettings(): ViewerSettings {
   const [localShowVisualState, setLocalShowVisualState] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem(SHOW_VISUAL_STORAGE_KEY);
+      return saved !== 'false';
+    }
+    return true;
+  });
+  const [showIkHandlesAlwaysOnTop, setShowIkHandlesAlwaysOnTopState] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY);
       return saved !== 'false';
     }
     return true;
@@ -146,6 +168,12 @@ export function useViewerSettings(): ViewerSettings {
   const [showOriginsState, setShowOriginsState] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(SHOW_ORIGINS_STORAGE_KEY) === 'true';
+    }
+    return false;
+  });
+  const [showMjcfSitesState, setShowMjcfSitesState] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(SHOW_MJCF_SITES_STORAGE_KEY) === 'true';
     }
     return false;
   });
@@ -170,6 +198,7 @@ export function useViewerSettings(): ViewerSettings {
   const [interactionActivationOrder, setInteractionActivationOrder] = useState<
     Record<ViewerInteractiveLayer, number>
   >({
+    'ik-handle': 0,
     visual: 1,
     collision: 0,
     'origin-axes': 0,
@@ -216,8 +245,16 @@ export function useViewerSettings(): ViewerSettings {
   }, [showOriginsState]);
 
   useEffect(() => {
+    localStorage.setItem(SHOW_MJCF_SITES_STORAGE_KEY, showMjcfSitesState.toString());
+  }, [showMjcfSitesState]);
+
+  useEffect(() => {
     localStorage.setItem('urdf_viewer_joint_axis_size', jointAxisSize.toString());
   }, [jointAxisSize]);
+
+  useEffect(() => {
+    localStorage.setItem(IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY, showIkHandlesAlwaysOnTop.toString());
+  }, [showIkHandlesAlwaysOnTop]);
 
   useEffect(() => {
     localStorage.setItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY, activeOverlayLayer ?? 'none');
@@ -266,6 +303,7 @@ export function useViewerSettings(): ViewerSettings {
 
   const localShowVisual = localShowVisualState;
   const showOrigins = showOriginsState;
+  const showMjcfSites = showMjcfSitesState;
 
   const setShowCollision: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
     (nextValue) => {
@@ -339,6 +377,15 @@ export function useViewerSettings(): ViewerSettings {
     [bumpInteractionLayer, setActiveOverlayLayer, showOriginsOverlay, showOriginsState],
   );
 
+  const setShowMjcfSites: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showMjcfSitesState) : nextValue;
+      setShowMjcfSitesState(resolvedValue);
+    },
+    [showMjcfSitesState],
+  );
+
   const setShowJointAxes: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
     (nextValue) => {
       const resolvedValue = typeof nextValue === 'function' ? nextValue(showJointAxes) : nextValue;
@@ -356,6 +403,29 @@ export function useViewerSettings(): ViewerSettings {
       showJointAxes,
       showJointAxesOverlay,
     ],
+  );
+
+  const setShowIkHandles: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue = typeof nextValue === 'function' ? nextValue(showIkHandles) : nextValue;
+      setViewOption('showIkHandles', resolvedValue);
+      if (resolvedValue) {
+        bumpInteractionLayer('ik-handle');
+      }
+    },
+    [bumpInteractionLayer, setViewOption, showIkHandles],
+  );
+
+  const setShowIkHandlesAlwaysOnTop: React.Dispatch<React.SetStateAction<boolean>> = useCallback(
+    (nextValue) => {
+      const resolvedValue =
+        typeof nextValue === 'function' ? nextValue(showIkHandlesAlwaysOnTop) : nextValue;
+      setShowIkHandlesAlwaysOnTopState(resolvedValue);
+      if (resolvedValue && showIkHandles) {
+        bumpInteractionLayer('ik-handle');
+      }
+    },
+    [bumpInteractionLayer, showIkHandles, showIkHandlesAlwaysOnTop],
   );
 
   const setShowCollisionAlwaysOnTopTracked: React.Dispatch<React.SetStateAction<boolean>> =
@@ -407,6 +477,8 @@ export function useViewerSettings(): ViewerSettings {
     () =>
       resolveInteractiveLayerPriority({
         showVisual: localShowVisual,
+        showIkHandles,
+        showIkHandlesAlwaysOnTop,
         showCollision,
         showCollisionAlwaysOnTop,
         showOrigins,
@@ -422,6 +494,8 @@ export function useViewerSettings(): ViewerSettings {
     [
       interactionActivationOrder,
       localShowVisual,
+      showIkHandles,
+      showIkHandlesAlwaysOnTop,
       showCenterOfMass,
       showCoMOverlay,
       showCollision,
@@ -466,6 +540,10 @@ export function useViewerSettings(): ViewerSettings {
     setShowCollisionAlwaysOnTop: setShowCollisionAlwaysOnTopTracked,
     localShowVisual,
     setLocalShowVisual,
+    showIkHandles,
+    setShowIkHandles,
+    showIkHandlesAlwaysOnTop,
+    setShowIkHandlesAlwaysOnTop,
     showCenterOfMass,
     setShowCenterOfMass,
     showCoMOverlay,
@@ -482,6 +560,8 @@ export function useViewerSettings(): ViewerSettings {
     setShowOriginsOverlay: setShowOriginsOverlayTracked,
     originSize,
     setOriginSize,
+    showMjcfSites,
+    setShowMjcfSites,
     showJointAxes,
     setShowJointAxes,
     showJointAxesOverlay,

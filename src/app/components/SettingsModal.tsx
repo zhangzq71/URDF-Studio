@@ -385,6 +385,7 @@ export function SettingsModal() {
     showImportWarning,
     setShowImportWarning,
     showWorldOriginAxes,
+    showMjcfWorldGeometry,
     showUsageGuide,
     setViewOption,
     fontSize,
@@ -408,6 +409,7 @@ export function SettingsModal() {
       showImportWarning: state.showImportWarning,
       setShowImportWarning: state.setShowImportWarning,
       showWorldOriginAxes: state.viewOptions.showAxes,
+      showMjcfWorldGeometry: state.viewOptions.showMjcfWorldLink,
       showUsageGuide: state.viewOptions.showUsageGuide,
       setViewOption: state.setViewOption,
       fontSize: state.fontSize,
@@ -681,6 +683,11 @@ export function SettingsModal() {
                 label={t.showWorldOriginAxes}
                 checked={showWorldOriginAxes}
                 onChange={(checked) => setViewOption('showAxes', checked)}
+              />
+              <ToggleRow
+                label={t.showMjcfWorldGeometry}
+                checked={showMjcfWorldGeometry}
+                onChange={(checked) => setViewOption('showMjcfWorldLink', checked)}
               />
               <ToggleRow
                 label={t.showUsageGuide}

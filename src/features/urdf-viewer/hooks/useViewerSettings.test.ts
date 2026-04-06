@@ -10,11 +10,14 @@ import { useUIStore } from '@/store';
 import { useViewerSettings } from './useViewerSettings.ts';
 
 const ACTIVE_OVERLAY_LAYER_STORAGE_KEY = 'urdf_viewer_active_overlay_layer_v1';
+const IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY = 'urdf_viewer_ik_handle_always_on_top';
 
 type ViewerSettingsTestViewOptions = {
   showGrid: boolean;
   showAxes: boolean;
   showUsageGuide: boolean;
+  showMjcfWorldLink: boolean;
+  showIkHandles: boolean;
   showJointAxes: boolean;
   showInertia: boolean;
   showCenterOfMass: boolean;
@@ -26,6 +29,8 @@ const DEFAULT_VIEW_OPTIONS: ViewerSettingsTestViewOptions = {
   showGrid: true,
   showAxes: true,
   showUsageGuide: true,
+  showMjcfWorldLink: true,
+  showIkHandles: true,
   showJointAxes: false,
   showInertia: false,
   showCenterOfMass: false,
@@ -154,6 +159,7 @@ test('viewer visibility toggles and sizing parameters restore from saved prefere
       preparedDom.window.localStorage.setItem('urdf_viewer_show_visual', 'false');
       preparedDom.window.localStorage.setItem('urdf_viewer_com_size', '0.12');
       preparedDom.window.localStorage.setItem('urdf_viewer_show_origins', 'true');
+      preparedDom.window.localStorage.setItem('urdf_viewer_show_mjcf_sites', 'true');
       preparedDom.window.localStorage.setItem('urdf_viewer_origin_size', '0.18');
       preparedDom.window.localStorage.setItem('urdf_viewer_joint_axis_size', '0.42');
     },
@@ -167,6 +173,7 @@ test('viewer visibility toggles and sizing parameters restore from saved prefere
   assert.equal(settings.centerOfMassSize, 0.12);
   assert.equal(settings.showInertia, true);
   assert.equal(settings.showOrigins, true);
+  assert.equal(settings.showMjcfSites, true);
   assert.equal(settings.originSize, 0.18);
   assert.equal(settings.showJointAxes, true);
   assert.equal(settings.jointAxisSize, 0.42);
@@ -250,6 +257,60 @@ test('hiding the active overlay layer clears the persisted top-most selection', 
   assert.equal(settings.showCollision, false);
   assert.equal(settings.showCollisionAlwaysOnTop, false);
   assert.equal(dom.window.localStorage.getItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY), 'none');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('ik handle always-on-top preference defaults on and persists explicit opt-out', async () => {
+  const { dom, root, getSettings } = await mountSettings({ showIkHandles: true }, (preparedDom) => {
+    preparedDom.window.localStorage.setItem(IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY, 'false');
+  });
+
+  let settings = getSettings();
+  assert.equal(settings.showIkHandlesAlwaysOnTop, false);
+
+  await act(async () => {
+    getSettings().setShowIkHandlesAlwaysOnTop(true);
+  });
+
+  settings = getSettings();
+  assert.equal(settings.showIkHandlesAlwaysOnTop, true);
+  assert.equal(dom.window.localStorage.getItem(IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY), 'true');
+  assert.equal(settings.interactionLayerPriority[0], 'ik-handle');
+
+  await act(async () => {
+    getSettings().setShowIkHandlesAlwaysOnTop(false);
+  });
+
+  settings = getSettings();
+  assert.equal(settings.showIkHandlesAlwaysOnTop, false);
+  assert.equal(dom.window.localStorage.getItem(IK_HANDLE_ALWAYS_ON_TOP_STORAGE_KEY), 'false');
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('joint axes can still take interaction priority while ik handles render on top', async () => {
+  const { dom, root, getSettings } = await mountSettings({
+    showIkHandles: true,
+    showJointAxes: false,
+  });
+
+  assert.equal(getSettings().showIkHandlesAlwaysOnTop, true);
+
+  await act(async () => {
+    getSettings().setShowJointAxes(true);
+  });
+
+  const settings = getSettings();
+  assert.equal(settings.showJointAxes, true);
+  assert.equal(settings.showIkHandlesAlwaysOnTop, true);
+  assert.equal(settings.interactionLayerPriority[0], 'joint-axis');
 
   await act(async () => {
     root.unmount();

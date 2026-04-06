@@ -14,6 +14,7 @@ export type {
   GlobalFontSize,
   CodeEditorFontFamily,
   RotationDisplayMode,
+  MassInertiaChangeBehavior,
 } from './uiStore';
 
 // Selection Store - link/joint selection and hover state

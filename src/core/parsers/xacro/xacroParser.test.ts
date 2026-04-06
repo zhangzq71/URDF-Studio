@@ -111,6 +111,21 @@ test('processXacro does not eagerly evaluate conditionals inside macro definitio
   assert.match(processed, /<link name="mirrored_leg"/);
 });
 
+test('processXacro expands xacro macros whose params attribute is omitted', () => {
+  const processed = processXacro(`
+    <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="parameterless_macro_fixture">
+      <xacro:macro name="chassis">
+        <link name="base_link" />
+      </xacro:macro>
+
+      <xacro:chassis />
+    </robot>
+  `);
+
+  assert.match(processed, /<link name="base_link"/);
+  assert.doesNotMatch(processed, /<xacro:chassis/);
+});
+
 test('processXacro treats unresolved debug arg conditionals as disabled instead of aborting parse', () => {
   const processed = processXacro(`
     <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="missing_debug_arg_fixture">
@@ -123,6 +138,21 @@ test('processXacro treats unresolved debug arg conditionals as disabled instead 
 
   assert.match(processed, /<link name="base"/);
   assert.doesNotMatch(processed, /debug_world/);
+});
+
+test('processXacro fails fast when unresolved substitution arguments remain in emitted output', () => {
+  assert.throws(
+    () =>
+      processXacro(`
+        <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="missing_arg_fixture">
+          <link name="base" />
+          <gazebo>
+            <robotNamespace>$(arg robot_namespace)</robotNamespace>
+          </gazebo>
+        </robot>
+      `),
+    /\[Xacro\] Unresolved substitution arguments remain after expansion/,
+  );
 });
 
 test('parseXacro expands insert_block block parameters like upstream xacro macros', () => {

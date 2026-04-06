@@ -35,6 +35,7 @@ function createResolution(): ViewerRobotDataResolution {
           id: 'arm_joint',
           name: 'arm_joint',
           type: JointType.REVOLUTE,
+          parentLinkId: 'base_link',
           childLinkId: 'arm_link',
           limit: {
             ...DEFAULT_JOINT.limit,
@@ -104,10 +105,14 @@ test('USD runtime joint preview only schedules render work and defers heavy refr
 
   const joint = runtimeRobot.joints.arm_joint as {
     angle: number;
+    parent?: { name?: string };
+    parentLinkId?: string;
     setJointValue: (value: number) => void;
     finalizeJointValue?: () => void;
   };
 
+  assert.equal(joint.parentLinkId, 'base_link');
+  assert.equal(joint.parent?.name, 'base_link');
   joint.setJointValue(Math.PI / 4);
 
   assert.equal(joint.angle, Math.PI / 4);

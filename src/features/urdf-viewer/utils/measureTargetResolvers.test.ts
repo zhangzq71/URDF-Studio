@@ -179,6 +179,40 @@ test('reuses hovered helper identity when selection only stores the link identit
   assert.deepEqual(target.point.toArray(), [10.25, 1.5, 0.5]);
 });
 
+test('resolves robot measure targets from ik-handle helpers even when the panel anchor mode is frame', () => {
+  const robot = new THREE.Group();
+  const link = new THREE.Group() as THREE.Group & {
+    isURDFLink?: boolean;
+    userData?: { __ikHandle?: THREE.Object3D };
+  };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+  link.position.set(10, 2, -1);
+
+  const ikHandle = new THREE.Group();
+  ikHandle.position.set(0.25, -0.5, 1.5);
+  link.add(ikHandle);
+  link.userData = { __ikHandle: ikHandle };
+  robot.add(link);
+  robot.updateMatrixWorld(true);
+
+  const target = resolveRobotMeasureTargetFromSelection(
+    robot,
+    {
+      base_link_id: {
+        ...DEFAULT_LINK,
+        id: 'base_link_id',
+        name: 'base_link',
+      },
+    },
+    { type: 'link', id: 'base_link_id', helperKind: 'ik-handle' },
+    'frame',
+  );
+
+  assert.ok(target);
+  assert.deepEqual(target.point.toArray(), [10.25, 1.5, 0.5]);
+});
+
 test('resolves robot measure targets from the geometry center when anchor mode is geometry', () => {
   const robot = new THREE.Group();
   const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };

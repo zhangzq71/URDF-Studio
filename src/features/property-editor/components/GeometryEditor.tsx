@@ -11,8 +11,11 @@ import { translations } from '@/shared/i18n';
 import { useCollisionTransformStore, useSelectionStore } from '@/store';
 import type { Language } from '@/store';
 import {
+  canEditGeometryBaseTexture,
   getVisualGeometryEntries,
   getVisualGeometryByObjectIndex,
+  resolveVisualMaterialOverride,
+  updateVisualBaseTextureByObjectIndex,
   updateVisualGeometryByObjectIndex,
   getCollisionGeometryByObjectIndex,
   removeCollisionGeometryByObjectIndex,
@@ -231,17 +234,22 @@ const InlineDimensionInputRow = ({
   labelWidthClassName?: string;
 }) => (
   <div
-    className={
+    className={`min-w-0 ${
       columns === 1
         ? 'grid grid-cols-1 gap-1.5'
         : columns === 2
           ? 'grid grid-cols-2 gap-1.5'
           : 'grid grid-cols-3 gap-1.5'
-    }
+    }`}
   >
     {fields.map((field) => (
       <div key={field.label} className="flex min-w-0 items-center gap-1.5">
-        <span className={`${labelClassName} ${labelWidthClassName}`}>{field.label}</span>
+        <span
+          className={`${labelClassName} ${labelWidthClassName} min-w-0 shrink truncate`}
+          title={field.label}
+        >
+          {field.label}
+        </span>
         <div className="min-w-0 flex-1">
           <NumberInput
             value={field.value}
@@ -270,6 +278,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   isTabbed = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textureFileInputRef = useRef<HTMLInputElement>(null);
   const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
   const geometryActionRowRef = useRef<HTMLDivElement>(null);
   const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
@@ -315,6 +324,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     () =>
       Object.keys(assets)
         .filter((filePath) => /\.(stl|obj|dae|gltf|glb)$/i.test(filePath))
+        .sort((left, right) => left.localeCompare(right)),
+    [assets],
+  );
+  const textureFiles = useMemo(
+    () =>
+      Object.keys(assets)
+        .filter((filePath) => /\.(png|jpe?g|webp)$/i.test(filePath))
         .sort((left, right) => left.localeCompare(right)),
     [assets],
   );
@@ -428,6 +444,21 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       ? authoredMaterialColors[0]
       : `${t.multipleMaterials} (${geomData.authoredMaterials?.length ?? authoredMaterialColors.length})`
     : null;
+  const isPrimaryVisualSelection =
+    category === 'visual'
+      ? selectedVisualGeometry
+        ? selectedVisualGeometry.bodyIndex === null
+        : selectedVisualObjectIndex === 0
+      : false;
+  const resolvedVisualMaterial =
+    category === 'visual'
+      ? resolveVisualMaterialOverride(robot, data, geomData, {
+          isPrimaryVisual: isPrimaryVisualSelection,
+        })
+      : null;
+  const effectiveTexturePath =
+    category === 'visual' ? resolvedVisualMaterial?.texture?.trim() || '' : '';
+  const isTextureReadonly = category === 'visual' && !canEditGeometryBaseTexture(geomData);
   const describeMeshPath = (filePath: string) => {
     const normalizedPath = filePath.replace(/\\/g, '/');
     const pathSegments = normalizedPath.split('/');
@@ -668,6 +699,25 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     if (e.target.files && e.target.files[0]) {
       onUploadAsset(e.target.files[0]);
     }
+  };
+
+  const applyVisualTexture = (texturePath: string | null | undefined) => {
+    if (category !== 'visual') {
+      return;
+    }
+
+    onUpdate(updateVisualBaseTextureByObjectIndex(data, selectedVisualObjectIndex, texturePath));
+  };
+
+  const handleTextureFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    onUploadAsset(file);
+    applyVisualTexture(file.name);
+    e.target.value = '';
   };
 
   // Memoized auto-align calculation
@@ -1354,6 +1404,125 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             </div>
           )}
         </InlineInputGroup>
+      )}
+
+      {category === 'visual' && geomData.type !== GeometryType.NONE && (
+        <>
+          <InlineInputGroup label={t.texture} labelWidthClassName="w-11">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <ReadonlyValueField className="min-w-0 flex-1 bg-element-bg text-[10px] font-medium">
+                  <span className="block truncate">{effectiveTexturePath || t.none}</span>
+                </ReadonlyValueField>
+                <input
+                  type="file"
+                  ref={textureFileInputRef}
+                  className="hidden"
+                  accept=".png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP"
+                  onChange={handleTextureFileChange}
+                />
+                {!isTextureReadonly && (
+                  <button
+                    type="button"
+                    onClick={() => textureFileInputRef.current?.click()}
+                    className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
+                  >
+                    <Upload className="h-3 w-3" />
+                    <span>{t.uploadTexture}</span>
+                  </button>
+                )}
+                {!isTextureReadonly && effectiveTexturePath && (
+                  <button
+                    type="button"
+                    onClick={() => applyVisualTexture(undefined)}
+                    className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span>{t.clearTexture}</span>
+                  </button>
+                )}
+              </div>
+              {isTextureReadonly ? (
+                <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>
+                  {t.textureReadonlyMultiMaterialHint}
+                </div>
+              ) : null}
+            </div>
+          </InlineInputGroup>
+
+          {!isTextureReadonly && (
+            <div className="mb-2 overflow-hidden rounded-lg border border-border-black bg-panel-bg/70">
+              <div className="flex items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg/70 px-2 py-1.5">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}>
+                    {t.textureLibrary}
+                  </span>
+                  <span className="inline-flex min-w-4 items-center justify-center rounded-full border border-border-black bg-panel-bg px-1 py-0.5 text-[8px] font-semibold leading-none text-text-tertiary">
+                    {textureFiles.length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1 px-1.5 py-1.5">
+                <div className="flex max-h-32 flex-col gap-0.5 overflow-y-auto custom-scrollbar pr-0.5">
+                  {textureFiles.length === 0 && (
+                    <div className="rounded-md border border-dashed border-border-black/70 bg-element-bg/70 px-2 py-3 text-center">
+                      <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}>
+                        {t.textureNotFound}
+                      </div>
+                    </div>
+                  )}
+                  {textureFiles.map((filePath) => {
+                    const isSelected = effectiveTexturePath === filePath;
+                    const { fileName, parentPath } = describeMeshPath(filePath);
+
+                    return (
+                      <button
+                        key={filePath}
+                        type="button"
+                        title={filePath}
+                        onClick={() => applyVisualTexture(filePath)}
+                        className={`
+                          grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition-colors
+                          ${
+                            isSelected
+                              ? 'border-system-blue/35 bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
+                              : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
+                          }
+                        `}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="h-3 w-3 shrink-0 rounded border border-border-black/70 bg-cover bg-center"
+                          style={
+                            assets[filePath]
+                              ? { backgroundImage: `url("${assets[filePath]}")` }
+                              : undefined
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span
+                            className={`block truncate text-[10px] font-medium ${
+                              isSelected ? 'text-system-blue' : 'text-text-primary'
+                            }`}
+                          >
+                            {fileName}
+                          </span>
+                          {parentPath && (
+                            <span className="block truncate text-[9px] leading-4 text-text-tertiary">
+                              {parentPath}
+                            </span>
+                          )}
+                        </span>
+                        {isSelected ? <Check className="h-3 w-3 shrink-0" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {category === 'collision' && geomData.type !== GeometryType.NONE && (

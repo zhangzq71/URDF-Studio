@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import React, { act, useRef } from 'react';
+import React, { act, useEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import * as THREE from 'three';
@@ -139,14 +139,21 @@ test('helper-only selection changes still refresh helper interaction state for t
 
 const useR3fStore = create(() => ({
   invalidate: () => {},
+  internal: {
+    subscribe: () => () => {},
+  },
 }));
 
 function VisualizationEffectsProbe({
   robot,
   selection,
+  hoveredSelection,
   showCenterOfMass = false,
   showInertia = false,
+  showIkHandles = false,
+  showMjcfSites = false,
   robotLinks,
+  onHighlightGeometry,
 }: {
   robot: THREE.Object3D;
   selection?: {
@@ -154,36 +161,69 @@ function VisualizationEffectsProbe({
     id: string | null;
     subType?: 'visual' | 'collision';
     objectIndex?: number;
-    helperKind?: 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis';
+    helperKind?: 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis' | 'ik-handle';
+    highlightObjectId?: number;
+  };
+  hoveredSelection?: {
+    type: 'link' | 'joint' | null;
+    id: string | null;
+    subType?: 'visual' | 'collision';
+    objectIndex?: number;
+    helperKind?: 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis' | 'ik-handle';
+    highlightObjectId?: number;
   };
   showCenterOfMass?: boolean;
   showInertia?: boolean;
+  showIkHandles?: boolean;
+  showMjcfSites?: boolean;
   robotLinks?: Record<string, any>;
+  onHighlightGeometry?: (
+    linkName: string | null,
+    revert: boolean,
+    subType?: 'visual' | 'collision',
+    meshToHighlight?: THREE.Object3D | null | number,
+  ) => void;
 }) {
   const highlightedMeshesRef = useRef(new Map());
 
-  useVisualizationEffects({
+  const { syncHoverHighlight } = useVisualizationEffects({
     robot,
     robotVersion: 1,
     showCollision: false,
     showVisual: true,
     showCollisionAlwaysOnTop: true,
     showInertia,
+    showIkHandles,
     showCenterOfMass,
     showCoMOverlay: true,
     centerOfMassSize: 0.01,
     showOrigins: false,
     showOriginsOverlay: false,
     originSize: 1,
+    showMjcfSites,
     showJointAxes: false,
     showJointAxesOverlay: true,
     jointAxisSize: 1,
     modelOpacity: 1,
+    sourceFormat: 'urdf',
+    showMjcfWorldLink: true,
     robotLinks,
     selection,
-    highlightGeometry: () => {},
+    highlightGeometry: onHighlightGeometry ?? (() => {}),
     highlightedMeshesRef,
   });
+
+  useEffect(() => {
+    syncHoverHighlight(hoveredSelection);
+  }, [
+    hoveredSelection?.helperKind,
+    hoveredSelection?.id,
+    hoveredSelection?.objectIndex,
+    hoveredSelection?.subType,
+    hoveredSelection?.type,
+    hoveredSelection?.highlightObjectId,
+    syncHoverHighlight,
+  ]);
 
   return null;
 }
@@ -193,7 +233,11 @@ function Harness({
   selection,
   showCenterOfMass = false,
   showInertia = false,
+  showIkHandles = false,
+  showMjcfSites = false,
   robotLinks,
+  hoveredSelection,
+  onHighlightGeometry,
   snapshotRenderActive = false,
 }: Parameters<typeof VisualizationEffectsProbe>[0] & { snapshotRenderActive?: boolean }) {
   return React.createElement(
@@ -210,9 +254,13 @@ function Harness({
       React.createElement(VisualizationEffectsProbe, {
         robot,
         selection,
+        hoveredSelection,
         showCenterOfMass,
         showInertia,
+        showIkHandles,
+        showMjcfSites,
         robotLinks,
+        onHighlightGeometry,
       }),
     ),
   );
@@ -251,6 +299,100 @@ test('snapshot rendering hides URDF helper overlays even when their toggles are 
 
   assert.equal(centerOfMassHelperRoot.visible, false);
   assert.equal(inertiaHelperRoot.visible, false);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('helper hover keeps helper interaction active without re-highlighting link geometry', async () => {
+  const { dom, root } = createComponentRoot();
+  const { robot, robotLinks } = createRobotWithCenterOfMassHelper();
+  const highlightCalls: Array<{
+    linkName: string | null;
+    revert: boolean;
+    subType?: 'visual' | 'collision';
+    meshToHighlight?: THREE.Object3D | null | number;
+  }> = [];
+
+  await renderHarness(root, robot, {
+    robotLinks,
+    showCenterOfMass: true,
+    hoveredSelection: {
+      type: 'link',
+      id: 'base_link',
+      helperKind: 'center-of-mass',
+    },
+    onHighlightGeometry: (linkName, revert, subType, meshToHighlight) => {
+      highlightCalls.push({ linkName, revert, subType, meshToHighlight });
+    },
+  });
+
+  assert.deepEqual(highlightCalls, []);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('geometry hover keeps per-object tendon highlights when the hovered target object changes', async () => {
+  const { dom, root } = createComponentRoot();
+  const robot = new THREE.Group();
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+  robot.add(link);
+
+  const firstTendonSegment = new THREE.Mesh(
+    new THREE.CylinderGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
+  const secondTendonSegment = new THREE.Mesh(
+    new THREE.CylinderGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
+  link.add(firstTendonSegment);
+  link.add(secondTendonSegment);
+
+  const highlightCalls: Array<{
+    linkName: string | null;
+    revert: boolean;
+    subType?: 'visual' | 'collision';
+    meshToHighlight?: THREE.Object3D | null | number;
+  }> = [];
+
+  await renderHarness(root, robot, {
+    hoveredSelection: {
+      type: 'link',
+      id: 'base_link',
+      subType: 'visual',
+      objectIndex: 0,
+      highlightObjectId: firstTendonSegment.id,
+    },
+    onHighlightGeometry: (linkName, revert, subType, meshToHighlight) => {
+      highlightCalls.push({ linkName, revert, subType, meshToHighlight });
+    },
+  });
+
+  await renderHarness(root, robot, {
+    hoveredSelection: {
+      type: 'link',
+      id: 'base_link',
+      subType: 'visual',
+      objectIndex: 0,
+      highlightObjectId: secondTendonSegment.id,
+    },
+    onHighlightGeometry: (linkName, revert, subType, meshToHighlight) => {
+      highlightCalls.push({ linkName, revert, subType, meshToHighlight });
+    },
+  });
+
+  const applyCalls = highlightCalls.filter((call) => call.revert === false);
+  assert.ok(applyCalls.length >= 2);
+  assert.equal(applyCalls.at(-2)?.meshToHighlight, firstTendonSegment);
+  assert.equal(applyCalls.at(-1)?.meshToHighlight, secondTendonSegment);
 
   await act(async () => {
     root.unmount();

@@ -216,6 +216,48 @@ test('syncLoadedRobotScene upgrades MJCF visual meshes to the shared matte viewe
   assert.equal(mjcfMesh.material.envMapIntensity, expectedMaterial.envMapIntensity);
 });
 
+test('syncLoadedRobotScene hides MJCF world runtime geometry when the world toggle is disabled', () => {
+  const robot = new THREE.Group();
+  const worldLink = new URDFLink();
+  worldLink.name = 'world';
+
+  const visual = new URDFVisual();
+  visual.name = 'world_visual';
+  const worldMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name: 'world_ground', color: new THREE.Color('#7f7f7f') }),
+  );
+  visual.add(worldMesh);
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.name = 'world_collision';
+  (collisionGroup as any).isURDFCollider = true;
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionGroup.add(collisionMesh);
+
+  worldLink.add(visual);
+  worldLink.add(collisionGroup);
+  robot.add(worldLink);
+  (robot as any).links = { world: worldLink };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: true,
+    showMjcfWorldLink: false,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(worldMesh.visible, false);
+  assert.equal(collisionGroup.visible, false);
+  assert.equal(result.linkMeshMap.get('world:visual')?.includes(worldMesh), true);
+});
+
 test('syncLoadedRobotScene maps folded MJCF visual meshes onto semantic synthetic link ids', () => {
   const robot = new THREE.Group();
   const link = new URDFLink();

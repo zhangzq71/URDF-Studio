@@ -12,7 +12,7 @@ import {
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
 
 export interface MeasureSelectionLike {
-  type: 'link' | 'joint' | null;
+  type: 'link' | 'joint' | 'tendon' | null;
   id: string | null;
   subType?: 'visual' | 'collision';
   objectIndex?: number;
@@ -86,6 +86,10 @@ function getEffectiveMeasureSelection(
     return null;
   }
 
+  if (selection.type === 'tendon') {
+    return null;
+  }
+
   if (
     fallbackSelection?.type === selection.type &&
     fallbackSelection.id === selection.id &&
@@ -121,6 +125,22 @@ function resolveMeasureAnchorMode(
     default:
       return anchorMode;
   }
+}
+
+function getLinkIkHandleWorldPoint(linkObject?: THREE.Object3D | null): THREE.Vector3 | null {
+  const ikHandle = (
+    linkObject as
+      | (THREE.Object3D & {
+          userData?: { __ikHandle?: THREE.Object3D };
+        })
+      | null
+  )?.userData?.__ikHandle;
+  if (!ikHandle) {
+    return null;
+  }
+
+  ikHandle.updateMatrixWorld(true);
+  return ikHandle.getWorldPosition(new THREE.Vector3());
 }
 
 function resolveRobotLinkData(
@@ -285,6 +305,18 @@ export function resolveRobotMeasureTargetFromSelection(
   const objectIndex = effectiveSelection.objectIndex ?? 0;
   const resolvedLinkData =
     linkData ?? resolveRobotLinkData(robotLinks, effectiveSelection.id, linkObject);
+
+  if (effectiveSelection.helperKind === 'ik-handle') {
+    const ikHandlePoint = getLinkIkHandleWorldPoint(linkObject);
+    if (ikHandlePoint) {
+      return createMeasureTarget({
+        linkName: effectiveSelection.id,
+        objectType,
+        objectIndex,
+        point: ikHandlePoint,
+      });
+    }
+  }
 
   return createMeasureTarget({
     linkName: effectiveSelection.id,

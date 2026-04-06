@@ -16,6 +16,7 @@ export interface SyncLoadedRobotSceneOptions {
   sourceFormat: 'urdf' | 'mjcf';
   showCollision: boolean;
   showVisual: boolean;
+  showMjcfWorldLink?: boolean;
   showCollisionAlwaysOnTop?: boolean;
   urdfMaterials?: Map<string, URDFMaterialInfo> | null;
   robotLinks?: Record<string, UrdfLink>;
@@ -164,6 +165,14 @@ function hasVisualGeometry(link: UrdfLink | null | undefined): boolean {
   return Boolean(link && link.visual.type !== GeometryType.NONE);
 }
 
+function shouldHideMjcfWorldRuntimeLink(
+  sourceFormat: 'urdf' | 'mjcf',
+  showMjcfWorldLink: boolean,
+  runtimeLinkName: string | undefined,
+): boolean {
+  return sourceFormat === 'mjcf' && !showMjcfWorldLink && runtimeLinkName === 'world';
+}
+
 function buildMjcfVisualOwnershipByRuntimeLink(
   robotLinks: Record<string, UrdfLink> | undefined,
 ): Map<string, string[]> {
@@ -241,6 +250,7 @@ export function syncLoadedRobotScene({
   sourceFormat,
   showCollision,
   showVisual,
+  showMjcfWorldLink = true,
   showCollisionAlwaysOnTop = true,
   urdfMaterials,
   robotLinks: robotLinkData,
@@ -327,6 +337,10 @@ export function syncLoadedRobotScene({
       visualOwnerByGeometryRoot.set(geometryRoot, semanticLinkName);
     }
 
+    const isVisible =
+      showVisual &&
+      !shouldHideMjcfWorldRuntimeLink(sourceFormat, showMjcfWorldLink, parentLink.name);
+
     if (sourceFormat === 'urdf' && urdfMaterials && shouldUpgradeVisualMaterial) {
       applyURDFMaterials(mesh, urdfMaterials);
     }
@@ -344,7 +358,7 @@ export function syncLoadedRobotScene({
       mesh.userData?.parentLinkName !== semanticLinkName ||
       mesh.userData?.isVisualMesh !== true ||
       mesh.userData?.isCollisionMesh === true ||
-      mesh.visible !== showVisual
+      mesh.visible !== isVisible
     ) {
       changed = true;
     }
@@ -353,7 +367,7 @@ export function syncLoadedRobotScene({
     mesh.userData.runtimeParentLinkName = parentLink.name;
     mesh.userData.isVisualMesh = true;
     mesh.userData.isCollisionMesh = false;
-    mesh.visible = showVisual;
+    mesh.visible = isVisible;
 
     pushMesh(linkMeshMap, `${semanticLinkName}:visual`, mesh);
   };
@@ -368,10 +382,14 @@ export function syncLoadedRobotScene({
     const nextInsideCollider = insideCollider || nodeIsCollider;
 
     if (nodeIsCollider) {
-      if (node.visible !== showCollision) {
+      const colliderVisible =
+        showCollision &&
+        !shouldHideMjcfWorldRuntimeLink(sourceFormat, showMjcfWorldLink, nextParentLink?.name);
+
+      if (node.visible !== colliderVisible) {
         changed = true;
       }
-      node.visible = showCollision;
+      node.visible = colliderVisible;
 
       if (nextParentLink) {
         const semanticLinkName = resolveSemanticLinkIdForRuntimeLink(
@@ -390,7 +408,7 @@ export function syncLoadedRobotScene({
         node.userData.runtimeParentLinkName = nextParentLink.name;
       }
 
-      if (!showCollision) {
+      if (!colliderVisible) {
         return;
       }
     }

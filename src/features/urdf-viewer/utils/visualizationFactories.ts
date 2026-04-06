@@ -1,6 +1,25 @@
 import * as THREE from 'three';
+import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
+import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
 import { narrowLineRaycast } from '@/shared/utils/three/narrowLineRaycast';
+
+export interface MjcfSiteVisualizationData {
+  name: string;
+  sourceName?: string;
+  type: string;
+  size?: number[];
+  rgba?: [number, number, number, number];
+  pos?: [number, number, number];
+  quat?: [number, number, number, number];
+}
+
+export interface MjcfTendonVisualizationData {
+  name: string;
+  rgba?: [number, number, number, number];
+  attachmentRefs: string[];
+  width?: number;
+}
 
 function createSelectableHelperUserData(
   extra: Record<string, unknown> = {},
@@ -10,6 +29,253 @@ function createSelectableHelperUserData(
     isSelectableHelper: true,
     ...extra,
   };
+}
+
+function createNonInteractiveHelperUserData(
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    isGizmo: true,
+    isSelectableHelper: false,
+    ...extra,
+  };
+}
+
+function createMjcfTendonUserData(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    isMjcfTendon: true,
+    ...extra,
+  };
+}
+
+function clampSiteChannel(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return THREE.MathUtils.clamp(value as number, 0, 1);
+}
+
+function mjcfQuatToThreeQuat(quat: [number, number, number, number]): THREE.Quaternion {
+  return new THREE.Quaternion(quat[1], quat[2], quat[3], quat[0]);
+}
+
+function createMjcfSitePrimitive(site: MjcfSiteVisualizationData): THREE.Object3D {
+  const type = site.type?.trim().toLowerCase() || 'sphere';
+
+  switch (type) {
+    case 'box': {
+      const sx = (site.size?.[0] ?? 0.01) * 2;
+      const sy = (site.size?.[1] ?? site.size?.[0] ?? 0.01) * 2;
+      const sz = (site.size?.[2] ?? site.size?.[0] ?? 0.01) * 2;
+      return new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), new THREE.MeshBasicMaterial());
+    }
+    case 'cylinder': {
+      const radius = site.size?.[0] ?? 0.01;
+      const halfHeight = site.size?.[1] ?? 0.02;
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 20),
+        new THREE.MeshBasicMaterial(),
+      );
+      mesh.rotation.x = Math.PI / 2;
+      return mesh;
+    }
+    case 'capsule': {
+      const radius = site.size?.[0] ?? 0.01;
+      const halfHeight = site.size?.[1] ?? 0.02;
+      const group = new THREE.Group();
+
+      const cylinder = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius, radius, halfHeight * 2, 20),
+        new THREE.MeshBasicMaterial(),
+      );
+      group.add(cylinder);
+
+      const topSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 20, 12),
+        new THREE.MeshBasicMaterial(),
+      );
+      topSphere.position.y = halfHeight;
+      group.add(topSphere);
+
+      const bottomSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(radius, 20, 12),
+        new THREE.MeshBasicMaterial(),
+      );
+      bottomSphere.position.y = -halfHeight;
+      group.add(bottomSphere);
+
+      group.rotation.x = Math.PI / 2;
+      return group;
+    }
+    case 'ellipsoid': {
+      const sx = site.size?.[0] ?? 0.01;
+      const sy = site.size?.[1] ?? sx;
+      const sz = site.size?.[2] ?? sx;
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 20, 12),
+        new THREE.MeshBasicMaterial(),
+      );
+      mesh.scale.set(sx, sy, sz);
+      return mesh;
+    }
+    case 'sphere':
+    default: {
+      return new THREE.Mesh(
+        new THREE.SphereGeometry(site.size?.[0] ?? 0.01, 20, 12),
+        new THREE.MeshBasicMaterial(),
+      );
+    }
+  }
+}
+
+function applyMjcfSiteMaterial(
+  root: THREE.Object3D,
+  siteName: string,
+  rgba?: [number, number, number, number],
+): void {
+  const r = clampSiteChannel(rgba?.[0], 1);
+  const g = clampSiteChannel(rgba?.[1], 0.67);
+  const b = clampSiteChannel(rgba?.[2], 0.26);
+  const alpha = clampSiteChannel(rgba?.[3], 1);
+  const fillOpacity = THREE.MathUtils.clamp(alpha * 0.18, 0.08, 0.22);
+  const lineOpacity = THREE.MathUtils.clamp(alpha, 0.45, 1);
+  const helperUserData = createNonInteractiveHelperUserData({
+    isMjcfSite: true,
+    mjcfSiteName: siteName,
+  });
+
+  root.traverse((child: any) => {
+    if (!child?.isMesh) {
+      return;
+    }
+
+    const fillMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(r, g, b),
+      transparent: true,
+      opacity: fillOpacity,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    fillMaterial.userData = { isSharedMaterial: true };
+
+    child.material = fillMaterial;
+    child.renderOrder = 10002;
+    child.raycast = ignoreRaycast;
+    child.userData = { ...helperUserData };
+
+    if (child.geometry) {
+      const wireframe = new THREE.LineSegments(
+        new THREE.WireframeGeometry(child.geometry),
+        new THREE.LineBasicMaterial({
+          color: new THREE.Color(r, g, b),
+          transparent: true,
+          opacity: lineOpacity,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      (wireframe.material as THREE.LineBasicMaterial).userData = { isSharedMaterial: true };
+      wireframe.renderOrder = 10003;
+      wireframe.raycast = ignoreRaycast;
+      wireframe.userData = { ...helperUserData };
+      child.add(wireframe);
+    }
+  });
+}
+
+export function createMjcfSiteVisualization(site: MjcfSiteVisualizationData): THREE.Group {
+  const siteGroup = new THREE.Group();
+  siteGroup.name = `__mjcf_site__:${site.name}`;
+  siteGroup.userData = createNonInteractiveHelperUserData({
+    isMjcfSite: true,
+    mjcfSiteName: site.name,
+  });
+
+  if (site.pos) {
+    siteGroup.position.set(site.pos[0], site.pos[1], site.pos[2]);
+  }
+
+  if (site.quat) {
+    siteGroup.quaternion.copy(mjcfQuatToThreeQuat(site.quat));
+  }
+
+  const primitive = createMjcfSitePrimitive(site);
+  applyMjcfSiteMaterial(primitive, site.name, site.rgba);
+  siteGroup.add(primitive);
+
+  return siteGroup;
+}
+
+export function createMjcfTendonVisualization(tendon: MjcfTendonVisualizationData): THREE.Group {
+  const r = clampSiteChannel(tendon.rgba?.[0], 1);
+  const g = clampSiteChannel(tendon.rgba?.[1], 0);
+  const b = clampSiteChannel(tendon.rgba?.[2], 0);
+  const alpha = clampSiteChannel(tendon.rgba?.[3], 1);
+  const tendonColor = createThreeColorFromSRGB(r, g, b);
+  const tendonGroup = new THREE.Group();
+  tendonGroup.name = `__mjcf_tendon__:${tendon.name}`;
+  tendonGroup.userData = createMjcfTendonUserData({
+    mjcfTendonName: tendon.name,
+    mjcfTendonAttachmentRefs: [...tendon.attachmentRefs],
+    mjcfTendonWidth: tendon.width ?? null,
+  });
+
+  const material = createMatteMaterial({
+    color: tendonColor,
+    opacity: alpha,
+    transparent: alpha < 1,
+    name: `${tendon.name}_tendon`,
+  });
+  material.roughness = 0.76;
+  material.metalness = 0.02;
+  material.envMapIntensity = Math.min(material.envMapIntensity, 0.16);
+  material.emissive.copy(tendonColor).multiplyScalar(alpha < 1 ? 0.09 : 0.05);
+  material.userData = {
+    ...material.userData,
+    isSharedMaterial: true,
+    isMjcfTendonMaterial: true,
+    mjcfTendonName: tendon.name,
+    originalRoughness: material.roughness,
+    originalMetalness: material.metalness,
+    originalEnvMapIntensity: material.envMapIntensity,
+  };
+  material.needsUpdate = true;
+
+  const segmentCount = Math.max(tendon.attachmentRefs.length - 1, 1);
+  for (let index = 0; index < segmentCount; index += 1) {
+    const segment = new THREE.Group();
+    segment.name = `__mjcf_tendon_segment__:${index}`;
+    segment.userData = createMjcfTendonUserData({
+      mjcfTendonName: tendon.name,
+      mjcfTendonSegmentIndex: index,
+    });
+
+    const shaftGeometry = new THREE.CylinderGeometry(1, 1, 1, 16, 1, false);
+    const shaft = new THREE.Mesh(shaftGeometry, material);
+    shaft.name = '__mjcf_tendon_shaft__';
+    shaft.userData = createMjcfTendonUserData({
+      mjcfTendonName: tendon.name,
+      mjcfTendonSegmentIndex: index,
+    });
+    segment.add(shaft);
+
+    tendonGroup.add(segment);
+  }
+
+  const anchorCount = Math.max(tendon.attachmentRefs.length, 2);
+  for (let index = 0; index < anchorCount; index += 1) {
+    const anchor = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), material);
+    anchor.name = `__mjcf_tendon_anchor__:${index}`;
+    anchor.userData = createMjcfTendonUserData({
+      mjcfTendonName: tendon.name,
+      mjcfTendonAnchorIndex: index,
+    });
+    tendonGroup.add(anchor);
+  }
+
+  return tendonGroup;
 }
 
 /**
@@ -337,4 +603,33 @@ export function createInertiaBox(
   inertiaBox.add(line);
 
   return inertiaBox;
+}
+
+/**
+ * Create a link IK handle visualization.
+ */
+export function createLinkIkHandle(radius: number): THREE.Group {
+  const ikHandle = new THREE.Group();
+  ikHandle.name = '__ik_handle__';
+  ikHandle.userData = createSelectableHelperUserData({
+    viewerHelperKind: 'ik-handle',
+    ikHandleStyleVersion: 2,
+  });
+
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x16a34a,
+    transparent: true,
+    opacity: 0.68,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 18, 18), material);
+  mesh.userData = createSelectableHelperUserData({
+    viewerHelperKind: 'ik-handle',
+    ikHandleStyleVersion: 2,
+  });
+  mesh.renderOrder = 10030;
+  ikHandle.add(mesh);
+
+  return ikHandle;
 }

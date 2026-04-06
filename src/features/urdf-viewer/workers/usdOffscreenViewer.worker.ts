@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { getCollisionGeometryEntries } from '@/core/robot';
 import type { RobotFile } from '@/types';
-import { disposeObject3D } from '@/shared/utils/three/dispose';
+import { normalizeLoadingProgress } from '@/shared/components/3d/loadingHudState';
+import { disposeObject3D, disposeWebGLRenderer } from '@/shared/utils/three/dispose';
 import {
   WORKSPACE_DEFAULT_CAMERA_FOV,
   WORKSPACE_DEFAULT_CAMERA_POSITION,
@@ -513,18 +514,32 @@ function emitDocumentLoadEvent(event: ViewerDocumentLoadEvent): void {
 }
 
 function emitLoadingProgress(progress: UsdLoadingProgress): void {
+  const normalizedProgress =
+    progress.phase === 'ready'
+      ? normalizeLoadingProgress<UsdLoadingProgress>({
+          phase: 'finalizing-scene',
+          progressMode: 'indeterminate',
+          message: progress.message ?? null,
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        })
+      : normalizeLoadingProgress<UsdLoadingProgress>(progress);
   postWorkerMessage({
     type: 'progress',
-    progress,
+    progress: normalizedProgress,
   });
-  emitDocumentLoadEvent({
-    status: 'loading',
-    phase: progress.phase,
-    message: progress.message ?? null,
-    progressPercent: progress.progressPercent ?? null,
-    loadedCount: progress.loadedCount ?? null,
-    totalCount: progress.totalCount ?? null,
-  });
+  emitDocumentLoadEvent(
+    normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+      status: 'loading',
+      phase: normalizedProgress.phase,
+      message: normalizedProgress.message ?? null,
+      progressMode: normalizedProgress.progressMode,
+      progressPercent: normalizedProgress.progressPercent ?? null,
+      loadedCount: normalizedProgress.loadedCount ?? null,
+      totalCount: normalizedProgress.totalCount ?? null,
+    }),
+  );
 }
 
 function emitWorkerLoadingStep(
@@ -1717,7 +1732,8 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
     status: 'loading',
     phase: 'checking-path',
     message: null,
-    progressPercent: 0,
+    progressMode: 'indeterminate',
+    progressPercent: null,
     loadedCount: null,
     totalCount: null,
   });
@@ -1996,14 +2012,17 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
       },
     });
 
-    emitDocumentLoadEvent({
-      status: 'ready',
-      phase: 'ready',
-      message: null,
-      progressPercent: 100,
-      loadedCount: null,
-      totalCount: null,
-    });
+    emitDocumentLoadEvent(
+      normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+        status: 'ready',
+        phase: 'ready',
+        progressMode: 'percent',
+        message: null,
+        progressPercent: 100,
+        loadedCount: null,
+        totalCount: null,
+      }),
+    );
   } catch (error) {
     disposeStageResources();
     if (!isLoadGenerationActive(loadGeneration)) {
@@ -2248,7 +2267,7 @@ function disposeWorkerStage(): void {
   }
   offscreenGroundShadowPlane = null;
 
-  renderer?.dispose();
+  disposeWebGLRenderer(renderer, { forceContextLoss: true });
   renderer = null;
   scene = null;
   camera = null;
@@ -2307,25 +2326,31 @@ workerScope.addEventListener('message', (event: MessageEvent<UsdOffscreenViewerW
 
   switch (message.type) {
     case 'init': {
-      emitDocumentLoadEvent({
-        status: 'loading',
-        phase: 'checking-path',
-        message: 'Offscreen worker booted.',
-        progressPercent: 0,
-        loadedCount: null,
-        totalCount: null,
-      });
+      emitDocumentLoadEvent(
+        normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+          status: 'loading',
+          phase: 'checking-path',
+          message: 'Offscreen worker booted.',
+          progressMode: 'indeterminate',
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        }),
+      );
       syncViewportMetrics(message.width, message.height, message.devicePixelRatio);
       initializeSceneGraph(message.canvas, message.theme);
       applyInitialInteractionState(message.initialInteractionState);
-      emitDocumentLoadEvent({
-        status: 'loading',
-        phase: 'initializing-renderer',
-        message: 'Offscreen renderer initialized.',
-        progressPercent: 0,
-        loadedCount: null,
-        totalCount: null,
-      });
+      emitDocumentLoadEvent(
+        normalizeLoadingProgress<ViewerDocumentLoadEvent>({
+          status: 'loading',
+          phase: 'initializing-renderer',
+          message: 'Offscreen renderer initialized.',
+          progressMode: 'indeterminate',
+          progressPercent: null,
+          loadedCount: null,
+          totalCount: null,
+        }),
+      );
       void loadUsdStageIntoWorker(message);
       return;
     }

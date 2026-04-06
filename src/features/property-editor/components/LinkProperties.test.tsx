@@ -155,6 +155,94 @@ function createComponentRoot() {
   return { dom, container, root };
 }
 
+function getReactProps(node: Element) {
+  const reactPropsKey = Object.keys(node).find((key) => key.startsWith('__reactProps$'));
+  assert.ok(reactPropsKey, 'React props key should exist on rendered element');
+  return (node as unknown as Record<string, unknown>)[reactPropsKey] as Record<string, unknown>;
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const prototype = input.ownerDocument.defaultView?.HTMLInputElement.prototype;
+  const valueSetter = prototype
+    ? Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+    : undefined;
+
+  assert.ok(valueSetter, 'HTMLInputElement value setter should exist');
+  valueSetter.call(input, value);
+}
+
+function dispatchReactChange(input: HTMLInputElement, value: string) {
+  setInputValue(input, value);
+  const reactProps = getReactProps(input);
+  const onChange = reactProps.onChange;
+  assert.equal(typeof onChange, 'function', 'React onChange handler should exist');
+
+  (onChange as (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void)({
+    target: input,
+    currentTarget: input,
+  });
+}
+
+function dispatchReactBlur(input: HTMLInputElement) {
+  const reactProps = getReactProps(input);
+  const onBlur = reactProps.onBlur;
+  assert.equal(typeof onBlur, 'function', 'React onBlur handler should exist');
+
+  (onBlur as (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void)({
+    target: input,
+    currentTarget: input,
+  });
+}
+
+function dispatchReactCheckboxChange(input: HTMLInputElement, checked: boolean) {
+  const prototype = input.ownerDocument.defaultView?.HTMLInputElement.prototype;
+  const checkedSetter = prototype
+    ? Object.getOwnPropertyDescriptor(prototype, 'checked')?.set
+    : undefined;
+
+  assert.ok(checkedSetter, 'HTMLInputElement checked setter should exist');
+  checkedSetter.call(input, checked);
+
+  const reactProps = getReactProps(input);
+  const onChange = reactProps.onChange;
+  assert.equal(typeof onChange, 'function', 'React checkbox onChange handler should exist');
+
+  (onChange as (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void)({
+    target: input,
+    currentTarget: input,
+  });
+}
+
+function dispatchReactClick(button: HTMLButtonElement) {
+  const reactProps = getReactProps(button);
+  const onClick = reactProps.onClick;
+  assert.equal(typeof onClick, 'function', 'React onClick handler should exist');
+
+  (
+    onClick as (event: {
+      currentTarget: HTMLButtonElement;
+      target: HTMLButtonElement;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    }) => void
+  )({
+    currentTarget: button,
+    target: button,
+    preventDefault: () => {},
+    stopPropagation: () => {},
+  });
+}
+
+function findInlineNumberInputByLabel(container: Element, labelText: string) {
+  const label = Array.from(container.querySelectorAll('label')).find(
+    (node) => node.textContent === labelText,
+  );
+  assert.ok(label, `label "${labelText}" should render`);
+  const input = label.parentElement?.querySelector('input[type="text"]');
+  assert.ok(input, `input for label "${labelText}" should render`);
+  return input as HTMLInputElement;
+}
+
 async function destroyComponentRoot(dom: JSDOM, root: Root) {
   await act(async () => {
     root.unmount();
@@ -169,6 +257,112 @@ test('editor mode renders link-only editing layout without embedded joint proper
   assert.match(markup, new RegExp(translations.en.visualGeometry));
   assert.match(markup, new RegExp(translations.en.collisionGeometry));
   assert.match(markup, new RegExp(translations.en.physics));
+});
+
+test('tab buttons and rotation mode controls stay shrinkable for narrow property sidebars', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('physics');
+    useUIStore.setState({ rotationDisplayMode: 'euler_deg' });
+
+    const link = createLink();
+    const robot = createRobot(link);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: () => {},
+          motorLibrary: {},
+          assets: {},
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    const tabButton = container.querySelector(
+      'button[title="Collision Geometry"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(tabButton, 'collision geometry tab button should render');
+    assert.match(
+      tabButton.className,
+      /\bmin-w-0\b/,
+      'geometry tab buttons should be allowed to shrink within the property sidebar',
+    );
+    const tabLabel = tabButton.querySelector('span');
+    assert.ok(tabLabel, 'geometry tab button should wrap its text in a label span');
+    assert.match(
+      tabLabel.className,
+      /\btruncate\b/,
+      'geometry tab labels should truncate instead of overflowing narrow sidebars',
+    );
+
+    const rotationModeButton = container.querySelector(
+      `button[title="${translations.en.eulerDegrees}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(rotationModeButton, 'rotation mode segmented control should render');
+    assert.match(
+      rotationModeButton.className,
+      /\bmin-w-0\b/,
+      'segmented control buttons should be allowed to shrink inside the sidebar',
+    );
+    const rotationModeLabel = rotationModeButton.querySelector('span:last-child');
+    assert.ok(rotationModeLabel, 'rotation mode button should render a text label');
+    assert.match(
+      rotationModeLabel.className,
+      /\btruncate\b/,
+      'segmented control labels should truncate instead of overflowing narrow sidebars',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('visual geometry dimension labels stay shrinkable inside narrow inline rows', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('visual');
+
+    const link = createLink();
+    const robot = createRobot(link);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: () => {},
+          motorLibrary: {},
+          assets: {},
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    const widthLabel = container.querySelector('span[title="Width"]') as HTMLSpanElement | null;
+    assert.ok(widthLabel, 'geometry dimension label should render');
+    assert.match(
+      widthLabel.className,
+      /\btruncate\b/,
+      'geometry dimension labels should truncate instead of overflowing the sidebar',
+    );
+    assert.match(
+      widthLabel.parentElement?.className ?? '',
+      /\bmin-w-0\b/,
+      'geometry dimension rows should stay shrinkable inside the dimension grid',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
 });
 
 test('physics tab keeps diagonal inertia inline and principal axes in a matrix layout', async () => {
@@ -315,5 +509,107 @@ test('physics tab reuses collision-style rotation shortcuts for inertial origin'
     assert.equal(nextLink.inertial?.origin?.rpy.y, 0);
   } finally {
     await destroyComponentRoot(dom, root);
+  }
+});
+
+test('mass changes can remember and auto-apply uniform-density inertia re-estimation', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const updates: UrdfLink[] = [];
+
+  function ControlledHarness() {
+    const [link, setLink] = React.useState(() => createLink());
+    const robot = React.useMemo(() => createRobot(link), [link]);
+
+    return React.createElement(LinkProperties, {
+      data: link,
+      robot,
+      mode: 'editor',
+      selection: robot.selection,
+      onUpdate: (_type, _id, nextData) => {
+        const nextLink = nextData as UrdfLink;
+        updates.push(nextLink);
+        setLink(nextLink);
+      },
+      motorLibrary: {},
+      assets: {},
+      onUploadAsset: () => {},
+      t: translations.en,
+      lang: 'en',
+    });
+  }
+
+  try {
+    useUIStore.getState().setDetailLinkTab('physics');
+    useUIStore.getState().setMassInertiaChangeBehavior('ask');
+
+    await act(async () => {
+      root.render(React.createElement(ControlledHarness));
+    });
+
+    const massInput = findInlineNumberInputByLabel(container, translations.en.mass);
+
+    await act(async () => {
+      dispatchReactChange(massInput, '2');
+      dispatchReactBlur(massInput);
+    });
+
+    assert.match(
+      container.textContent ?? '',
+      new RegExp(translations.en.massChangeInertiaDialogTitle),
+      'mass changes should open a confirmation dialog before applying the new inertia behavior',
+    );
+
+    const rememberCheckbox = container.querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement | null;
+    assert.ok(rememberCheckbox, 'remember-choice checkbox should render');
+
+    await act(async () => {
+      dispatchReactCheckboxChange(rememberCheckbox, true);
+    });
+
+    const confirmButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === translations.en.confirm,
+    ) as HTMLButtonElement | undefined;
+    assert.ok(confirmButton, 'confirm button should render');
+
+    await act(async () => {
+      dispatchReactClick(confirmButton);
+    });
+
+    const firstUpdate = updates.at(-1);
+    assert.ok(firstUpdate, 'confirming the dialog should emit an updated link');
+    assert.equal(firstUpdate.inertial?.mass, 2);
+    assert.equal(firstUpdate.inertial?.inertia.ixx, 2);
+    assert.equal(firstUpdate.inertial?.inertia.iyy, 2);
+    assert.equal(firstUpdate.inertial?.inertia.izz, 2);
+    assert.equal(useUIStore.getState().massInertiaChangeBehavior, 'reestimate');
+    assert.match(
+      container.textContent ?? '',
+      /ixx=2(?:\.0+)?/,
+      'the floating notice should summarize the updated inertia tensor',
+    );
+
+    const nextMassInput = findInlineNumberInputByLabel(container, translations.en.mass);
+
+    await act(async () => {
+      dispatchReactChange(nextMassInput, '3');
+      dispatchReactBlur(nextMassInput);
+    });
+
+    const secondUpdate = updates.at(-1);
+    assert.ok(secondUpdate, 'remembered behavior should auto-apply the next mass change');
+    assert.equal(secondUpdate.inertial?.mass, 3);
+    assert.equal(secondUpdate.inertial?.inertia.ixx, 3);
+    assert.equal(secondUpdate.inertial?.inertia.iyy, 3);
+    assert.equal(secondUpdate.inertial?.inertia.izz, 3);
+    assert.doesNotMatch(
+      container.textContent ?? '',
+      new RegExp(translations.en.massChangeInertiaDialogTitle),
+      'remembered behavior should skip the confirmation dialog on later changes',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+    useUIStore.getState().setMassInertiaChangeBehavior('ask');
   }
 });
