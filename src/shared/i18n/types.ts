@@ -82,6 +82,7 @@ export interface TranslationKeys {
   bridgedComponent: string;
   bridgedComponentLockedHint: string;
   bridgeLimitRangeInvalid: string;
+  bridgeNonFixedCycleUnsupported: string;
 
   // Property Editor
   properties: string;
@@ -134,11 +135,17 @@ export interface TranslationKeys {
   eulerRadians: string;
   quaternion: string;
   color: string;
+  texture: string;
   meshLibrary: string;
+  textureLibrary: string;
   upload: string;
+  uploadTexture: string;
   selected: string;
   applyMesh: string;
   meshHint: string;
+  clearTexture: string;
+  textureReadonlyMultiMaterialHint: string;
+  textureNotFound: string;
   inertial: string;
   derivedValues: string;
   mass: string;
@@ -147,6 +154,17 @@ export interface TranslationKeys {
   inertiaTensor: string;
   diagonalInertia: string;
   principalAxes: string;
+  massChangeInertiaDialogTitle: string;
+  massChangeInertiaDialogMessage: string;
+  massChangeInertiaKeep: string;
+  massChangeInertiaKeepDescription: string;
+  massChangeInertiaReestimate: string;
+  massChangeInertiaReestimateDescription: string;
+  massChangeInertiaReestimateUnavailable: string;
+  massChangeInertiaRememberChoice: string;
+  massChangeInertiaPreservedNotice: string;
+  massChangeInertiaReestimatedNotice: string;
+  massChangeInertiaFallbackNotice: string;
   kinematics: string;
   axisRotation: string;
   hardwareConfig: string;
@@ -214,6 +232,9 @@ export interface TranslationKeys {
   instructionLinux: string;
   instructionOther: string;
   showWorldOriginAxes: string;
+  showMjcfWorldGeometry: string;
+  showMjcfSites: string;
+  showIkHandles: string;
   hideUsageGuide: string;
   showUsageGuide: string;
   clickToSelect: string;
@@ -319,6 +340,7 @@ export interface TranslationKeys {
   toolbox: string;
   toolboxHoverHint: string;
   robotRedirect: string;
+  step2urdf: string;
   motrix: string;
   trajectoryEditing: string;
   featureInDevelopment: string;
@@ -338,6 +360,7 @@ export interface TranslationKeys {
   aiConversationDesc: string;
   measureToolboxDesc: string;
   motionTrackingDesc: string;
+  step2urdfDesc: string;
   motrixDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
@@ -394,6 +417,10 @@ export interface TranslationKeys {
   meshNotFound: string;
   deleteMeasurement: string;
   webglContextRestoring: string;
+  webglUnsupportedTitle: string;
+  webglUnsupportedMessage: string;
+  webglRuntimeErrorTitle: string;
+  webglRuntimeErrorMessage: string;
   emptyAssemblyHint: string;
   clickToAddComponent: string;
   removeFromLibrary: string;
@@ -451,6 +478,9 @@ export interface TranslationKeys {
   loadingBridgeDialog: string;
   importPreparationLoadingTitle: string;
   importPreparationLoadingDetail: string;
+  importPreparationReadingArchive: string;
+  importPreparationExtractingFiles: string;
+  importPreparationFinalizingImport: string;
   preparingAssemblyComponent: string;
   addingAssemblyComponentToWorkspace: string;
   groundingAssemblyComponent: string;
@@ -478,6 +508,7 @@ export interface TranslationKeys {
   deletedAllLibraryFiles: string;
   onlyUrdfMjcfExport: string;
   exportFailedParse: string;
+  exportClosedLoopUrdfUnsupported: string;
   exportLibraryParseFailed: string;
   exportLibraryUnsupportedFormat: string;
   usdExportRequiresLoadedStage: string;
@@ -612,6 +643,7 @@ export interface TranslationKeys {
   exportActuatorMotor: string;
   exportDefaultKp: string;
   exportIncludeMeshes: string;
+  exportSdfTextureOverrideNotice: string;
   exportRelativePaths: string;
   exportRelativePathsDesc: string;
   exportIncludeExtended: string;

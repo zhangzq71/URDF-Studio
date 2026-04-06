@@ -16,16 +16,18 @@ import {
   useImportInputBinding,
   useUnsavedChangesPrompt,
 } from './hooks';
-import { prepareImportPayloadWithWorker } from './hooks/importPreparationWorkerBridge';
 import { resolveRobotFileDataWithWorker } from './hooks/robotImportWorkerBridge';
 import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import {
+  buildRobotLoadSupportContextKey,
   preserveDocumentLoadProgressForSameFile,
   shouldCommitResolvedRobotSelection,
+  shouldSkipRedundantRobotReload,
 } from './utils/documentLoadFlow';
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
+import { buildStandaloneImportAssetWarning } from './utils/importPackageAssetReferences';
 import {
   useRobotStore,
   useUIStore,
@@ -37,19 +39,14 @@ import type { InspectionReport, RobotFile, RobotState } from '@/types';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
 import { isLibraryRobotExportableFormat } from '@/shared/utils';
-import {
-  DisconnectedWorkspaceUrdfExportDialog,
-  ExportProgressDialog,
-  type ExportDialogConfig,
-  type ExportProgressState,
-} from '@/features/file-io';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer';
-import { prewarmUsdOffscreenViewerRuntimeInBackground } from '@/features/urdf-viewer/utils/usdOffscreenViewerWorkerClient';
-import { prewarmUsdWasmRuntimeInBackground } from '@/features/urdf-viewer/utils/usdWasmRuntime';
+import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog/ExportDialog';
+import type { ExportProgressState } from '@/features/file-io/types';
+import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
+  setRegressionBeforeUnloadPromptSuppressed,
 } from '@/shared/debug/regressionBridge';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
 import type {
@@ -58,12 +55,17 @@ import type {
   AIConversationMode,
   AIConversationSelection,
 } from '@/features/ai-assistant/types';
+import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 
 const loadAIInspectionModalModule = () =>
   import('@/features/ai-assistant/components/AIInspectionModal');
 const loadAIConversationModalModule = () =>
   import('@/features/ai-assistant/components/AIConversationModal');
-const loadExportDialogModule = () => import('@/features/file-io/components/ExportDialog');
+const loadExportDialogModule = () => import('@/features/file-io');
+const loadDisconnectedWorkspaceUrdfExportDialogModule = () =>
+  import('@/features/file-io/components/DisconnectedWorkspaceUrdfExportDialog');
+const loadExportProgressDialogModule = () =>
+  import('@/features/file-io/components/ExportProgressDialog');
 
 const AIInspectionModal = lazy(() =>
   loadAIInspectionModalModule().then((module) => ({ default: module.AIInspectionModal })),
@@ -71,6 +73,16 @@ const AIInspectionModal = lazy(() =>
 
 const AIConversationModal = lazy(() =>
   loadAIConversationModalModule().then((module) => ({ default: module.AIConversationModal })),
+);
+const DisconnectedWorkspaceUrdfExportDialog = lazy(() =>
+  loadDisconnectedWorkspaceUrdfExportDialogModule().then((module) => ({
+    default: module.DisconnectedWorkspaceUrdfExportDialog,
+  })),
+);
+const ExportProgressDialog = lazy(() =>
+  loadExportProgressDialogModule().then((module) => ({
+    default: module.ExportProgressDialog,
+  })),
 );
 
 const ExportDialog = lazy(() =>
@@ -297,11 +309,15 @@ function ExportDialogConnector({
         getUsdPreparedExportCache: state.getUsdPreparedExportCache,
       })),
     );
+  const documentLoadLifecycleState = useMemo(
+    () => toDocumentLoadLifecycleState(documentLoadState),
+    [documentLoadState],
+  );
 
   const isSelectedUsdHydrating =
     selectedFile?.format === 'usd' &&
-    documentLoadState.status === 'hydrating' &&
-    documentLoadState.fileName === selectedFile.name;
+    documentLoadLifecycleState.status === 'hydrating' &&
+    documentLoadLifecycleState.fileName === selectedFile.name;
 
   const currentUsdExportMode =
     selectedFile?.format === 'usd' && sidebarTab !== 'workspace'
@@ -319,7 +335,6 @@ function ExportDialogConnector({
         ? currentUsdExportMode !== 'unavailable'
         : !isSelectedUsdHydrating
       : isLibraryRobotExportableFormat(target.file.format);
-  const allowProjectExport = target.type === 'current' && sidebarTab === 'workspace';
   const defaultFormat: ExportDialogConfig['format'] = 'mjcf';
 
   return (
@@ -329,7 +344,6 @@ function ExportDialogConnector({
       lang={lang}
       isExporting={isExporting}
       canExportUsd={canExportUsd}
-      allowProjectExport={allowProjectExport}
       defaultFormat={defaultFormat}
     />
   );
@@ -392,6 +406,7 @@ function AppContent() {
   const [shouldRenderAIConversationModal, setShouldRenderAIConversationModal] = useState(false);
   const [aiConversationLaunchContext, setAIConversationLaunchContext] =
     useState<AIConversationLaunchContext | null>(null);
+  const lastLoadSupportContextKeyRef = useRef<string | null>(null);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({
     type: 'current',
   });
@@ -551,19 +566,46 @@ function AppContent() {
     async (file: RobotFile, options?: { forceReload?: boolean }) => {
       const liveAssetsState = useAssetsStore.getState();
       const currentSelectedFile = liveAssetsState.selectedFile;
+      const nextLoadSupportContextKey = buildRobotLoadSupportContextKey({
+        availableFiles: liveAssetsState.availableFiles,
+        assets: liveAssetsState.assets,
+        allFileContents: liveAssetsState.allFileContents,
+      });
       if (
-        !options?.forceReload &&
-        currentSelectedFile &&
-        currentSelectedFile.name === file.name &&
-        currentSelectedFile.format === file.format &&
-        currentSelectedFile.content === file.content &&
-        currentSelectedFile.blobUrl === file.blobUrl
+        shouldSkipRedundantRobotReload({
+          forceReload: options?.forceReload,
+          currentSelectedFile,
+          currentDocumentLoadState: liveAssetsState.documentLoadState,
+          nextFile: file,
+          previousLoadSupportContextKey: lastLoadSupportContextKeyRef.current,
+          nextLoadSupportContextKey,
+        })
       ) {
         const currentAppMode = useUIStore.getState().appMode;
         const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
         if (nextAppMode !== currentAppMode) {
           setAppMode(nextAppMode);
         }
+        return;
+      }
+
+      const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
+        file,
+        Object.keys(liveAssetsState.assets),
+      );
+      if (standaloneImportAssetWarning) {
+        const assetLabel =
+          standaloneImportAssetWarning.missingAssetPaths.length > 3
+            ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
+            : standaloneImportAssetWarning.missingAssetPaths.join(', ');
+        const message = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
+        setDocumentLoadState({
+          status: 'error',
+          fileName: file.name,
+          format: file.format,
+          error: message,
+        });
+        showToast(message, 'info');
         return;
       }
 
@@ -594,6 +636,7 @@ function AppContent() {
         }
 
         if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
+          lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
           commitResolvedFileSelection(file);
         }
         applyResolvedRobotImport(file, preResolvedImportResult);
@@ -635,6 +678,7 @@ function AppContent() {
       }
 
       if (shouldCommitResolvedRobotSelection(importResult)) {
+        lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
         commitResolvedFileSelection(file);
       }
       applyResolvedRobotImport(file, importResult);
@@ -657,35 +701,6 @@ function AppContent() {
   );
 
   loadRobotByNameRef.current = loadRobotFile;
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof Worker === 'undefined') {
-      return;
-    }
-
-    let cancelled = false;
-    const timeoutId = window.setTimeout(() => {
-      if (cancelled) {
-        return;
-      }
-
-      prewarmUsdWasmRuntimeInBackground();
-      prewarmUsdOffscreenViewerRuntimeInBackground();
-      void Promise.allSettled([
-        prepareImportPayloadWithWorker({ files: [], existingPaths: [] }),
-        resolveRobotFileDataWithWorker({
-          name: '__urdf_studio_worker_prewarm__/warmup.stl',
-          format: 'mesh',
-          content: '',
-        }),
-      ]);
-    }, 400);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -751,6 +766,7 @@ function AppContent() {
 
     return () => {
       setRegressionAppHandlers(null);
+      setRegressionBeforeUnloadPromptSuppressed(false);
       delete window.__URDF_STUDIO_DEBUG__;
     };
   }, []);
@@ -760,6 +776,9 @@ function AppContent() {
     onLoadRobot: handleLoadRobot,
     onShowToast: showToast,
     onImportPreparationStateChange: setImportPreparationOverlay,
+    onProjectImported: () => {
+      setViewerReloadKey((value) => value + 1);
+    },
   });
   const {
     handleExportProject: runProjectExport,
@@ -769,6 +788,7 @@ function AppContent() {
 
   const handleExportProject = useCallback(() => {
     void (async () => {
+      void loadExportProgressDialogModule();
       setIsExporting(true);
       setProjectExportProgress({
         stepLabel: t.exportProgressPreparing,
@@ -1080,6 +1100,7 @@ function AppContent() {
                         onProgress: options?.onProgress,
                       });
                 if (result.actionRequired?.type === 'disconnected-workspace-urdf') {
+                  void loadDisconnectedWorkspaceUrdfExportDialogModule();
                   setDisconnectedWorkspaceUrdfDialog({
                     config,
                     request: result.actionRequired,
@@ -1104,24 +1125,30 @@ function AppContent() {
         </Suspense>
       )}
 
-      <DisconnectedWorkspaceUrdfExportDialog
-        isOpen={Boolean(disconnectedWorkspaceUrdfDialog)}
-        lang={lang}
-        componentCount={disconnectedWorkspaceUrdfDialog?.request.componentCount ?? 0}
-        connectedGroupCount={disconnectedWorkspaceUrdfDialog?.request.connectedGroupCount ?? 0}
-        isExporting={isDisconnectedWorkspaceUrdfExporting}
-        onClose={() => {
-          if (!isDisconnectedWorkspaceUrdfExporting) {
-            setDisconnectedWorkspaceUrdfDialog(null);
-          }
-        }}
-        onExportMultiple={() => {
-          void handleConfirmDisconnectedWorkspaceUrdfExport();
-        }}
-      />
+      {disconnectedWorkspaceUrdfDialog && (
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <DisconnectedWorkspaceUrdfExportDialog
+            isOpen={true}
+            lang={lang}
+            componentCount={disconnectedWorkspaceUrdfDialog.request.componentCount}
+            connectedGroupCount={disconnectedWorkspaceUrdfDialog.request.connectedGroupCount}
+            isExporting={isDisconnectedWorkspaceUrdfExporting}
+            onClose={() => {
+              if (!isDisconnectedWorkspaceUrdfExporting) {
+                setDisconnectedWorkspaceUrdfDialog(null);
+              }
+            }}
+            onExportMultiple={() => {
+              void handleConfirmDisconnectedWorkspaceUrdfExport();
+            }}
+          />
+        </Suspense>
+      )}
 
       {projectExportProgress && !isExportDialogOpen && (
-        <ExportProgressDialog lang={lang} progress={projectExportProgress} />
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <ExportProgressDialog lang={lang} progress={projectExportProgress} />
+        </Suspense>
       )}
 
       {importPreparationOverlay && (
