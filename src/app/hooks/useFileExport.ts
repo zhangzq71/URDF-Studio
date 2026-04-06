@@ -70,6 +70,11 @@ interface HandleExportWithConfigOptions {
 
 interface HandleProjectExportOptions {
   onProgress?: (progress: ExportProgressState) => void;
+  /** 
+   * Set to true to skip the default browser download and only get the Blob back.
+   * Useful when you want to handle the generated file externally (like uploading to a cloud drive).
+   */
+  skipDownload?: boolean;
 }
 
 export interface ExportExecutionIssue {
@@ -99,6 +104,11 @@ export interface ProjectExportExecutionResult {
   warnings: string[];
   issues: ExportExecutionIssue[];
   actionRequired?: ExportActionRequired;
+  /**
+   * The generated USP package file content.
+   * Exposed for external callers to use the Blob directly without downloading (e.g., for uploading to a cloud drive).
+   */
+  blob?: Blob;
 }
 
 interface UrdfSourceExportPreference {
@@ -1723,11 +1733,15 @@ export function useFileExport() {
           }
         },
       });
-      downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
+      
+      if (!options.skipDownload) {
+        downloadBlob(result.blob, `${robotName || assemblyState?.name || 'my_project'}.usp`);
+      }
       markUnsavedChangesBaselineSaved('all');
 
       return {
         partial: result.partial,
+        blob: result.blob, // Expose the blob object for external callers (e.g., cloud drive upload)
         warnings: result.warnings.map((warning) => warning.message),
         issues: result.warnings.map((warning) => ({
           code: warning.code,
