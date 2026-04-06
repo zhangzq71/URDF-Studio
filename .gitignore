@@ -34,6 +34,10 @@ scripts/versioning/*
 output/
 tmp/
 .playwright-mcp/
+log/latest
+log/latest_*
+log/list_*/
+log/version-check_*/
 .eslintcache
 docs/plans/
 public/__codex_anymal_c_dir/
