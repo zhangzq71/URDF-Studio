@@ -1,6 +1,10 @@
 import React from 'react';
 import { Cuboid, File, FileCode, Folder, FolderOpen, Image } from 'lucide-react';
-import { isImageAssetPath } from '@/core/utils/assetFileTypes';
+import {
+  classifyLibraryFileKind,
+  isLibraryImageImportPath,
+  type LibraryFileKind,
+} from '@/shared/utils';
 import type { RobotFile } from '@/types';
 
 export interface FileTreeNode {
@@ -14,6 +18,13 @@ export interface FileTreeNode {
 interface MutableFileTreeNode extends FileTreeNode {
   childrenMap?: Map<string, MutableFileTreeNode>;
 }
+
+const LIBRARY_FILE_KIND_ORDER: Record<LibraryFileKind, number> = {
+  robot: 0,
+  mesh: 1,
+  image: 2,
+  support: 3,
+};
 
 // Build a tree structure from flat file list
 export function buildFileTree(files: RobotFile[]): FileTreeNode[] {
@@ -53,6 +64,16 @@ export function buildFileTree(files: RobotFile[]): FileTreeNode[] {
       .sort((a, b) => {
         if (a.isFolder && !b.isFolder) return -1;
         if (!a.isFolder && b.isFolder) return 1;
+
+        if (!a.isFolder && !b.isFolder && a.file && b.file) {
+          const kindOrderDelta =
+            LIBRARY_FILE_KIND_ORDER[classifyLibraryFileKind(a.file)] -
+            LIBRARY_FILE_KIND_ORDER[classifyLibraryFileKind(b.file)];
+          if (kindOrderDelta !== 0) {
+            return kindOrderDelta;
+          }
+        }
+
         return a.name.localeCompare(b.name);
       })
       .map((node) => ({
@@ -77,7 +98,7 @@ export function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean
 
   const ext = filename.split('.').pop()?.toLowerCase() || '';
 
-  if (isImageAssetPath(filename)) {
+  if (isLibraryImageImportPath(filename)) {
     return React.createElement(Image, { className: 'w-3.5 h-3.5 text-pink-500' });
   }
 
@@ -90,9 +111,17 @@ export function getFileIcon(filename: string, isFolder: boolean, isOpen: boolean
       return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-text-secondary' });
     case 'xml':
       return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-orange-500' });
+    case 'usd':
+    case 'usda':
+    case 'usdc':
+    case 'usdz':
+    case 'usp':
+      return React.createElement(FileCode, { className: 'w-3.5 h-3.5 text-violet-500' });
     case 'dae':
     case 'stl':
     case 'obj':
+    case 'gltf':
+    case 'glb':
       return React.createElement(Cuboid, { className: 'w-3.5 h-3.5 text-green-500' });
     default:
       return React.createElement(File, { className: 'w-3.5 h-3.5 text-text-tertiary' });

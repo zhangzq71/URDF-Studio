@@ -13,6 +13,7 @@ scripts/*
 scripts/regression/*
 !scripts/regression/validate_sdf_cli_truth.ts
 !scripts/regression/run_shadow_hand_hover_regression.mjs
+!scripts/regression/validate_unitree_ros_usd_export_benchmark.mjs
 !scripts/mujoco/
 scripts/mujoco/*
 !scripts/mujoco/mjcf_compare.ts
@@ -34,6 +35,7 @@ scripts/versioning/*
 output/
 tmp/
 .playwright-mcp/
+log/COLCON_IGNORE
 log/latest
 log/latest_*
 log/list_*/

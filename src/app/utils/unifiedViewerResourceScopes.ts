@@ -1,8 +1,5 @@
-import {
-  createStableViewerResourceScope,
-  type ViewerResourceScope,
-} from '@/features/urdf-viewer';
-import type { RobotFile, UrdfLink } from '@/types';
+import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer';
+import type { RobotFile, RobotMaterialState, UrdfLink } from '@/types';
 
 interface UnifiedViewerFilePreview {
   urdfContent: string;
@@ -17,7 +14,9 @@ interface BuildUnifiedViewerResourceScopesArgs {
   assets: Record<string, string>;
   availableFiles: RobotFile[];
   viewerRobotLinks?: Record<string, UrdfLink>;
+  viewerRobotMaterials?: Record<string, RobotMaterialState>;
   visualizerRobotLinks?: Record<string, UrdfLink>;
+  visualizerRobotMaterials?: Record<string, RobotMaterialState>;
   previousViewerResourceScope: ViewerResourceScope | null;
   previousVisualizerResourceScope: ViewerResourceScope | null;
 }
@@ -39,7 +38,9 @@ export function buildUnifiedViewerResourceScopes({
   assets,
   availableFiles,
   viewerRobotLinks,
+  viewerRobotMaterials,
   visualizerRobotLinks,
+  visualizerRobotMaterials,
   previousViewerResourceScope,
   previousVisualizerResourceScope,
 }: BuildUnifiedViewerResourceScopesArgs): UnifiedViewerResourceScopesState {
@@ -55,6 +56,7 @@ export function buildUnifiedViewerResourceScopes({
     sourceFile: effectiveSourceFile,
     sourceFilePath: effectiveSourceFilePath,
     robotLinks: viewerRobotLinks,
+    robotMaterials: viewerRobotMaterials,
   });
 
   const visualizerResourceScope = createStableViewerResourceScope(previousVisualizerResourceScope, {
@@ -63,6 +65,7 @@ export function buildUnifiedViewerResourceScopes({
     sourceFile,
     sourceFilePath,
     robotLinks: visualizerRobotLinks,
+    robotMaterials: visualizerRobotMaterials,
   });
 
   return {

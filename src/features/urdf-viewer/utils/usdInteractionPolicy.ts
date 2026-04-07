@@ -23,7 +23,7 @@ export interface UsdStageJointRotationRuntime {
 }
 
 function isInteractiveSelectionEnabledForToolMode(toolMode: ToolMode): boolean {
-  return toolMode !== 'view' && toolMode !== 'face';
+  return toolMode !== 'view' && toolMode !== 'face' && toolMode !== 'paint';
 }
 
 export function isContinuousHoverEnabledForToolMode(toolMode: ToolMode): boolean {

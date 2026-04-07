@@ -17,6 +17,7 @@ import {
 
 const IK_HANDLE_RADIUS = 0.03;
 const IK_LINE_SEARCH_ATTEMPTS = 4;
+const IK_COORDINATE_SEARCH_SCALES = [1, 0.5, 0.25] as const;
 const IK_SOLVER_STEP_ANGLE_LIMIT = 0.2;
 const IK_SOLVER_STEP_TRANSLATION_LIMIT = 0.02;
 const IK_NUMERICAL_EPSILON = 1e-12;
@@ -65,6 +66,7 @@ export interface LinkIkPositionSolveRequest {
   positionTolerance?: number;
   stallTolerance?: number;
   damping?: number;
+  coordinatePairMaxDistance?: number;
 }
 
 export interface LinkIkPositionSolveResult {
@@ -85,6 +87,14 @@ interface LinkIkChainJoint {
 interface LinkIkChain {
   joints: LinkIkChainJoint[];
   jointIds: string[];
+}
+
+interface LinkIkEvaluation {
+  overrides: JointKinematicOverrideMap;
+  effectorWorldPosition: THREE.Vector3;
+  error: THREE.Vector3;
+  residual: number;
+  numericalFailure: boolean;
 }
 
 const tempBoundsCenter = new THREE.Vector3();
@@ -481,13 +491,7 @@ function buildLinkIkEvaluation(
   options: Required<Pick<LinkIkPositionSolveRequest, 'damping' | 'maxIterations'>> & {
     tolerance: number;
   },
-): {
-  overrides: JointKinematicOverrideMap;
-  effectorWorldPosition: THREE.Vector3;
-  error: THREE.Vector3;
-  residual: number;
-  numericalFailure: boolean;
-} {
+): {} & LinkIkEvaluation {
   const compensation = solveClosedLoopMotionCompensation(robot, {
     angles: overrides.angles,
     quaternions: overrides.quaternions,
@@ -707,6 +711,101 @@ function applyIkStep(
   };
 }
 
+function findCoordinateSearchImprovement(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId' | 'closedLoopConstraints'>,
+  chain: LinkIkChain,
+  acceptedEvaluation: LinkIkEvaluation,
+  linkId: string,
+  anchorLocal: Vector3,
+  targetWorldPosition: THREE.Vector3,
+  lockedJointIds: string[],
+  options: Required<Pick<LinkIkPositionSolveRequest, 'damping' | 'maxIterations'>> & {
+    coordinatePairMaxDistance: number;
+    tolerance: number;
+  },
+): LinkIkEvaluation | null {
+  let bestEvaluation: LinkIkEvaluation | null = null;
+  let bestResidual = acceptedEvaluation.residual;
+  const stepMagnitudes = chain.joints.map((variable) =>
+    variable.type === JointType.PRISMATIC
+      ? IK_SOLVER_STEP_TRANSLATION_LIMIT
+      : IK_SOLVER_STEP_ANGLE_LIMIT,
+  );
+
+  const tryProbeDelta = (probeDelta: number[]): void => {
+    const scaledOverrides = applyIkStep(robot, chain, acceptedEvaluation.overrides, probeDelta, 1);
+    if (!scaledOverrides) {
+      return;
+    }
+
+    const candidateEvaluation = buildLinkIkEvaluation(
+      robot,
+      linkId,
+      anchorLocal,
+      targetWorldPosition,
+      scaledOverrides,
+      lockedJointIds,
+      options,
+    );
+
+    if (
+      candidateEvaluation.numericalFailure ||
+      candidateEvaluation.residual + IK_NUMERICAL_EPSILON >= bestResidual
+    ) {
+      return;
+    }
+
+    bestEvaluation = candidateEvaluation;
+    bestResidual = candidateEvaluation.residual;
+  };
+
+  for (let jointIndex = 0; jointIndex < chain.joints.length; jointIndex += 1) {
+    const baseStepMagnitude = stepMagnitudes[jointIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+    for (const scale of IK_COORDINATE_SEARCH_SCALES) {
+      const stepMagnitude = baseStepMagnitude * scale;
+
+      for (const direction of [-1, 1] as const) {
+        const probeDelta = new Array<number>(chain.joints.length).fill(0);
+        probeDelta[jointIndex] = stepMagnitude * direction;
+        tryProbeDelta(probeDelta);
+      }
+    }
+  }
+
+  if (bestEvaluation) {
+    return bestEvaluation;
+  }
+
+  for (let firstIndex = 0; firstIndex < chain.joints.length; firstIndex += 1) {
+    const firstStepMagnitude = stepMagnitudes[firstIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+    for (let secondIndex = firstIndex + 1; secondIndex < chain.joints.length; secondIndex += 1) {
+      if (secondIndex - firstIndex > options.coordinatePairMaxDistance) {
+        continue;
+      }
+
+      const secondStepMagnitude = stepMagnitudes[secondIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+      for (const scale of IK_COORDINATE_SEARCH_SCALES) {
+        const firstStep = firstStepMagnitude * scale;
+        const secondStep = secondStepMagnitude * scale;
+
+        for (const firstDirection of [-1, 1] as const) {
+          for (const secondDirection of [-1, 1] as const) {
+            const probeDelta = new Array<number>(chain.joints.length).fill(0);
+            probeDelta[firstIndex] = firstStep * firstDirection;
+            probeDelta[secondIndex] = secondStep * secondDirection;
+            tryProbeDelta(probeDelta);
+          }
+        }
+      }
+    }
+  }
+
+  return bestEvaluation;
+}
+
 export function solveLinkIkPositionTarget(
   robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId' | 'closedLoopConstraints'>,
   request: LinkIkPositionSolveRequest,
@@ -717,6 +816,7 @@ export function solveLinkIkPositionTarget(
   const positionTolerance = request.positionTolerance ?? 1e-3;
   const stallTolerance = request.stallTolerance ?? 1e-5;
   const damping = request.damping ?? 1e-3;
+  const coordinatePairMaxDistance = request.coordinatePairMaxDistance ?? Number.POSITIVE_INFINITY;
 
   if (!descriptor || !chainResult.chain) {
     return {
@@ -785,13 +885,7 @@ export function solveLinkIkPositionTarget(
       break;
     }
 
-    let nextEvaluation: {
-      overrides: JointKinematicOverrideMap;
-      effectorWorldPosition: THREE.Vector3;
-      error: THREE.Vector3;
-      residual: number;
-      numericalFailure: boolean;
-    } | null = null;
+    let nextEvaluation: LinkIkEvaluation | null = null;
 
     for (let attempt = 0; attempt < IK_LINE_SEARCH_ATTEMPTS; attempt += 1) {
       const scaledOverrides = applyIkStep(
@@ -832,8 +926,25 @@ export function solveLinkIkPositionTarget(
     }
 
     if (!nextEvaluation) {
-      failureReason = failureReason ?? 'stalled';
-      break;
+      nextEvaluation = findCoordinateSearchImprovement(
+        robot,
+        chainResult.chain,
+        acceptedEvaluation,
+        request.linkId,
+        descriptor.anchorLocal,
+        tempTargetWorldPosition,
+        lockedJointIds,
+        {
+          coordinatePairMaxDistance,
+          damping,
+          maxIterations,
+          tolerance: positionTolerance,
+        },
+      );
+      if (!nextEvaluation) {
+        failureReason = failureReason ?? 'stalled';
+        break;
+      }
     }
 
     const improvement = acceptedEvaluation.residual - nextEvaluation.residual;

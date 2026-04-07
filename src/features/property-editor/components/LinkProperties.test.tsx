@@ -71,6 +71,9 @@ function renderLinkProperties(
       mode,
       selection: robot.selection,
       onUpdate: () => {},
+      onSelect: () => {},
+      onSelectGeometry: () => {},
+      onAddCollisionBody: () => {},
       motorLibrary: {},
       assets: {},
       onUploadAsset: () => {},
@@ -255,6 +258,7 @@ test('editor mode renders link-only editing layout without embedded joint proper
 
   assert.doesNotMatch(markup, new RegExp(translations.en.selectedJoint));
   assert.match(markup, new RegExp(translations.en.visualGeometry));
+  assert.match(markup, new RegExp(translations.en.material));
   assert.match(markup, new RegExp(translations.en.collisionGeometry));
   assert.match(markup, new RegExp(translations.en.physics));
 });
@@ -276,6 +280,9 @@ test('tab buttons and rotation mode controls stay shrinkable for narrow property
           mode: 'editor',
           selection: robot.selection,
           onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
           motorLibrary: {},
           assets: {},
           onUploadAsset: () => {},
@@ -323,6 +330,130 @@ test('tab buttons and rotation mode controls stay shrinkable for narrow property
   }
 });
 
+test('visual tab renders geometry controls with an embedded material section', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('visual');
+
+    const link = createLink();
+    link.visual.materialSource = 'named';
+    const robot = createRobot(link);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
+          motorLibrary: {},
+          assets: {
+            'textures/body.png': 'blob:body-texture',
+          },
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    assert.match(
+      container.textContent ?? '',
+      new RegExp(translations.en.material),
+      'visual tab should render an embedded material section title',
+    );
+
+    const materialSourceLabel = Array.from(container.querySelectorAll('label')).find(
+      (node) => node.textContent === translations.en.materialSource,
+    );
+    assert.ok(materialSourceLabel, 'visual tab should render the material source field');
+
+    const colorInput = container.querySelector(
+      'input[type="color"][aria-label="Color"]',
+    ) as HTMLInputElement | null;
+    assert.ok(colorInput, 'visual tab should keep the material color picker visible');
+
+    const textureLabel = Array.from(container.querySelectorAll('label')).find(
+      (node) => node.textContent === translations.en.texture,
+    );
+    assert.ok(textureLabel, 'visual tab should keep the texture controls visible');
+
+    const typeLabel = Array.from(container.querySelectorAll('label')).find(
+      (node) => node.textContent === translations.en.type,
+    );
+    assert.ok(typeLabel, 'visual tab should still render geometry type controls');
+
+    const materialTabButton = container.querySelector('button[title="Material"]');
+    assert.equal(materialTabButton, null, 'material should no longer render as a top-level tab');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('visual tab shows authored material summaries inside the embedded material section', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('visual');
+
+    const link = createLink();
+    link.visual = {
+      type: GeometryType.MESH,
+      meshPath: 'meshes/base.stl',
+      dimensions: { x: 1, y: 1, z: 1 },
+      materialSource: 'inline',
+      authoredMaterials: [
+        { name: 'Body', color: '#112233', texture: 'textures/body.png' },
+        { name: 'Accent', color: '#445566' },
+      ],
+      origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+    };
+    const robot = createRobot(link);
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
+          motorLibrary: {},
+          assets: {
+            'textures/body.png': 'blob:body-texture',
+          },
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    assert.match(
+      container.textContent ?? '',
+      /Multiple Materials \(2\)/,
+      'visual tab should summarize authored materials inside the material section',
+    );
+
+    const authoredColorBadges = Array.from(container.querySelectorAll('span')).filter((node) =>
+      ['#112233', '#445566'].includes(node.textContent ?? ''),
+    );
+    assert.equal(
+      authoredColorBadges.length,
+      2,
+      'visual tab should render badges for authored material colors',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('visual geometry dimension labels stay shrinkable inside narrow inline rows', async () => {
   const { dom, container, root } = createComponentRoot();
   try {
@@ -339,6 +470,9 @@ test('visual geometry dimension labels stay shrinkable inside narrow inline rows
           mode: 'editor',
           selection: robot.selection,
           onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
           motorLibrary: {},
           assets: {},
           onUploadAsset: () => {},
@@ -380,6 +514,9 @@ test('physics tab keeps diagonal inertia inline and principal axes in a matrix l
           mode: 'editor',
           selection: robot.selection,
           onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
           motorLibrary: {},
           assets: {},
           onUploadAsset: () => {},
@@ -480,6 +617,9 @@ test('physics tab reuses collision-style rotation shortcuts for inertial origin'
           onUpdate: (_type, _id, nextData) => {
             updates.push(nextData as UrdfLink);
           },
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
           motorLibrary: {},
           assets: {},
           onUploadAsset: () => {},
@@ -611,5 +751,324 @@ test('mass changes can remember and auto-apply uniform-density inertia re-estima
   } finally {
     await destroyComponentRoot(dom, root);
     useUIStore.getState().setMassInertiaChangeBehavior('ask');
+  }
+});
+
+test('collision tab lists every collision geometry for the selected link', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    const link = createLink();
+    link.collisionBodies = [
+      {
+        type: GeometryType.SPHERE,
+        dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+        color: '#00ff00',
+        origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      },
+      {
+        type: GeometryType.CAPSULE,
+        dimensions: { x: 0.1, y: 0.1, z: 0.4 },
+        color: '#ffaa00',
+        origin: { xyz: { x: 0.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+      },
+    ];
+    const robot = createRobot(link);
+    robot.selection = {
+      type: 'link',
+      id: link.id,
+      subType: 'collision',
+      objectIndex: 0,
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(LinkProperties, {
+          data: link,
+          robot,
+          mode: 'editor',
+          selection: robot.selection,
+          onUpdate: () => {},
+          onSelect: () => {},
+          onSelectGeometry: () => {},
+          onAddCollisionBody: () => {},
+          motorLibrary: {},
+          assets: {},
+          onUploadAsset: () => {},
+          t: translations.en,
+          lang: 'en',
+        }),
+      );
+    });
+
+    assert.ok(
+      container.querySelector('button[aria-label="Collision 1"]'),
+      'primary collision entry should render in the list',
+    );
+    assert.ok(
+      container.querySelector('button[aria-label="Collision 2"]'),
+      'secondary collision entry should render in the list',
+    );
+    assert.ok(
+      container.querySelector('button[aria-label="Collision 3"]'),
+      'third collision entry should render in the list',
+    );
+    assert.match(
+      container.textContent ?? '',
+      /Primary/,
+      'the primary collision should be labeled explicitly',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision list selection switches the editor to the clicked collision body', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    function ControlledCollisionHarness() {
+      const [link] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 0,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: () => {},
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0) => {
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        onAddCollisionBody: () => {},
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionHarness));
+    });
+
+    const geometryTypeSelect = container.querySelector('select') as HTMLSelectElement | null;
+    assert.ok(geometryTypeSelect, 'geometry type select should render');
+    assert.equal(geometryTypeSelect.value, GeometryType.BOX);
+
+    const secondCollisionButton = container.querySelector(
+      'button[aria-label="Collision 2"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(secondCollisionButton, 'second collision list item should render');
+
+    await act(async () => {
+      dispatchReactClick(secondCollisionButton);
+    });
+
+    assert.equal(
+      geometryTypeSelect.value,
+      GeometryType.SPHERE,
+      'clicking a collision list item should retarget the editor to that collision body',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision tab add button appends a new collision body and selects it when no app callback is provided', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    function ControlledCollisionAddHarness() {
+      const [link, setLink] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 1,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: (_type, _id, nextData) => {
+          setLink(nextData as UrdfLink);
+        },
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0) => {
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionAddHarness));
+    });
+
+    const addCollisionButton = container.querySelector(
+      `button[aria-label="${translations.en.addCollisionBody}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(addCollisionButton, 'add collision body button should render');
+
+    await act(async () => {
+      dispatchReactClick(addCollisionButton);
+    });
+
+    assert.ok(
+      container.querySelector('button[aria-label="Collision 3"]'),
+      'adding a collision body should append a new list entry',
+    );
+
+    const geometryTypeSelect = container.querySelector('select') as HTMLSelectElement | null;
+    assert.ok(geometryTypeSelect, 'geometry type select should remain mounted');
+    assert.equal(
+      geometryTypeSelect.value,
+      GeometryType.BOX,
+      'the newly added collision body should become the active editable collision',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision tab delete button removes the active collision body and keeps the next item selected', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    function ControlledCollisionDeleteHarness() {
+      const [link, setLink] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          {
+            type: GeometryType.CAPSULE,
+            dimensions: { x: 0.1, y: 0.1, z: 0.4 },
+            color: '#ffaa00',
+            origin: { xyz: { x: 0.2, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 2,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: (_type, _id, nextData) => {
+          setLink(nextData as UrdfLink);
+        },
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0) => {
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionDeleteHarness));
+    });
+
+    const deleteCollisionButton = container.querySelector(
+      `button[aria-label="${translations.en.deleteCollisionGeometry}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(deleteCollisionButton, 'delete collision body button should render');
+
+    await act(async () => {
+      dispatchReactClick(deleteCollisionButton);
+    });
+
+    assert.equal(
+      container.querySelector('button[aria-label="Collision 3"]'),
+      null,
+      'deleting the selected collision should remove it from the list',
+    );
+
+    const geometryTypeSelect = container.querySelector('select') as HTMLSelectElement | null;
+    assert.ok(geometryTypeSelect, 'geometry type select should remain mounted after delete');
+    assert.equal(
+      geometryTypeSelect.value,
+      GeometryType.SPHERE,
+      'after deleting the last collision entry, the editor should select the next remaining collision body',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
   }
 });

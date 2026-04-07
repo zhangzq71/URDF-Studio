@@ -38,6 +38,9 @@ function installDom() {
   (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
     dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  if (!dom.window.HTMLElement.prototype.scrollIntoView) {
+    dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoViewStub() {};
+  }
 
   return dom;
 }
@@ -311,6 +314,73 @@ test('TreeNode geometry eye icons reflect inherited hidden state from the parent
     assert.match(visualButton.innerHTML, /eye-off/i);
     assert.match(collisionButton.innerHTML, /eye-off/i);
   } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeNode relocates geometry attention to the parent link row', async () => {
+  const { dom, root } = createComponentRoot();
+  const scrollTargets: string[] = [];
+  const originalScrollIntoView = dom.window.HTMLElement.prototype.scrollIntoView;
+  const originalRequestAnimationFrame = dom.window.requestAnimationFrame;
+
+  dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoViewSpy() {
+    scrollTargets.push(this.getAttribute('title') ?? this.textContent?.trim() ?? '');
+  };
+  dom.window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  }) as typeof dom.window.requestAnimationFrame;
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: 'link', id: 'base_link', subType: 'collision', objectIndex: 0 },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: 'link', id: 'base_link', subType: 'collision', objectIndex: 0 },
+      focusTarget: null,
+    });
+
+    const robot = createRobotWithCollision();
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            showGeometryDetailsByDefault
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={() => {}}
+            mode="editor"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    assert.match(scrollTargets.at(-1) ?? '', /^base_link/);
+    assert.equal(
+      dom.window.document.querySelector(`[title="${translations.en.visualGeometry}"]`),
+      null,
+      'geometry attention should relocate to the link without expanding the visual row',
+    );
+    assert.equal(
+      dom.window.document.querySelector(`[title="${translations.en.collision}"]`),
+      null,
+      'geometry attention should relocate to the link without expanding the collision row',
+    );
+  } finally {
+    dom.window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    dom.window.requestAnimationFrame = originalRequestAnimationFrame;
+    (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+      dom.window.requestAnimationFrame.bind(dom.window);
     await destroyComponentRoot(dom, root);
   }
 });

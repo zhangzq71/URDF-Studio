@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import JSZip from 'jszip';
 
 import { prepareImportPayload, type ImportPreparationFileDescriptor } from './importPreparation.ts';
@@ -24,6 +28,48 @@ function createLooseFile(
   }
 
   return file;
+}
+
+async function createTarGzArchiveFile(
+  entries: Array<{ path: string; content: BlobPart; type?: string }>,
+  outputFileName = 'bundle.tar.gz',
+): Promise<File> {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'urdf-studio-targz-'));
+  const inputRoot = path.join(tempRoot, 'archive-root');
+  const archivePath = path.join(tempRoot, outputFileName);
+
+  fs.mkdirSync(inputRoot, { recursive: true });
+
+  try {
+    for (const entry of entries) {
+      const entryPath = path.join(inputRoot, ...entry.path.split('/'));
+      fs.mkdirSync(path.dirname(entryPath), { recursive: true });
+      fs.writeFileSync(entryPath, Buffer.from(await new Blob([entry.content]).arrayBuffer()));
+    }
+
+    const topLevelEntries = [
+      ...new Set(entries.map((entry) => entry.path.split('/')[0]).filter(Boolean)),
+    ];
+    const tarResult = spawnSync('tar', ['-czf', archivePath, '-C', inputRoot, ...topLevelEntries], {
+      encoding: 'utf8',
+    });
+
+    if (tarResult.error) {
+      throw tarResult.error;
+    }
+
+    if (tarResult.status !== 0) {
+      throw new Error(
+        `Failed to create tar.gz fixture: ${tarResult.stderr || tarResult.stdout || `exit ${tarResult.status}`}`,
+      );
+    }
+
+    return new File([fs.readFileSync(archivePath)], outputFileName, {
+      type: 'application/gzip',
+    });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 }
 
 test('prepareImportPayload renames colliding loose imports while preserving file classifications', async () => {
@@ -64,7 +110,7 @@ test('prepareImportPayload renames colliding loose imports while preserving file
   );
 });
 
-test('prepareImportPayload scans zip bundles off the main classification path and skips hidden entries', async () => {
+test('prepareImportPayload scans zip bundles off the main classification path and keeps only visible library entries', async () => {
   const zip = new JSZip();
   zip.file('.hidden/ignored.urdf', '<robot name="ignored" />');
   zip.file(
@@ -76,6 +122,8 @@ test('prepareImportPayload scans zip bundles off the main classification path an
   );
   zip.file('robot/meshes/base.obj', 'o Mesh');
   zip.file('robot/textures/albedo.png', new Uint8Array([137, 80, 78, 71]));
+  zip.file('robot/docs/README.md', '# Demo robot');
+  zip.file('robot/cache/payload.dat', new Uint8Array([1, 2, 3, 4]));
   zip.file('robot/motor library/Acme/M1.txt', '{"name":"M1"}');
   zip.file('robot/scene.usdc', new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67, 1, 2, 3]));
 
@@ -114,14 +162,128 @@ test('prepareImportPayload scans zip bundles off the main classification path an
     'robot/textures/albedo.png',
   ]);
   assert.deepEqual(
+    result.deferredAssetFiles.map((file) => file.name),
+    [],
+  );
+  assert.deepEqual(
     result.libraryFiles.map((file) => file.path),
     ['robot/motor library/Acme/M1.txt'],
   );
+  assert.deepEqual(result.textFiles, []);
   assert.deepEqual(
     result.usdSourceFiles.map((file) => file.name),
     ['robot/scene.usdc'],
   );
   assert.equal(result.usdSourceFiles[0].blob.size > 0, true);
+});
+
+test('prepareImportPayload scans supported zip bundles and exposes extracted robot files', async () => {
+  const zipFile = new File([fs.readFileSync('test/xuebao.zip')], 'xuebao.zip', {
+    type: 'application/zip',
+  });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.ok(
+    result.robotFiles.some(
+      (file) => file.name.endsWith('/xuebao_unified.xml') && file.format === 'mjcf',
+    ),
+  );
+  assert.ok(result.robotFiles.some((file) => file.name.endsWith('.obj') && file.format === 'mesh'));
+  assert.ok(result.preferredFileName);
+});
+
+test('prepareImportPayload keeps only referenced MJCF text mesh sidecars and OBJ material text', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'robot/demo.xml',
+    `<?xml version="1.0"?>
+<mujoco model="demo">
+  <compiler meshdir="assets" />
+  <asset>
+    <mesh name="body" file="body.obj" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <geom type="mesh" mesh="body" />
+    </body>
+  </worldbody>
+</mujoco>`,
+  );
+  zip.file(
+    'robot/assets/body.obj',
+    `mtllib body.mtl
+o BodyMesh`,
+  );
+  zip.file('robot/assets/body.mtl', 'newmtl default');
+  zip.file('robot/assets/unused.obj', 'o UnusedMesh');
+  zip.file('robot/assets/unused.mtl', 'newmtl unused');
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'bundle.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'robot/demo.xml');
+  assert.deepEqual(result.textFiles, [
+    { path: 'robot/assets/body.mtl', content: 'newmtl default' },
+    {
+      path: 'robot/assets/body.obj',
+      content: `mtllib body.mtl
+o BodyMesh`,
+    },
+  ]);
+});
+
+test('prepareImportPayload scans tar.gz bundles through the archive import path', async () => {
+  const tarGzFile = await createTarGzArchiveFile([
+    {
+      path: 'robot/demo.urdf',
+      content: `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link" />
+</robot>`,
+      type: 'text/xml',
+    },
+    {
+      path: 'robot/meshes/base.obj',
+      content: 'o Mesh',
+      type: 'text/plain',
+    },
+    {
+      path: 'robot/textures/albedo.png',
+      content: new Uint8Array([137, 80, 78, 71]),
+      type: 'image/png',
+    },
+  ]);
+
+  const result = await prepareImportPayload({
+    files: [tarGzFile],
+    existingPaths: [],
+  });
+
+  assert.deepEqual(
+    result.robotFiles
+      .map((file) => ({ name: file.name, format: file.format }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    [
+      { name: 'robot/demo.urdf', format: 'urdf' },
+      { name: 'robot/meshes/base.obj', format: 'mesh' },
+      { name: 'robot/textures/albedo.png', format: 'mesh' },
+    ],
+  );
+  assert.deepEqual(result.assetFiles.map((file) => file.name).sort(), [
+    'robot/meshes/base.obj',
+    'robot/textures/albedo.png',
+  ]);
+  assert.deepEqual(result.textFiles, []);
 });
 
 test('prepareImportPayload exposes loose image assets in the browser file list', async () => {
@@ -144,6 +306,27 @@ test('prepareImportPayload exposes loose image assets in the browser file list',
     result.assetFiles.map((file) => file.name),
     ['robot/textures/poster.png'],
   );
+});
+
+test('prepareImportPayload returns an empty payload when loose imports contain no supported files', async () => {
+  const result = await prepareImportPayload({
+    files: [
+      createLooseFile('README.md', '# Demo robot', 'robot/README.md'),
+      createLooseFile('payload.dat', new Uint8Array([1, 2, 3, 4]), 'robot/raw/payload.dat'),
+    ],
+    existingPaths: [],
+  });
+
+  assert.deepEqual(result, {
+    robotFiles: [],
+    assetFiles: [],
+    deferredAssetFiles: [],
+    usdSourceFiles: [],
+    libraryFiles: [],
+    textFiles: [],
+    preferredFileName: null,
+    preResolvedImports: [],
+  });
 });
 
 test('prepareImportPayload classifies motor-library.json as a library file', async () => {
@@ -324,6 +507,45 @@ test('prepareImportPayload fast-open mode prefers MJCF over a non-self-contained
   assert.deepEqual(result.preResolvedImports, []);
 });
 
+test('prepareImportPayload fast-open mode keeps a self-contained URDF preferred when a mixed bundle also ships MJCF', async () => {
+  const files = [
+    createLooseFile(
+      'demo.urdf',
+      `<?xml version="1.0"?>
+<robot name="demo_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://demo_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+      'demo_description/urdf/demo.urdf',
+    ),
+    createLooseFile(
+      'demo.xml',
+      `<?xml version="1.0"?>
+<mujoco model="demo">
+  <worldbody>
+    <body name="base_link" />
+  </worldbody>
+</mujoco>`,
+      'demo_description/xml/demo.xml',
+    ),
+    createLooseFile('base_link.stl', 'solid demo', 'demo_description/meshes/base_link.stl'),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'demo_description/urdf/demo.urdf');
+  assert.deepEqual(result.preResolvedImports, []);
+});
+
 test('prepareImportPayload fast-open mode picks the root USDA file without pre-resolving it', async () => {
   const files = [
     createLooseFile(
@@ -478,10 +700,9 @@ test('prepareImportPayload synthesizes a bundle root for rootless gazebo zip bun
     'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/materials/textures/demo.png',
     'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/thumbnails/preview.png',
   ]);
-  assert.deepEqual(
-    result.textFiles.map((file) => file.path),
-    ['NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/materials/scripts/demo.material'],
-  );
+  assert.deepEqual([...result.textFiles].map((file) => file.path).sort(), [
+    'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/materials/scripts/demo.material',
+  ]);
   assert.equal(
     result.preferredFileName,
     'NUS_SEDS_OMNIDIRECTIONAL_GROUND_VEHICLE_VISUALS_ONLY/model.sdf',
@@ -656,10 +877,9 @@ test('prepareImportPayload eagerly hydrates SDF gazebo material script textures 
     'demo/materials/textures/coat.png',
     'demo/meshes/base_link.dae',
   ]);
-  assert.deepEqual(
-    result.textFiles.map((file) => file.path),
-    ['demo/materials/scripts/demo.material'],
-  );
+  assert.deepEqual([...result.textFiles].map((file) => file.path).sort(), [
+    'demo/materials/scripts/demo.material',
+  ]);
   assert.deepEqual(
     result.deferredAssetFiles.map((file) => file.name),
     ['demo/docs/preview.png'],
@@ -1118,7 +1338,7 @@ test('prepareImportPayload keeps xacro gazebo sidecars as auxiliary text files',
   );
 });
 
-test('prepareImportPayload skips gazebo material sidecars for usd-only bundles', async () => {
+test('prepareImportPayload keeps gazebo material sidecars for usd-only bundles in the asset library', async () => {
   const zip = new JSZip();
   zip.file(
     'demo/scene.usda',
@@ -1146,11 +1366,18 @@ def Xform "demo"
     existingPaths: [],
   });
 
-  assert.deepEqual(result.textFiles, []);
+  assert.deepEqual(result.textFiles, [
+    {
+      path: 'demo/materials/scripts/demo.material',
+      content: `material Demo/Diffuse
+{
+}`,
+    },
+  ]);
   assert.equal(result.preferredFileName, 'demo/scene.usda');
 });
 
-test('prepareImportPayload keeps loose image assets while skipping unrelated loose text files', async () => {
+test('prepareImportPayload drops unsupported loose files from the visible asset library', async () => {
   const files = [
     createLooseFile(
       'demo.urdf',
@@ -1162,6 +1389,7 @@ test('prepareImportPayload keeps loose image assets while skipping unrelated loo
     ),
     createLooseFile('README.md', '# Demo robot', 'robot/README.md'),
     createLooseFile('LICENSE', 'Apache-2.0', 'robot/LICENSE'),
+    createLooseFile('payload.dat', new Uint8Array([1, 2, 3, 4]), 'robot/raw/payload.dat'),
     createLooseFile('preview.png', new Uint8Array([137, 80, 78, 71]), 'robot/docs/preview.png'),
   ];
 

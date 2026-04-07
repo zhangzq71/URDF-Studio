@@ -256,7 +256,7 @@ test('findPickIntersections filters out hidden collision hits', () => {
   );
 });
 
-test('findPickIntersections honors explicit layer priority over legacy helper bias', () => {
+test('findPickIntersections keeps selectable helpers ahead of geometry even when visual layer is explicitly preferred', () => {
   const robot = new THREE.Group();
 
   const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
@@ -285,8 +285,9 @@ test('findPickIntersections honors explicit layer priority over legacy helper bi
   ]);
 
   assert.equal(hits.length >= 2, true);
-  assert.equal(hits[0]?.object, visualMesh);
+  assert.equal(hits[0]?.object, helperMesh);
   assert.ok(hits.some((hit) => hit.object === helperMesh));
+  assert.ok(hits.some((hit) => hit.object === visualMesh));
 });
 
 test('findPickIntersections honors explicit layer priority over legacy collision ordering', () => {
@@ -316,4 +317,35 @@ test('findPickIntersections honors explicit layer priority over legacy collision
   assert.equal(hits.length >= 2, true);
   assert.equal(hits[0]?.object, visualMesh);
   assert.ok(hits.some((hit) => hit.object === collisionMesh));
+});
+
+test('findPickIntersections keeps the nearest geometry hit first even when collision layer is explicitly preferred', () => {
+  const robot = new THREE.Group();
+
+  const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
+  visualMesh.position.set(0, 0, -1);
+  visualMesh.userData.parentLinkName = 'shared_link';
+  visualMesh.userData.isVisualMesh = true;
+  robot.add(visualMesh);
+
+  const collisionMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+  collisionMesh.position.set(0, 0, -1.05);
+  collisionMesh.userData.parentLinkName = 'shared_link';
+  collisionMesh.userData.isCollisionMesh = true;
+  robot.add(collisionMesh);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+
+  const hits = findPickIntersections(robot, raycaster, [visualMesh, collisionMesh], 'all', false, [
+    'collision',
+    'visual',
+  ]);
+  const firstVisualHit = hits.find((hit) => hit.object === visualMesh) ?? null;
+  const firstCollisionHit = hits.find((hit) => hit.object === collisionMesh) ?? null;
+
+  assert.equal(hits.length >= 2, true);
+  assert.equal(hits[0]?.object, visualMesh);
+  assert.ok((firstVisualHit?.distance ?? Infinity) < (firstCollisionHit?.distance ?? Infinity));
 });

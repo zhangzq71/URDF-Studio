@@ -55,8 +55,10 @@ import {
   shouldReuseSourceViewerForSingleComponentAssembly,
   shouldUseGeneratedWorkspaceViewerReloadContent,
   shouldUseEmptyRobotForUsdHydration,
+  isActiveWorkspaceTransformSession,
   WORKSPACE_VIEWER_COMPONENT_ROOT_JOINT_PREFIX,
 } from './workspaceSourceSyncUtils.ts';
+import { buildGeneratedWorkspaceFileState } from './workspaceGeneratedSourceState.ts';
 
 const { window } = new JSDOM();
 
@@ -434,6 +436,43 @@ test('shouldUseGeneratedWorkspaceViewerReloadContent keeps the lightweight reloa
   );
 });
 
+test('isActiveWorkspaceTransformSession stays false for passive component selection without transform edits', () => {
+  assert.equal(
+    isActiveWorkspaceTransformSession({
+      shouldRenderAssembly: true,
+      shouldReuseSelectedFileViewerForWorkspace: false,
+      workspaceTransformPending: false,
+    }),
+    false,
+  );
+});
+
+test('shouldUseGeneratedWorkspaceViewerReloadContent respects transform pending gating even when authored materials exist', () => {
+  const robot = createRobotState();
+  robot.links.base_link = {
+    ...robot.links.base_link,
+    visual: {
+      ...robot.links.base_link.visual,
+      authoredMaterials: [{ name: 'body_blue', color: '#0088ff' }],
+    },
+  };
+
+  const hasActiveTransformTarget = isActiveWorkspaceTransformSession({
+    shouldRenderAssembly: true,
+    shouldReuseSelectedFileViewerForWorkspace: false,
+    workspaceTransformPending: true,
+  });
+
+  assert.equal(hasActiveTransformTarget, true);
+  assert.equal(
+    shouldUseGeneratedWorkspaceViewerReloadContent({
+      robotLinks: robot.links,
+      hasActiveTransformTarget,
+    }),
+    true,
+  );
+});
+
 test('buildLightweightWorkspaceViewerReloadContent produces a tiny deterministic URDF stub', () => {
   assert.equal(
     buildLightweightWorkspaceViewerReloadContent(42),
@@ -603,6 +642,35 @@ test('resolveWorkspaceGeneratedUrdfRobotData falls back to exportable assembly d
   );
 });
 
+test('buildGeneratedWorkspaceFileState appends or updates generated URDF entries', () => {
+  const generatedFile = createUrdfFile('generated/workspace.generated.urdf');
+  generatedFile.content = '<robot name="workspace" />';
+  const availableFiles = [createUrdfFile('robots/demo/demo.urdf')];
+  const allFileContents = { 'robots/demo/demo.urdf': '<robot name="demo" />' };
+
+  const initialState = buildGeneratedWorkspaceFileState({
+    availableFiles,
+    allFileContents,
+    file: generatedFile,
+  });
+
+  assert.ok(initialState.nextAvailableFiles.some((file) => file.name === generatedFile.name));
+  assert.equal(initialState.nextAllFileContents[generatedFile.name], generatedFile.content);
+
+  const updatedFile = { ...generatedFile, content: '<robot name="workspace_v2" />' };
+  const updateState = buildGeneratedWorkspaceFileState({
+    availableFiles: initialState.nextAvailableFiles,
+    allFileContents: initialState.nextAllFileContents,
+    file: updatedFile,
+  });
+
+  const updatedEntry = updateState.nextAvailableFiles.find(
+    (file) => file.name === updatedFile.name,
+  );
+  assert.equal(updatedEntry?.content, updatedFile.content);
+  assert.equal(updateState.nextAllFileContents[updatedFile.name], updatedFile.content);
+});
+
 test('createRobotSourceSnapshotFromUrdfContent normalizes mesh paths relative to the source file', async () => {
   const workerMock = installEditableRobotSourceWorkerMock();
 
@@ -753,6 +821,19 @@ test('getWorkspaceAssemblyRenderFailureReason reports no failure when assembly r
   assert.equal(
     getWorkspaceAssemblyRenderFailureReason({
       shouldRenderAssembly: false,
+      hasDisplayAssemblyState: false,
+      mergedRobotData: null,
+      viewerMergedRobotData: null,
+    }),
+    null,
+  );
+});
+
+test('getWorkspaceAssemblyRenderFailureReason defers failures until the display assembly state is ready', () => {
+  assert.equal(
+    getWorkspaceAssemblyRenderFailureReason({
+      shouldRenderAssembly: true,
+      hasDisplayAssemblyState: false,
       mergedRobotData: null,
       viewerMergedRobotData: null,
     }),
@@ -764,6 +845,7 @@ test('getWorkspaceAssemblyRenderFailureReason surfaces missing merged workspace 
   assert.equal(
     getWorkspaceAssemblyRenderFailureReason({
       shouldRenderAssembly: true,
+      hasDisplayAssemblyState: true,
       mergedRobotData: null,
       viewerMergedRobotData: null,
     }),
@@ -778,6 +860,7 @@ test('getWorkspaceAssemblyRenderFailureReason surfaces missing viewer merged rob
   assert.equal(
     getWorkspaceAssemblyRenderFailureReason({
       shouldRenderAssembly: true,
+      hasDisplayAssemblyState: true,
       mergedRobotData,
       viewerMergedRobotData: null,
     }),

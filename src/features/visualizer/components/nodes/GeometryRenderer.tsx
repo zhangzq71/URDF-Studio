@@ -1,11 +1,15 @@
 import { Suspense, memo, useCallback, useEffect, useMemo, type ReactNode } from 'react';
-import type { ThreeEvent } from '@react-three/fiber';
+import { useLoader, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import { type AppMode, GeometryType, UrdfLink, UrdfVisual } from '@/types';
 import { MeshAssetNode } from '@/shared/components/3d';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { useSelectionStore } from '@/store/selectionStore';
 import { DEFAULT_VISUAL_COLOR } from '@/core/robot/constants';
+import { createLoadingManager, resolveManagedAssetUrl } from '@/core/loaders';
+import { buildAssetIndex } from '@/core/loaders/meshLoader';
+import { getBoxFaceMaterialPalette } from '@/core/robot';
+import { createMatteMaterial } from '@/shared/utils/materialFactory';
 import {
   buildMaterialCacheKey,
   getCachedMaterial,
@@ -67,6 +71,104 @@ interface ActiveGeometryRendererProps extends GeometryRendererProps {
 export function shouldGeometryCastShadows(isCollision: boolean): boolean {
   return !isCollision;
 }
+
+interface MultiFaceBoxMeshProps {
+  assets: Record<string, string>;
+  dimensions: UrdfVisual['dimensions'];
+  geometry: UrdfVisual;
+  matOpacity: number;
+  emissiveColor: string;
+  emissiveIntensity: number;
+  shadowProps: { castShadow: boolean; receiveShadow: boolean };
+}
+
+const MultiFaceBoxMesh = memo<MultiFaceBoxMeshProps>(function MultiFaceBoxMesh({
+  assets,
+  dimensions,
+  geometry,
+  matOpacity,
+  emissiveColor,
+  emissiveIntensity,
+  shadowProps,
+}: MultiFaceBoxMeshProps) {
+  const boxFacePalette = useMemo(() => getBoxFaceMaterialPalette(geometry), [geometry]);
+  const loadingManager = useMemo(() => createLoadingManager(assets), [assets]);
+  const assetIndex = useMemo(() => buildAssetIndex(assets), [assets]);
+  const faceTexturePaths = useMemo(
+    () => boxFacePalette.map((entry) => String(entry.material.texture || '').trim()),
+    [boxFacePalette],
+  );
+  const resolvedTextureUrls = useMemo(
+    () =>
+      faceTexturePaths
+        .filter(Boolean)
+        .map((texturePath) => resolveManagedAssetUrl(texturePath, assetIndex, '')),
+    [assetIndex, faceTexturePaths],
+  );
+  const loadedTextures = useLoader(THREE.TextureLoader, resolvedTextureUrls, (loader) => {
+    loader.manager = loadingManager;
+  });
+  const textureByPath = useMemo(() => {
+    const nextTextureByPath = new Map<string, THREE.Texture>();
+    let textureIndex = 0;
+    faceTexturePaths.forEach((texturePath) => {
+      if (!texturePath || nextTextureByPath.has(texturePath)) {
+        return;
+      }
+
+      const texture = loadedTextures[textureIndex++];
+      if (texture) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        nextTextureByPath.set(texturePath, texture);
+      }
+    });
+    return nextTextureByPath;
+  }, [faceTexturePaths, loadedTextures]);
+  const materials = useMemo(() => {
+    return boxFacePalette.map((entry, index) => {
+      const texturePath = String(entry.material.texture || '').trim();
+      const material = createMatteMaterial({
+        color:
+          String(entry.material.color || '').trim() ||
+          (texturePath ? '#ffffff' : geometry.color || DEFAULT_VISUAL_COLOR),
+        opacity: matOpacity,
+        transparent: matOpacity < 1,
+        side: THREE.DoubleSide,
+        preserveExactColor: true,
+        name: `visualizer-box-face-${entry.face}-${index + 1}`,
+      });
+
+      if (texturePath) {
+        const texture = textureByPath.get(texturePath);
+        if (texture) {
+          material.map = texture;
+        }
+      }
+
+      material.emissive.set(emissiveColor);
+      material.emissiveIntensity = emissiveIntensity;
+      material.needsUpdate = true;
+      return material;
+    });
+  }, [boxFacePalette, emissiveColor, emissiveIntensity, geometry.color, matOpacity, textureByPath]);
+
+  useEffect(() => {
+    return () => {
+      materials.forEach((material) => material.dispose());
+    };
+  }, [materials]);
+
+  return (
+    <mesh
+      material={materials}
+      scale={[dimensions.x || 0.1, dimensions.y || 0.1, dimensions.z || 0.1]}
+      {...shadowProps}
+    >
+      <boxGeometry args={[1, 1, 1, 1, 1, 1]} />
+    </mesh>
+  );
+});
 
 /**
  * GeometryRenderer - Renders visual or collision geometry for a link
@@ -370,6 +472,12 @@ const ActiveGeometryRenderer = memo<ActiveGeometryRendererProps>(function Active
   let geometryNode: ReactNode;
   const radialSegments = useLegacySkeletonVisualStyle ? 8 : 32;
   const boxSegments = useLegacySkeletonVisualStyle ? 1 : 2;
+  const canUseBoxFaceMaterials =
+    !isCollision &&
+    !isVisualHighlight &&
+    !effectiveHovered &&
+    type === GeometryType.BOX &&
+    getBoxFaceMaterialPalette(data).length > 0;
   // For cylinder, we need to rotate to align with Z-up
   let meshRotation: [number, number, number] = [0, 0, 0];
 
@@ -378,8 +486,18 @@ const ActiveGeometryRenderer = memo<ActiveGeometryRendererProps>(function Active
   // BufferGeometry objects on every dimension change, eliminating flicker when
   // the user continuously presses +/- to resize collision bodies.
   if (type === GeometryType.BOX) {
-    // Unit box (1×1×1) scaled to target dimensions
-    geometryNode = (
+    geometryNode = canUseBoxFaceMaterials ? (
+      <MultiFaceBoxMesh
+        assets={assets}
+        dimensions={dimensions}
+        geometry={data}
+        matOpacity={matOpacity}
+        emissiveColor={emissiveColor}
+        emissiveIntensity={emissiveIntensity}
+        shadowProps={shadowProps}
+      />
+    ) : (
+      // Unit box (1×1×1) scaled to target dimensions
       <mesh scale={[dimensions.x, dimensions.y, dimensions.z]} {...shadowProps}>
         <boxGeometry args={[1, 1, 1, boxSegments, boxSegments, boxSegments]} />
         <primitive object={material} attach="material" />

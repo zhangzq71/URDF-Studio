@@ -1,6 +1,6 @@
 /**
  * File Import Hook
- * Handles importing URDF, MJCF, USD, Xacro files and ZIP packages
+ * Handles importing URDF, MJCF, USD, Xacro files and supported archive packages
  */
 import { useCallback } from 'react';
 import type { RobotData, RobotFile } from '@/types';
@@ -20,6 +20,12 @@ import {
   type ProjectImportResult,
 } from '@/features/file-io';
 import { translations } from '@/shared/i18n';
+import {
+  isAssetLibraryOnlyFormat,
+  isLibraryPreviewableFile,
+  isVisibleLibraryEntry,
+  isSupportedArchiveImportFile,
+} from '@/shared/utils/robotFileSupport';
 import { buildImportedRobotStoreState } from './projectRobotStateUtils';
 import {
   prepareImportPayloadWithWorker,
@@ -31,7 +37,10 @@ import {
   buildContextualPreResolvedImports,
   shouldBuildContextualPreResolvedImports,
 } from '@/app/utils/contextualPreResolvedImports';
-import { buildStandaloneImportAssetWarning } from '@/app/utils/importPackageAssetReferences.ts';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from '@/app/utils/importPackageAssetReferences.ts';
 import { primePreResolvedRobotImports } from '@/app/utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from '@/app/utils/usdSelectionPrewarm';
 import { markUnsavedChangesBaselineSaved } from '@/app/utils/unsavedChangesBaseline';
@@ -43,6 +52,11 @@ export interface ImportPreparationOverlayState {
   statusLabel?: string | null;
   stageLabel?: string | null;
 }
+
+export type ImportInputFiles = FileList | readonly File[] | null;
+export type HandleImportResult = {
+  status: 'completed' | 'skipped' | 'failed';
+};
 
 interface UseFileImportOptions {
   onLoadRobot?: (file: RobotFile) => void;
@@ -65,15 +79,21 @@ function pickPreparedPreferredFile(
   preferredFileName: string | null,
   preResolvedFileName: string | null,
 ): RobotFile | null {
+  const visibleFiles = files.filter(isLibraryPreviewableFile);
+
   if (preferredFileName) {
-    return files.find((file) => file.name === preferredFileName) ?? null;
+    return visibleFiles.find((file) => file.name === preferredFileName) ?? null;
   }
 
   if (preResolvedFileName) {
-    return files.find((file) => file.name === preResolvedFileName) ?? null;
+    return visibleFiles.find((file) => file.name === preResolvedFileName) ?? null;
   }
 
-  return files.find((file) => file.format !== 'mesh') ?? files[0] ?? null;
+  return (
+    visibleFiles.find((file) => !isAssetLibraryOnlyFormat(file.format)) ??
+    visibleFiles.find((file) => isLibraryPreviewableFile(file)) ??
+    null
+  );
 }
 
 function waitForNextPaint(): Promise<void> {
@@ -196,9 +216,9 @@ export function useFileImport(options: UseFileImportOptions = {}) {
   );
 
   const handleImport = useCallback(
-    async (files: FileList | null) => {
+    async (files: ImportInputFiles): Promise<HandleImportResult> => {
       if (!files || files.length === 0) {
-        return;
+        return { status: 'skipped' };
       }
 
       const uiState = useUIStore.getState();
@@ -212,12 +232,8 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       const shouldShowPreparationOverlay =
         inputFiles.length > 1 ||
         inputFiles.some((file) => Boolean(file.webkitRelativePath)) ||
-        (inputFiles.length === 1 && inputFiles[0].name.toLowerCase().endsWith('.zip')) ||
+        (inputFiles.length === 1 && isSupportedArchiveImportFile(inputFiles[0].name)) ||
         importsRobotDefinition;
-
-      if (onShowToast && uiState.showImportWarning) {
-        onShowToast(t.privacyNoticeLocalProcessing, 'success');
-      }
 
       const createdBlobUrls: string[] = [];
       let importedAssetsCommitted = false;
@@ -277,10 +293,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           uiState.setSidebarTab(result.assemblyState ? 'workspace' : 'structure');
           markUnsavedChangesBaselineSaved('all');
 
-          if (onShowToast) {
-            onShowToast(t.importUspSuccess, 'success');
-          }
-          return;
+          return { status: 'completed' };
         }
 
         const hadExistingAvailableFiles = assetsState.availableFiles.length > 0;
@@ -331,6 +344,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             ? { ...file, blobUrl: usdSourceBlobUrls[file.name] }
             : file,
         );
+        const visibleImportedFiles = renamedRobotFilesWithSources.filter(isVisibleLibraryEntry);
 
         if (renamedLibraryFiles.length > 0) {
           const mergeResult = mergeMotorLibraryEntries(renamedLibraryFiles, DEFAULT_MOTOR_LIBRARY);
@@ -391,11 +405,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         if (
           renamedDeferredAssetFiles.length > 0 &&
           inputFiles.length === 1 &&
-          inputFiles[0]?.name.toLowerCase().endsWith('.zip')
+          inputFiles[0] &&
+          isSupportedArchiveImportFile(inputFiles[0].name)
         ) {
-          const sourceZipFile = inputFiles[0];
+          const sourceArchiveFile = inputFiles[0];
           void hydrateDeferredImportAssetsWithWorker({
-            zipFile: sourceZipFile,
+            archiveFile: sourceArchiveFile,
             assetFiles: renamedDeferredAssetFiles,
           })
             .then((hydratedAssetFiles) => {
@@ -406,20 +421,24 @@ export function useFileImport(options: UseFileImportOptions = {}) {
               assetsState.addAssets(createAssetUrls(hydratedAssetFiles));
             })
             .catch((error) => {
-              console.error('Deferred asset hydration failed for imported ZIP bundle:', error);
+              console.error('Deferred asset hydration failed for imported archive bundle:', error);
             });
         }
 
-        if (renamedRobotFilesWithSources.length > 0) {
+        if (visibleImportedFiles.length > 0) {
           const preferredFile = pickPreparedPreferredFile(
-            renamedRobotFilesWithSources,
+            visibleImportedFiles,
             preferredFileName,
             preResolvedImports[0]?.fileName ?? null,
+          );
+          const importedAssetPathsForWarning = collectStandaloneImportSupportAssetPaths(
+            mergedAssets,
+            mergedFiles,
           );
 
           const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
             preferredFile,
-            Object.keys(mergedAssets),
+            importedAssetPathsForWarning,
             {
               allFileContents: mergedAllFileContents,
               sourcePath: preferredFile?.name,
@@ -439,7 +458,9 @@ export function useFileImport(options: UseFileImportOptions = {}) {
                 standaloneImportAssetWarning.missingAssetPaths.length > 3
                   ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
                   : standaloneImportAssetWarning.missingAssetPaths.join(', ');
-              const warningMessage = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
+              const warningMessage = t.importPackageAssetBundleHint
+                .replace('{packages}', assetLabel)
+                .replace('{assets}', assetLabel);
 
               if (onShowToast) {
                 onShowToast(warningMessage, 'info');
@@ -454,7 +475,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
                     : (assetsState.getUsdPreparedExportCache(preferredFile.name)?.robotData ?? null)
                   : null;
               const canSeedAssembly =
-                preferredFile.format !== 'mesh' &&
+                !isAssetLibraryOnlyFormat(preferredFile.format) &&
                 (preferredFile.format !== 'usd' || Boolean(preResolvedRobotData));
 
               if (canSeedAssembly) {
@@ -492,23 +513,6 @@ export function useFileImport(options: UseFileImportOptions = {}) {
               } else {
                 await loadRobot(preferredFile, mergedFiles, mergedAssets, mergedAllFileContents);
               }
-              if (onShowToast) {
-                onShowToast(
-                  t.addedFilesToAssetLibrary.replace(
-                    '{count}',
-                    String(renamedRobotFilesWithSources.length),
-                  ),
-                  'success',
-                );
-              }
-            } else if (onShowToast) {
-              onShowToast(
-                t.addedFilesToAssetLibrary.replace(
-                  '{count}',
-                  String(renamedRobotFilesWithSources.length),
-                ),
-                'success',
-              );
             }
           }
         } else if (renamedLibraryFiles.length > 0) {
@@ -522,15 +526,15 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             } else {
               alert(partialMessage);
             }
-          } else {
-            alert(t.libraryImportSuccessful);
           }
-        } else if (
-          renamedAssetFiles.length === 0 &&
-          renamedRobotFiles.length === 0 &&
-          renamedTextFiles.length === 0
-        ) {
-          alert(t.noDefinitionFilesFound);
+        } else {
+          const infoMessage = t.noSupportedImportFilesFound;
+          console.info('[useFileImport] Skipped import with no visible library files.', {
+            importedFileNames: inputFiles.map((file) => file.name),
+          });
+          if (onShowToast) {
+            onShowToast(infoMessage, 'info');
+          }
         }
 
         if (
@@ -547,6 +551,12 @@ export function useFileImport(options: UseFileImportOptions = {}) {
             alert(partialMessage);
           }
         }
+        return {
+          status:
+            visibleImportedFiles.length > 0 || renamedLibraryFiles.length > 0
+              ? 'completed'
+              : 'skipped',
+        };
       } catch (error) {
         console.error('Import failed:', error);
         if (!importedAssetsCommitted) {
@@ -555,6 +565,7 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         const fallbackMessage = translations[useUIStore.getState().lang].importFailedCheckFiles;
         const errorMessage = error instanceof Error ? error.message.trim() : '';
         alert(errorMessage ? `${fallbackMessage}\n${errorMessage}` : fallbackMessage);
+        return { status: 'failed' };
       } finally {
         clearImportPreparationOverlay();
       }

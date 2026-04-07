@@ -52,6 +52,7 @@ import {
   type ExportTarget,
 } from './file-export/types';
 import { executeProjectExport } from './file-export/projectExport';
+import { applyBoxFaceMaterialExportFallback } from './file-export/materialFallbacks';
 import { executeUsdExport } from './file-export/usdExport';
 
 export type {
@@ -235,6 +236,33 @@ export function useFileExport() {
     const trimmed = robot.name?.trim();
     return trimmed && trimmed.length > 0 ? trimmed : 'robot';
   }, []);
+
+  const createBoxFaceTextureFallbackWarning = useCallback(
+    (format: 'urdf' | 'sdf' | 'xacro', count: number): string[] => {
+      if (count <= 0) {
+        return [];
+      }
+
+      const template =
+        format === 'urdf'
+          ? t.exportUrdfBoxFaceTextureFallbackWarning
+          : format === 'sdf'
+            ? t.exportSdfBoxFaceTextureFallbackWarning
+            : t.exportXacroBoxFaceTextureFallbackWarning;
+
+      return [
+        replaceTemplate(template, {
+          count,
+        }),
+      ];
+    },
+    [
+      replaceTemplate,
+      t.exportSdfBoxFaceTextureFallbackWarning,
+      t.exportUrdfBoxFaceTextureFallbackWarning,
+      t.exportXacroBoxFaceTextureFallbackWarning,
+    ],
+  );
 
   const assertUrdfExportSupported = useCallback(
     (robot: Pick<RobotState, 'name' | 'closedLoopConstraints'>, exportName?: string): void => {
@@ -686,6 +714,7 @@ export function useFileExport() {
       const archiveRoot = createArchiveRoot(zip, assemblyExportName);
       const componentsRoot = archiveRoot.folder('components') ?? archiveRoot;
       const assetPackagingFailures: RobotAssetPackagingFailure[] = [];
+      let boxFaceFallbackCount = 0;
 
       const {
         includeExtended,
@@ -704,16 +733,19 @@ export function useFileExport() {
           ...component.robot,
           selection: { type: null, id: null },
         };
+        const fallbackResult = applyBoxFaceMaterialExportFallback(componentRobot);
+        const exportRobot = fallbackResult.robot;
+        boxFaceFallbackCount += fallbackResult.records.length;
         const sourceFile = availableFiles.find((file) => file.name === component.sourceFile);
         const generatedUrdfOptions = await buildGeneratedUrdfOptions(undefined, {
           useRelativePaths,
         });
         const urdfContent = includeExtended
           ? generateURDF(
-              componentRobot,
+              exportRobot,
               await buildGeneratedUrdfOptions(undefined, { extended: true, useRelativePaths }),
             )
-          : ((sourceFile
+          : ((sourceFile && fallbackResult.records.length === 0
               ? await buildUrdfSourceExportContent(
                   { type: 'library-file', file: sourceFile },
                   componentExportName,
@@ -722,24 +754,24 @@ export function useFileExport() {
                     preferSourceVisualMeshes,
                   },
                 )
-              : null) ?? generateURDF(componentRobot, generatedUrdfOptions));
+              : null) ?? generateURDF(exportRobot, generatedUrdfOptions));
 
         componentFolder.file(`${componentExportName}.urdf`, urdfContent);
 
         if (config.includeSkeleton) {
-          addSkeletonToZip(componentRobot, componentFolder, componentExportName, includeMeshes);
+          addSkeletonToZip(exportRobot, componentFolder, componentExportName, includeMeshes);
         }
 
         if (includeBOM) {
           const hardwareFolder = componentFolder.folder('hardware');
-          hardwareFolder?.file('bom_list.csv', generateBOM(componentRobot));
+          hardwareFolder?.file('bom_list.csv', generateBOM(exportRobot));
         }
 
         if (!includeMeshes) {
           continue;
         }
 
-        const meshPackagingResult = await addMeshesToZip(componentRobot, componentFolder, {
+        const meshPackagingResult = await addMeshesToZip(exportRobot, componentFolder, {
           compressSTL,
           stlQuality,
         });
@@ -751,9 +783,11 @@ export function useFileExport() {
       const content = await zip.generateAsync({ type: 'blob' });
       downloadBlob(content, `${assemblyExportName}_components_urdf.zip`);
 
+      const warnings = createBoxFaceTextureFallbackWarning('urdf', boxFaceFallbackCount);
+
       return {
-        partial: false,
-        warnings: [],
+        partial: warnings.length > 0,
+        warnings,
         issues: [],
       };
     },
@@ -869,6 +903,12 @@ export function useFileExport() {
       }
 
       const { robot, exportName, extraMeshFiles } = exportContext;
+      const boxFaceFallback =
+        config.format === 'urdf' || config.format === 'sdf' || config.format === 'xacro'
+          ? applyBoxFaceMaterialExportFallback(robot)
+          : null;
+      const exportRobot = boxFaceFallback?.robot ?? robot;
+      const boxFaceFallbackCount = boxFaceFallback?.records.length ?? 0;
       const assetPackagingFailures: RobotAssetPackagingFailure[] = [];
       const zip = new JSZip();
       const archiveRoot = createArchiveRoot(zip, exportName);
@@ -882,11 +922,11 @@ export function useFileExport() {
               : config.sdf.includeMeshes;
 
       if (config.format === 'urdf') {
-        assertUrdfExportSupported(robot, exportName);
+        assertUrdfExportSupported(exportRobot, exportName);
       }
 
       if (config.includeSkeleton) {
-        addSkeletonToZip(robot, archiveRoot, exportName, skeletonUsesMeshes);
+        addSkeletonToZip(exportRobot, archiveRoot, exportName, skeletonUsesMeshes);
       }
 
       if (config.format === 'mjcf') {
@@ -1002,19 +1042,22 @@ export function useFileExport() {
           indeterminate: false,
         });
 
+        const warnings = createBoxFaceTextureFallbackWarning('urdf', boxFaceFallbackCount);
         const urdfContent = includeExtended
           ? generateURDF(
-              robot,
+              exportRobot,
               await buildGeneratedUrdfOptions(extraMeshFiles, { extended: true, useRelativePaths }),
             )
-          : ((await buildUrdfSourceExportContent(target, exportName, {
-              useRelativePaths,
-              preferSourceVisualMeshes,
-            })) ?? generateURDF(robot, generatedUrdfOptions));
+          : ((boxFaceFallbackCount === 0
+              ? await buildUrdfSourceExportContent(target, exportName, {
+                  useRelativePaths,
+                  preferSourceVisualMeshes,
+                })
+              : null) ?? generateURDF(exportRobot, generatedUrdfOptions));
         archiveRoot.file(`${exportName}.urdf`, urdfContent);
         if (includeBOM) {
           const hardwareFolder = archiveRoot.folder('hardware');
-          hardwareFolder?.file('bom_list.csv', generateBOM(robot));
+          hardwareFolder?.file('bom_list.csv', generateBOM(exportRobot));
         }
         if (includeMeshes) {
           reportProgress(
@@ -1028,7 +1071,7 @@ export function useFileExport() {
           );
 
           const meshPackagingResult = await addMeshesToZip(
-            robot,
+            exportRobot,
             archiveRoot,
             { compressSTL, stlQuality },
             extraMeshFiles,
@@ -1060,12 +1103,13 @@ export function useFileExport() {
         downloadBlob(content, `${exportName}_urdf.zip`);
         markCurrentTargetSaved();
         return {
-          partial: false,
-          warnings: [],
+          partial: warnings.length > 0,
+          warnings,
           issues: [],
         };
       } else if (config.format === 'sdf') {
         const { includeMeshes, compressSTL, stlQuality } = config.sdf;
+        const warnings = createBoxFaceTextureFallbackWarning('sdf', boxFaceFallbackCount);
         reportProgress(2, t.exportProgressGeneratingFiles, t.exportProgressGeneratingSdfDetail, {
           stageProgress: 0.85,
           indeterminate: false,
@@ -1073,11 +1117,14 @@ export function useFileExport() {
 
         archiveRoot.file(
           'model.sdf',
-          generateSDF(robot, {
+          generateSDF(exportRobot, {
             packageName: exportName,
           }),
         );
-        archiveRoot.file('model.config', generateSdfModelConfig(robot.name?.trim() || exportName));
+        archiveRoot.file(
+          'model.config',
+          generateSdfModelConfig(exportRobot.name?.trim() || exportName),
+        );
         if (includeMeshes) {
           reportProgress(
             3,
@@ -1090,7 +1137,7 @@ export function useFileExport() {
           );
 
           const meshPackagingResult = await addMeshesToZip(
-            robot,
+            exportRobot,
             archiveRoot,
             { compressSTL, stlQuality },
             extraMeshFiles,
@@ -1122,8 +1169,8 @@ export function useFileExport() {
         downloadBlob(content, `${exportName}_sdf.zip`);
         markCurrentTargetSaved();
         return {
-          partial: false,
-          warnings: [],
+          partial: warnings.length > 0,
+          warnings,
           issues: [],
         };
       } else if (config.format === 'xacro') {
@@ -1143,12 +1190,14 @@ export function useFileExport() {
           indeterminate: false,
         });
 
+        const warnings = createBoxFaceTextureFallbackWarning('xacro', boxFaceFallbackCount);
         const xacroBaseUrdf =
-          (await buildUrdfSourceExportContent(target, exportName, { useRelativePaths })) ??
-          generateURDF(robot, generatedUrdfOptions);
+          (boxFaceFallbackCount === 0
+            ? await buildUrdfSourceExportContent(target, exportName, { useRelativePaths })
+            : null) ?? generateURDF(exportRobot, generatedUrdfOptions);
         const xacroContent = injectGazeboTags(
           xacroBaseUrdf,
-          robot,
+          exportRobot,
           rosVersion,
           rosHardwareInterface,
         );
@@ -1165,7 +1214,7 @@ export function useFileExport() {
           );
 
           const meshPackagingResult = await addMeshesToZip(
-            robot,
+            exportRobot,
             archiveRoot,
             { compressSTL, stlQuality },
             extraMeshFiles,
@@ -1197,8 +1246,8 @@ export function useFileExport() {
         downloadBlob(content, `${exportName}_xacro.zip`);
         markCurrentTargetSaved();
         return {
-          partial: false,
-          warnings: [],
+          partial: warnings.length > 0,
+          warnings,
           issues: [],
         };
       }
@@ -1226,6 +1275,7 @@ export function useFileExport() {
       generateZipBlobWithProgress,
       generateBOM,
       buildUrdfSourceExportContent,
+      createBoxFaceTextureFallbackWarning,
       replaceTemplate,
       resolveLibraryRobotForExport,
       resolveDisconnectedWorkspaceUrdfAction,

@@ -82,6 +82,7 @@ export const URDFViewer = memo(function URDFViewer({
   const groundPlaneOffset = propGroundPlaneOffset ?? storeGroundPlaneOffset;
   const resolvedHoveredSelection = hoveredSelection ?? storeHoveredSelection;
   const resolvedSourceFormat = resolveViewerRobotSourceFormat(urdfContent, viewerSourceFormat);
+  const paintModeSupported = !isMeshPreview && sourceFile?.format !== 'usd';
   const inheritedTheme = useEffectiveTheme();
   const explicitTheme = useResolvedTheme(theme ?? 'system');
   const resolvedTheme = theme ? explicitTheme : inheritedTheme;
@@ -156,6 +157,7 @@ export const URDFViewer = memo(function URDFViewer({
           setShowOptionsPanel={setShowOptionsPanel}
           showJointPanel={showJointPanel}
           setShowJointPanel={setShowJointPanel}
+          paintModeSupported={paintModeSupported}
         />
       </Suspense>
 

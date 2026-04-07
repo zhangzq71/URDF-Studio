@@ -204,6 +204,20 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
     }, [effectiveRotateRef, handleControlDraggingChanged, mode]);
 
     useEffect(() => {
+      const useVisibleHitFallback = displayStyle !== 'stock';
+      const configureVisibleHitFallback = (controls: any) => {
+        if (!controls) {
+          return;
+        }
+
+        controls.userData = {
+          ...controls.userData,
+          urdfUseVisibleHitFallback: useVisibleHitFallback,
+        };
+      };
+
+      configureVisibleHitFallback(translateRef.current);
+      configureVisibleHitFallback(effectiveRotateRef.current);
       markGizmoObjects(translateRef.current);
       markGizmoObjects(effectiveRotateRef.current);
       patchDisplayBehavior(translateRef.current, displayStyle, displayThicknessScale, {

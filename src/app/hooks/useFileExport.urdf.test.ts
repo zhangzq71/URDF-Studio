@@ -309,6 +309,53 @@ function createUrdfExportConfig(
   };
 }
 
+function createSdfExportConfig(
+  sdfOverrides: Partial<ExportDialogConfig['sdf']> = {},
+): ExportDialogConfig {
+  return {
+    format: 'sdf',
+    includeSkeleton: false,
+    mjcf: {
+      meshdir: 'meshes/',
+      addFloatBase: false,
+      preferSharedMeshReuse: true,
+      includeActuators: true,
+      actuatorType: 'position',
+      includeMeshes: false,
+      compressSTL: false,
+      stlQuality: 50,
+    },
+    urdf: {
+      includeExtended: false,
+      includeBOM: false,
+      useRelativePaths: true,
+      preferSourceVisualMeshes: true,
+      includeMeshes: false,
+      compressSTL: false,
+      stlQuality: 50,
+    },
+    xacro: {
+      rosVersion: 'ros2',
+      rosHardwareInterface: 'effort',
+      useRelativePaths: true,
+      includeMeshes: false,
+      compressSTL: false,
+      stlQuality: 50,
+    },
+    sdf: {
+      includeMeshes: false,
+      compressSTL: false,
+      stlQuality: 50,
+      ...sdfOverrides,
+    },
+    usd: {
+      fileFormat: 'usd',
+      compressMeshes: true,
+      meshQuality: 50,
+    },
+  };
+}
+
 function createRobotData(rootId: string, rootName: string): RobotData {
   return {
     name: rootName,
@@ -377,6 +424,52 @@ function createClosedLoopRobotData(robotName: string): RobotData {
   ];
 
   return robot;
+}
+
+function createBoxFaceTextureRobotData(robotName: string): RobotData {
+  const baseLinkId = `${robotName}_base_link`;
+  return {
+    name: robotName,
+    rootLinkId: baseLinkId,
+    links: {
+      [baseLinkId]: {
+        ...DEFAULT_LINK,
+        id: baseLinkId,
+        name: baseLinkId,
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.4, y: 0.3, z: 0.2 },
+          authoredMaterials: [
+            { texture: 'textures/right.png' },
+            { texture: 'textures/left.png' },
+            { texture: 'textures/up.png' },
+            { texture: 'textures/down.png' },
+            { texture: 'textures/front.png' },
+            { texture: 'textures/back.png' },
+          ],
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+        },
+      },
+    },
+    joints: {},
+  };
+}
+
+function createFaceTextureAssets(): Record<string, string> {
+  const textureDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  return {
+    'textures/right.png': textureDataUrl,
+    'textures/left.png': textureDataUrl,
+    'textures/up.png': textureDataUrl,
+    'textures/down.png': textureDataUrl,
+    'textures/front.png': textureDataUrl,
+    'textures/back.png': textureDataUrl,
+  };
 }
 
 function createAssemblyState(): AssemblyState {
@@ -646,6 +739,97 @@ test('useFileExport still allows a single URDF export when workspace components 
       'connected assembly should export a single URDF archive',
     );
     assert.match(downloadMocks.appendedAnchor?.download ?? '', /demo_workspace_urdf\.zip$/);
+  } finally {
+    rendered.cleanup();
+    downloadMocks.restore();
+    await settleDomTasks();
+    domEnvironment.restore();
+  }
+});
+
+test('useFileExport warns and flattens six-face box textures during URDF export', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  useRobotStore.getState().resetRobot(createBoxFaceTextureRobotData('box_face_robot'));
+  useAssetsStore.setState({
+    assets: createFaceTextureAssets(),
+  });
+
+  const downloadMocks = installDownloadMocks();
+  const rendered = renderHook();
+
+  try {
+    const result = await rendered.hook.handleExportWithConfig(
+      createUrdfExportConfig({
+        includeMeshes: true,
+        preferSourceVisualMeshes: false,
+      }),
+    );
+
+    assert.equal(result.partial, true);
+    assert.match(
+      result.warnings[0] ?? '',
+      /URDF does not natively support six different textures on a single box visual/,
+    );
+    assert.ok(downloadMocks.capturedBlob, 'expected a URDF archive to be generated');
+
+    const archive = await JSZip.loadAsync(await downloadMocks.capturedBlob.arrayBuffer());
+    const urdf = await archive.file('box_face_robot/box_face_robot.urdf')?.async('string');
+    assert.ok(urdf, 'expected exported URDF content');
+    assert.equal(
+      Array.from(urdf.matchAll(/<texture filename="textures\//g)).length,
+      1,
+      'expected URDF export to keep exactly one texture reference',
+    );
+    assert.match(urdf, /textures\/front\.png/);
+    assert.ok(archive.file('box_face_robot/textures/front.png'));
+    assert.equal(archive.file('box_face_robot/textures/right.png'), null);
+    assert.equal(archive.file('box_face_robot/textures/back.png'), null);
+  } finally {
+    rendered.cleanup();
+    downloadMocks.restore();
+    await settleDomTasks();
+    domEnvironment.restore();
+  }
+});
+
+test('useFileExport warns and flattens six-face box textures during SDF export', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  useRobotStore.getState().resetRobot(createBoxFaceTextureRobotData('box_face_robot'));
+  useAssetsStore.setState({
+    assets: createFaceTextureAssets(),
+  });
+
+  const downloadMocks = installDownloadMocks();
+  const rendered = renderHook();
+
+  try {
+    const result = await rendered.hook.handleExportWithConfig(
+      createSdfExportConfig({
+        includeMeshes: true,
+      }),
+    );
+
+    assert.equal(result.partial, true);
+    assert.match(
+      result.warnings[0] ?? '',
+      /SDF does not natively support six different textures on a single box visual/,
+    );
+    assert.ok(downloadMocks.capturedBlob, 'expected an SDF archive to be generated');
+
+    const archive = await JSZip.loadAsync(await downloadMocks.capturedBlob.arrayBuffer());
+    const sdf = await archive.file('box_face_robot/model.sdf')?.async('string');
+    assert.ok(sdf, 'expected exported SDF content');
+    assert.equal(
+      Array.from(sdf.matchAll(/<albedo_map>/g)).length,
+      1,
+      'expected SDF export to keep exactly one albedo map',
+    );
+    assert.match(sdf, /model:\/\/box_face_robot\/textures\/front\.png/);
+    assert.ok(archive.file('box_face_robot/textures/front.png'));
+    assert.equal(archive.file('box_face_robot/textures/right.png'), null);
+    assert.equal(archive.file('box_face_robot/textures/back.png'), null);
   } finally {
     rendered.cleanup();
     downloadMocks.restore();

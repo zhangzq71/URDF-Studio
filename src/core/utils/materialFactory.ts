@@ -89,11 +89,31 @@ function inferMaterialPresetName(name: string | undefined, color: THREE.Color): 
 export interface CreateMaterialOptions {
   color: THREE.ColorRepresentation;
   opacity?: number;
+  roughness?: number;
+  metalness?: number;
+  emissive?: THREE.ColorRepresentation;
+  emissiveIntensity?: number;
   transparent?: boolean;
   side?: THREE.Side;
   map?: THREE.Texture | null;
   name?: string;
   preserveExactColor?: boolean;
+}
+
+function resolveUnitIntervalValue(value: number | undefined): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.min(1, Math.max(0, Number(value)));
+}
+
+function resolveNonNegativeValue(value: number | undefined): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.max(0, Number(value));
 }
 
 export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshStandardMaterial {
@@ -112,6 +132,11 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
   const effectiveTransparent = Boolean(options.transparent) || effectiveOpacity < 1.0;
   const presetName = inferMaterialPresetName(name, finalColor);
   const preset = MATERIAL_PRESET_CONFIG[presetName];
+  const effectiveRoughness = resolveUnitIntervalValue(options.roughness) ?? preset.roughness;
+  const effectiveMetalness = resolveUnitIntervalValue(options.metalness) ?? preset.metalness;
+  const parsedEmissive = parseThreeColorWithOpacity(options.emissive);
+  const effectiveEmissive = parsedEmissive?.color;
+  const effectiveEmissiveIntensity = resolveNonNegativeValue(options.emissiveIntensity);
   const isNearWhite =
     finalColor.r >= MATERIAL_CONFIG.nearWhiteThreshold &&
     finalColor.g >= MATERIAL_CONFIG.nearWhiteThreshold &&
@@ -132,9 +157,13 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
 
   const material = new THREE.MeshStandardMaterial({
     color: finalColor,
-    roughness: preset.roughness,
-    metalness: preset.metalness,
+    roughness: effectiveRoughness,
+    metalness: effectiveMetalness,
     envMapIntensity,
+    ...(effectiveEmissive ? { emissive: effectiveEmissive } : {}),
+    ...(effectiveEmissiveIntensity !== undefined
+      ? { emissiveIntensity: effectiveEmissiveIntensity }
+      : {}),
     side,
     transparent: effectiveTransparent,
     opacity: effectiveOpacity,
@@ -152,9 +181,15 @@ export function createMatteMaterial(options: CreateMaterialOptions): THREE.MeshS
 
   material.userData.originalColor = finalColor.clone();
   material.userData.materialPreset = presetName;
-  material.userData.originalRoughness = preset.roughness;
-  material.userData.originalMetalness = preset.metalness;
+  material.userData.originalRoughness = effectiveRoughness;
+  material.userData.originalMetalness = effectiveMetalness;
   material.userData.originalEnvMapIntensity = envMapIntensity;
+  if (effectiveEmissive) {
+    material.userData.originalEmissive = effectiveEmissive.clone();
+  }
+  if (effectiveEmissiveIntensity !== undefined) {
+    material.userData.originalEmissiveIntensity = effectiveEmissiveIntensity;
+  }
 
   return material;
 }

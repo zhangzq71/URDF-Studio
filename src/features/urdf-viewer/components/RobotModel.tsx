@@ -8,15 +8,30 @@ import {
   shouldUseIndeterminateStreamingMeshProgress,
 } from '@/shared/components/3d';
 import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
-import { resolveLinkIkHandleDescriptor, resolveLinkKey } from '@/core/robot';
+import {
+  applyMeshMaterialPaintEdit,
+  getVisualGeometryByObjectIndex,
+  hasGeometryMeshMaterialGroups,
+  resolveLinkIkHandleDescriptor,
+  resolveLinkKey,
+  resolveVisualMaterialOverride,
+  updateVisualGeometryByObjectIndex,
+} from '@/core/robot';
+import {
+  getBufferGeometryTriangleCount,
+  resolveMeshFaceSelection,
+  resolveRuntimeMeshMaterialGroupKey,
+  resolveRuntimeMeshRootWithinVisual,
+} from '@/core/utils/meshMaterialGroups';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { HoverSelectionSync } from './HoverSelectionSync';
 import { SourceSceneAssemblyTransformControls } from './SourceSceneAssemblyTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
-import type { RobotModelProps } from '../types';
+import type { RobotModelProps, ViewerPaintFaceHit } from '../types';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
-import { useUIStore } from '@/store';
+import { useRobotStore, useUIStore } from '@/store';
+import { GeometryType } from '@/types';
 
 import { useRobotLoader } from '../hooks/useRobotLoader';
 import { useHighlightManager } from '../hooks/useHighlightManager';
@@ -50,6 +65,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     onSelect,
     onHover,
     onMeshSelect,
+    paintColor = '#ff6c0a',
+    paintSelectionScope = 'island',
+    paintOperation = 'paint',
+    onPaintStatusChange,
     onJointChange,
     onJointChangeCommit,
     initialJointAngles,
@@ -270,6 +289,115 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
       active,
     });
 
+    const handlePaintFace = useCallback(
+      async ({ linkId, objectIndex, mesh, faceIndex }: ViewerPaintFaceHit) => {
+        if (isMeshPreview) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintUnsupportedRobotOnly,
+          });
+          return;
+        }
+
+        if (!Number.isInteger(faceIndex) || faceIndex < 0) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintErrorFaceUnavailable,
+          });
+          return;
+        }
+
+        const link = robotLinks?.[linkId];
+        const visualGeometry = link
+          ? getVisualGeometryByObjectIndex(link, objectIndex)?.geometry
+          : null;
+        if (!link || !visualGeometry || visualGeometry.type !== GeometryType.MESH) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintErrorVisualMeshOnly,
+          });
+          return;
+        }
+
+        const robotMaterials = useRobotStore.getState().materials;
+        const resolvedMaterial = resolveVisualMaterialOverride(
+          { materials: robotMaterials },
+          link,
+          visualGeometry,
+          { isPrimaryVisual: objectIndex === 0 },
+        );
+        const hasCustomMeshGroups = hasGeometryMeshMaterialGroups(visualGeometry);
+        const builtInMultiMaterialTarget =
+          !hasCustomMeshGroups &&
+          (Array.isArray(mesh.material) || (visualGeometry.authoredMaterials?.length || 0) > 1);
+        if (builtInMultiMaterialTarget) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintErrorMultiMaterial,
+          });
+          return;
+        }
+
+        const triangleCount = getBufferGeometryTriangleCount(mesh.geometry);
+        if (!Number.isInteger(faceIndex) || faceIndex < 0 || faceIndex >= triangleCount) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintErrorFaceUnavailable,
+          });
+          return;
+        }
+
+        const selectedFaceIndices = resolveMeshFaceSelection(
+          mesh.geometry,
+          faceIndex,
+          paintSelectionScope,
+        );
+        if (selectedFaceIndices.length === 0) {
+          onPaintStatusChange?.({
+            tone: 'error',
+            message: t.paintErrorSelectionUnavailable,
+          });
+          return;
+        }
+
+        const meshRoot = resolveRuntimeMeshRootWithinVisual(mesh);
+        const meshKey = resolveRuntimeMeshMaterialGroupKey(mesh, meshRoot);
+        const baseMaterial = visualGeometry.authoredMaterials?.[0] ?? {
+          name: `paint_base_${objectIndex}`,
+          color: resolvedMaterial.color ?? undefined,
+          texture: resolvedMaterial.texture ?? undefined,
+        };
+        const nextLink = updateVisualGeometryByObjectIndex(link, objectIndex, {
+          ...applyMeshMaterialPaintEdit({
+            geometry: visualGeometry,
+            meshKey,
+            triangleCount,
+            selectedFaceIndices,
+            paintColor,
+            erase: paintOperation === 'erase',
+            baseMaterial,
+            materialNamePrefix: `paint_${linkId}_${objectIndex}`,
+          }),
+        });
+        useRobotStore.getState().updateLink(link.id, nextLink, {
+          label: paintOperation === 'erase' ? 'Erase painted mesh faces' : 'Paint mesh faces',
+        });
+        onPaintStatusChange?.({
+          tone: 'success',
+          message: paintOperation === 'erase' ? t.paintStatusRemoved : t.paintStatusApplied,
+        });
+      },
+      [
+        isMeshPreview,
+        onPaintStatusChange,
+        paintColor,
+        paintOperation,
+        paintSelectionScope,
+        robotLinks,
+        t,
+      ],
+    );
+
     // ============================================================
     // HOOK: Mouse Interaction
     // ============================================================
@@ -287,6 +415,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
         onHover,
         onSelect,
         onMeshSelect,
+        onPaintFace: handlePaintFace,
         onJointChange,
         onJointChangeCommit,
         throttleJointChangeDuringDrag: true,

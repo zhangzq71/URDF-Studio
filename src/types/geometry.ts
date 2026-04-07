@@ -24,6 +24,18 @@ export interface UrdfVisualMaterial {
   name?: string;
   color?: string;
   texture?: string;
+  opacity?: number;
+  roughness?: number;
+  metalness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+}
+
+export interface UrdfVisualMeshMaterialGroup {
+  meshKey: string;
+  start: number;
+  count: number;
+  materialIndex: number;
 }
 
 export interface MjcfHfieldAssetSize {
@@ -59,6 +71,7 @@ export interface UrdfVisual {
   color: string;
   materialSource?: 'inline' | 'named' | 'gazebo';
   authoredMaterials?: UrdfVisualMaterial[];
+  meshMaterialGroups?: UrdfVisualMeshMaterialGroup[];
   meshPath?: string; // For later detailed design
   assetRef?: string; // MJCF-only asset reference (e.g. hfield name or sdf mesh asset)
   mjcfMesh?: MjcfMeshAsset;

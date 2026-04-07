@@ -327,6 +327,36 @@ test('handleAutoFitGround delegates to the active runtime auto-fit handler when 
   assert.equal(callCount, 1);
 });
 
+test('paint tool state switches back to select when the paint panel closes', async () => {
+  const { root, getHook } = await mountControllerWithProps({
+    active: false,
+  });
+
+  try {
+    assert.equal(getHook().paintColor, '#ff6c0a');
+    assert.equal(getHook().paintStatus, null);
+
+    await act(async () => {
+      getHook().handleToolModeChange('paint');
+      getHook().setPaintStatus({ tone: 'success', message: 'painted' });
+    });
+
+    assert.equal(getHook().toolMode, 'paint');
+    assert.deepEqual(getHook().paintStatus, { tone: 'success', message: 'painted' });
+
+    await act(async () => {
+      getHook().handleClosePaintTool();
+    });
+
+    assert.equal(getHook().toolMode, 'select');
+    assert.equal(getHook().paintStatus, null);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+  }
+});
+
 test('handleRuntimeJointAngleChange publishes live closed-loop preview compensation before commit', async () => {
   const closedLoopRobotState = createClosedLoopRobotFixture();
   const runtimeRobot = createRuntimeRobotFixture(closedLoopRobotState);

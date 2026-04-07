@@ -2,10 +2,21 @@ import type { RefObject } from 'react';
 import * as THREE from 'three';
 import { URDFCollider, URDFVisual } from '@/core/parsers/urdf/loader';
 import { createLoadingManager, type ColladaRootNormalizationHints } from '@/core/loaders';
-import { getCollisionGeometryEntries } from '@/core/robot';
+import {
+  getBoxFaceMaterialPalette,
+  getCollisionGeometryEntries,
+  hasGeometryMeshMaterialGroups,
+  getVisualGeometryEntries,
+} from '@/core/robot';
+import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
+import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
+import {
+  applyVisualMaterialOverrideToObject,
+  resolveVisualMaterialOverrideFromGeometry,
+} from '@/core/utils/visualMaterialOverrides';
 import { GeometryType } from '@/types';
 import type { UrdfLink, UrdfVisual as LinkGeometry } from '@/types';
-import { collisionBaseMaterial, createMatteMaterial } from './materials';
+import { collisionBaseMaterial, createMatteMaterial, enhanceMaterials } from './materials';
 import { disposeObject3D } from './dispose';
 import { SHARED_MATERIALS } from '../constants';
 import {
@@ -23,9 +34,11 @@ import {
   markCollisionObject,
   markVisualObject,
   rebuildLinkMeshMapForLink,
+  updateVisualMaterialPalette,
   updateVisualMaterial,
 } from './robotLoaderPatchUtils';
 import { createViewerMeshLoader } from './createViewerMeshLoader';
+import { applyURDFMaterials, collectURDFMaterialsFromVisualGeometry } from './urdfMaterials';
 
 interface PatchCategoryOptions {
   robotModel: THREE.Object3D;
@@ -85,11 +98,33 @@ function patchGeometryCategory({
 
   const dims = geometry.dimensions || DEFAULT_VEC3;
   const visualColor = geometry.color || '#808080';
+  const boxFacePalette = !isCollision ? getBoxFaceMaterialPalette(geometry) : [];
   const createVisualMaterial = () =>
     createMatteMaterial({
       color: visualColor,
       preserveExactColor: Boolean(geometry.color),
     });
+  const visualMaterialOverride =
+    !isCollision && boxFacePalette.length === 0
+      ? resolveVisualMaterialOverrideFromGeometry(geometry)
+      : null;
+  const authoredMaterialPalette =
+    !isCollision && boxFacePalette.length === 0
+      ? collectURDFMaterialsFromVisualGeometry(geometry)
+      : null;
+  const textureManager =
+    !isCollision && visualMaterialOverride?.texture
+      ? createLoadingManager(assets, sourceFileDir ?? '')
+      : null;
+  const applyPrimitiveVisualOverride = (mesh: THREE.Mesh) => {
+    if (!isCollision && visualMaterialOverride) {
+      applyVisualMaterialOverrideToObject(
+        mesh,
+        visualMaterialOverride,
+        textureManager ?? undefined,
+      );
+    }
+  };
   const addPrimitive = (mesh: THREE.Mesh) => {
     if (isCollision) {
       markCollisionObject(mesh, linkName);
@@ -109,16 +144,29 @@ function patchGeometryCategory({
   if (geometry.type === GeometryType.BOX) {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
-      isCollision ? collisionBaseMaterial : createVisualMaterial(),
+      isCollision
+        ? collisionBaseMaterial
+        : boxFacePalette.length > 0
+          ? createBoxFaceMaterialArray(
+              boxFacePalette.map((entry) => entry.material),
+              {
+                fallbackColor: geometry.color,
+                manager: createLoadingManager(assets, sourceFileDir ?? ''),
+                label: 'URDFViewer:patch-box-face-material',
+              },
+            )
+          : createVisualMaterial(),
     );
     mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
     addPrimitive(mesh);
+    applyPrimitiveVisualOverride(mesh);
   } else if (geometry.type === GeometryType.PLANE) {
     const material = isCollision ? collisionBaseMaterial : createVisualMaterial();
     material.side = THREE.DoubleSide;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
     mesh.scale.set(dims.x || 1, dims.y || 1, 1);
     addPrimitive(mesh);
+    applyPrimitiveVisualOverride(mesh);
   } else if (geometry.type === GeometryType.SPHERE || geometry.type === GeometryType.ELLIPSOID) {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 30, 30),
@@ -129,6 +177,7 @@ function patchGeometryCategory({
     const sz = dims.z || sx;
     mesh.scale.set(sx, sy, sz);
     addPrimitive(mesh);
+    applyPrimitiveVisualOverride(mesh);
   } else if (geometry.type === GeometryType.CYLINDER) {
     const mesh = new THREE.Mesh(
       new THREE.CylinderGeometry(1, 1, 1, 30),
@@ -137,6 +186,7 @@ function patchGeometryCategory({
     mesh.scale.set(dims.x || 0.05, dims.y || 0.5, dims.z || dims.x || 0.05);
     mesh.rotation.set(Math.PI / 2, 0, 0);
     addPrimitive(mesh);
+    applyPrimitiveVisualOverride(mesh);
   } else if (geometry.type === GeometryType.CAPSULE) {
     const radius = Math.max(dims.x || 0.05, 1e-5);
     const totalLength = Math.max(dims.y || 0.5, radius * 2);
@@ -147,6 +197,7 @@ function patchGeometryCategory({
     );
     mesh.rotation.set(Math.PI / 2, 0, 0);
     addPrimitive(mesh);
+    applyPrimitiveVisualOverride(mesh);
   } else if (geometry.type === GeometryType.MESH) {
     if (!geometry.meshPath) {
       rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
@@ -156,7 +207,7 @@ function patchGeometryCategory({
     }
 
     const urdfDir = sourceFileDir ?? '';
-    const manager = createLoadingManager(assets, urdfDir);
+    const manager = textureManager ?? createLoadingManager(assets, urdfDir);
     const meshLoader = createViewerMeshLoader(assets, manager, urdfDir, {
       colladaRootNormalizationHints,
     });
@@ -180,6 +231,15 @@ function patchGeometryCategory({
         markCollisionObject(obj, linkName);
       } else {
         markVisualObject(obj, linkName, geometry.color, showVisual);
+        if (authoredMaterialPalette && authoredMaterialPalette.size > 1) {
+          applyURDFMaterials(obj, authoredMaterialPalette);
+          enhanceMaterials(obj);
+        } else if (visualMaterialOverride) {
+          applyVisualMaterialOverrideToObject(obj, visualMaterialOverride, manager);
+        }
+        if (hasGeometryMeshMaterialGroups(geometry)) {
+          applyVisualMeshMaterialGroupsToObject(obj, geometry, { manager });
+        }
       }
 
       targetGroup!.add(obj);
@@ -198,6 +258,142 @@ function patchGeometryCategory({
 
 function getDirectCollisionGroups(linkObject: THREE.Object3D): THREE.Object3D[] {
   return linkObject.children.filter((child: any) => child.isURDFCollider) as THREE.Object3D[];
+}
+
+function getDirectVisualGroups(linkObject: THREE.Object3D): THREE.Object3D[] {
+  return linkObject.children.filter((child: any) => child.isURDFVisual) as THREE.Object3D[];
+}
+
+function patchVisualEntriesInPlace({
+  robotModel,
+  linkObject,
+  linkName,
+  previousLinkData,
+  nextLinkData,
+  assets,
+  sourceFileDir,
+  colladaRootNormalizationHints,
+  showVisual,
+  showCollision,
+  linkMeshMapRef,
+  invalidate,
+  isPatchTargetValid,
+}: {
+  robotModel: THREE.Object3D;
+  linkObject: THREE.Object3D;
+  linkName: string;
+  previousLinkData: UrdfLink;
+  nextLinkData: UrdfLink;
+  assets: Record<string, string>;
+  sourceFileDir?: string;
+  colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
+  showVisual: boolean;
+  showCollision: boolean;
+  linkMeshMapRef: RefObject<Map<string, THREE.Mesh[]>>;
+  invalidate: () => void;
+  isPatchTargetValid?: () => boolean;
+}): boolean {
+  const previousEntries = getVisualGeometryEntries(previousLinkData);
+  const nextEntries = getVisualGeometryEntries(nextLinkData);
+  const existingGroups = getDirectVisualGroups(linkObject);
+
+  if (existingGroups.length !== previousEntries.length) {
+    return false;
+  }
+
+  let applied = false;
+  const sharedCount = Math.min(previousEntries.length, nextEntries.length);
+
+  for (let index = 0; index < sharedCount; index += 1) {
+    const previousEntry = previousEntries[index];
+    const nextEntry = nextEntries[index];
+    const group = existingGroups[index];
+
+    if (!previousEntry || !nextEntry || !group) {
+      return false;
+    }
+
+    if (sameGeometry(previousEntry.geometry, nextEntry.geometry)) {
+      continue;
+    }
+
+    applied = true;
+
+    if (
+      patchGeometryGroupInPlace({
+        robotModel,
+        linkObject,
+        category: 'visual',
+        linkData: nextLinkData,
+        previousGeometry: previousEntry.geometry,
+        geometry: nextEntry.geometry,
+        showVisual,
+        showCollision,
+        invalidate,
+        targetGroup: group,
+      })
+    ) {
+      continue;
+    }
+
+    patchGeometryCategory({
+      robotModel,
+      linkObject,
+      linkName,
+      category: 'visual',
+      geometry: nextEntry.geometry,
+      assets,
+      sourceFileDir,
+      colladaRootNormalizationHints,
+      showVisual,
+      showCollision,
+      linkMeshMapRef,
+      invalidate,
+      isPatchTargetValid,
+      targetGroup: group,
+    });
+  }
+
+  if (existingGroups.length > nextEntries.length) {
+    existingGroups.slice(nextEntries.length).forEach((group) => {
+      linkObject.remove(group);
+      disposeObject3D(group, true, SHARED_MATERIALS);
+    });
+    applied = true;
+  }
+
+  if (nextEntries.length > existingGroups.length) {
+    nextEntries.slice(existingGroups.length).forEach((entry) => {
+      const targetGroup = new URDFVisual();
+      linkObject.add(targetGroup);
+      patchGeometryCategory({
+        robotModel,
+        linkObject,
+        linkName,
+        category: 'visual',
+        geometry: entry.geometry,
+        assets,
+        sourceFileDir,
+        colladaRootNormalizationHints,
+        showVisual,
+        showCollision,
+        linkMeshMapRef,
+        invalidate,
+        isPatchTargetValid,
+        targetGroup,
+      });
+    });
+    applied = true;
+  }
+
+  if (!applied) {
+    return true;
+  }
+
+  rebuildLinkMeshMapForLink(linkMeshMapRef, linkObject, linkName);
+  robotModel.updateMatrixWorld(true);
+  invalidate();
+  return true;
 }
 
 function patchCollisionEntriesInPlace({
@@ -346,6 +542,37 @@ function getAuthoredMaterialSignature(geometry: LinkGeometry | undefined): strin
         .trim()
         .toLowerCase(),
       texture: String(material.texture || '').trim(),
+      opacity: Number.isFinite(material.opacity) ? Number(material.opacity) : null,
+      roughness: Number.isFinite(material.roughness) ? Number(material.roughness) : null,
+      metalness: Number.isFinite(material.metalness) ? Number(material.metalness) : null,
+      emissive: String(material.emissive || '')
+        .trim()
+        .toLowerCase(),
+      emissiveIntensity: Number.isFinite(material.emissiveIntensity)
+        ? Number(material.emissiveIntensity)
+        : null,
+    })),
+  );
+}
+
+function getAuthoredMaterialSlotSignature(geometry: LinkGeometry | undefined): string {
+  const authoredMaterials = geometry?.authoredMaterials ?? [];
+  return JSON.stringify(
+    authoredMaterials.map((material) => ({
+      name: String(material.name || '').trim(),
+      texture: String(material.texture || '').trim(),
+    })),
+  );
+}
+
+function getMeshMaterialGroupSignature(geometry: LinkGeometry | undefined): string {
+  const meshMaterialGroups = geometry?.meshMaterialGroups ?? [];
+  return JSON.stringify(
+    meshMaterialGroups.map((group) => ({
+      meshKey: String(group.meshKey || '').trim(),
+      start: Number(group.start),
+      count: Number(group.count),
+      materialIndex: Number(group.materialIndex),
     })),
   );
 }
@@ -364,10 +591,19 @@ function canPatchGeometryInPlace(
   const authoredMaterialsChanged =
     category === 'visual' &&
     getAuthoredMaterialSignature(previousGeometry) !== getAuthoredMaterialSignature(geometry);
+  const authoredMaterialSlotsChanged =
+    category === 'visual' &&
+    getAuthoredMaterialSlotSignature(previousGeometry) !==
+      getAuthoredMaterialSlotSignature(geometry);
+  const meshMaterialGroupsChanged =
+    category === 'visual' &&
+    getMeshMaterialGroupSignature(previousGeometry) !== getMeshMaterialGroupSignature(geometry);
 
   if (dimensionsChanged && geometry.type === GeometryType.MESH) return false;
   if (colorChanged && category === 'collision') return false;
-  if (authoredMaterialsChanged) return false;
+  if (authoredMaterialSlotsChanged && geometry.type !== GeometryType.MESH) return false;
+  if (authoredMaterialsChanged && geometry.type !== GeometryType.MESH) return false;
+  if (meshMaterialGroupsChanged && geometry.type !== GeometryType.MESH) return false;
 
   return true;
 }
@@ -471,6 +707,12 @@ function patchGeometryGroupInPlace({
   const visibilityChanged = !sameVisibleFlag(previousGeometry.visible, geometry.visible);
   const dimensionsChanged = !sameVec3(previousGeometry.dimensions, geometry.dimensions);
   const colorChanged = (previousGeometry.color || '') !== (geometry.color || '');
+  const authoredMaterialsChanged =
+    !isCollision &&
+    getAuthoredMaterialSignature(previousGeometry) !== getAuthoredMaterialSignature(geometry);
+  const meshMaterialGroupsChanged =
+    !isCollision &&
+    getMeshMaterialGroupSignature(previousGeometry) !== getMeshMaterialGroupSignature(geometry);
 
   if (originChanged) {
     applyOriginToGroup(targetGroup, geometry.origin);
@@ -497,8 +739,66 @@ function patchGeometryGroupInPlace({
     const disposedMaterials = new Set<THREE.Material>();
     targetGroup.traverse((child: any) => {
       if (child.isMesh) {
-        updateVisualMaterial(child as THREE.Mesh, geometry.color, disposedMaterials);
+        updateVisualMaterial(child as THREE.Mesh, { color: geometry.color }, disposedMaterials);
       }
+    });
+  }
+
+  if (!isCollision && authoredMaterialsChanged) {
+    const authoredMaterialPalette = collectURDFMaterialsFromVisualGeometry(geometry);
+    const disposedMaterials = new Set<THREE.Material>();
+
+    if (authoredMaterialPalette.size > 1) {
+      targetGroup.traverse((child: any) => {
+        if (child.isMesh) {
+          updateVisualMaterialPalette(
+            child as THREE.Mesh,
+            authoredMaterialPalette,
+            disposedMaterials,
+          );
+        }
+      });
+    } else {
+      const visualMaterialOverride = resolveVisualMaterialOverrideFromGeometry(geometry);
+      targetGroup.traverse((child: any) => {
+        if (child.isMesh && visualMaterialOverride) {
+          updateVisualMaterial(child as THREE.Mesh, visualMaterialOverride, disposedMaterials);
+        }
+      });
+    }
+  }
+
+  const hasCustomMeshMaterialGroups =
+    !isCollision &&
+    (hasGeometryMeshMaterialGroups(previousGeometry) || hasGeometryMeshMaterialGroups(geometry));
+
+  if (
+    !isCollision &&
+    hasCustomMeshMaterialGroups &&
+    (authoredMaterialsChanged || meshMaterialGroupsChanged)
+  ) {
+    const disposedMaterials = new Set<THREE.Material>();
+    targetGroup.traverse((child: any) => {
+      if (!child.isMesh) {
+        return;
+      }
+
+      const highlightSnapshot = child.userData?.__urdfHighlightSnapshot;
+      if (!highlightSnapshot?.activeRole) {
+        return;
+      }
+
+      const previousVisibleMaterial = child.material as
+        | THREE.Material
+        | THREE.Material[]
+        | undefined;
+      child.material = highlightSnapshot.material;
+      delete child.userData.__urdfHighlightSnapshot;
+      disposeReplacedMaterials(previousVisibleMaterial, disposedMaterials, false);
+    });
+
+    targetGroup.children.forEach((child) => {
+      applyVisualMeshMaterialGroupsToObject(child, geometry);
     });
   }
 
@@ -535,35 +835,53 @@ export function applyGeometryPatchInPlace({
   const linkObject = findRobotLinkObject(robotModel, patch.linkName);
   if (!linkObject) return false;
 
-  if (patch.visualChanged) {
-    if (
-      !patchGeometryGroupInPlace({
-        robotModel,
-        linkObject,
-        category: 'visual',
-        linkData: patch.linkData,
-        previousGeometry: patch.previousLinkData.visual,
-        geometry: patch.linkData.visual,
-        showVisual,
-        showCollision,
-        invalidate,
-      })
-    ) {
-      patchGeometryCategory({
-        robotModel,
-        linkObject,
-        linkName: patch.linkName,
-        category: 'visual',
-        geometry: patch.linkData.visual,
-        assets,
-        sourceFileDir,
-        colladaRootNormalizationHints,
-        showVisual,
-        showCollision,
-        linkMeshMapRef,
-        invalidate,
-        isPatchTargetValid,
-      });
+  if (patch.visualChanged || patch.visualBodiesChanged) {
+    const visualPatched = patchVisualEntriesInPlace({
+      robotModel,
+      linkObject,
+      linkName: patch.linkName,
+      previousLinkData: patch.previousLinkData,
+      nextLinkData: patch.linkData,
+      assets,
+      sourceFileDir,
+      colladaRootNormalizationHints,
+      showVisual,
+      showCollision,
+      linkMeshMapRef,
+      invalidate,
+      isPatchTargetValid,
+    });
+
+    if (!visualPatched) {
+      if (
+        !patchGeometryGroupInPlace({
+          robotModel,
+          linkObject,
+          category: 'visual',
+          linkData: patch.linkData,
+          previousGeometry: patch.previousLinkData.visual,
+          geometry: patch.linkData.visual,
+          showVisual,
+          showCollision,
+          invalidate,
+        })
+      ) {
+        patchGeometryCategory({
+          robotModel,
+          linkObject,
+          linkName: patch.linkName,
+          category: 'visual',
+          geometry: patch.linkData.visual,
+          assets,
+          sourceFileDir,
+          colladaRootNormalizationHints,
+          showVisual,
+          showCollision,
+          linkMeshMapRef,
+          invalidate,
+          isPatchTargetValid,
+        });
+      }
     }
   }
 

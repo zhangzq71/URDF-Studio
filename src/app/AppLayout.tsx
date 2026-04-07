@@ -81,7 +81,7 @@ import type {
 import { translations } from '@/shared/i18n';
 import type { SnapshotCaptureOptions } from '@/shared/components/3d';
 import { normalizeMergedAppMode } from '@/shared/utils/appMode';
-import { ROBOT_IMPORT_ACCEPT_ATTRIBUTE } from '@/shared/utils';
+import { isAssetLibraryOnlyFormat, ROBOT_IMPORT_ACCEPT_ATTRIBUTE } from '@/shared/utils';
 import { createRobotSemanticSnapshot } from '@/shared/utils/robot/semanticSnapshot';
 import { recordUsdStageLoadDebug } from '@/shared/debug/usdStageLoadDebug';
 import { registerPendingUsdCacheFlusher } from './utils/pendingUsdCache';
@@ -96,7 +96,10 @@ import type { DocumentLoadState, DocumentLoadStatus } from '@/store/assetsStore'
 import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 import { BRIDGE_PREVIEW_ID, resolveAssemblyViewerComponentSelection } from '@/features/assembly';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
-import { buildStandaloneImportAssetWarning } from './utils/importPackageAssetReferences';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from './utils/importPackageAssetReferences';
 import { buildPropertyEditorSelectionContext } from './utils/propertyEditorSelectionContext';
 
 interface UsdPersistenceBaseline {
@@ -317,7 +320,6 @@ export function AppLayout({
     removeComponent,
     addBridge,
     removeBridge,
-    getMergedRobotData,
     updateComponentName,
     updateComponentTransform,
     updateComponentRobot,
@@ -332,7 +334,6 @@ export function AppLayout({
       removeComponent: state.removeComponent,
       addBridge: state.addBridge,
       removeBridge: state.removeBridge,
-      getMergedRobotData: state.getMergedRobotData,
       updateComponentName: state.updateComponentName,
       updateComponentTransform: state.updateComponentTransform,
       updateComponentRobot: state.updateComponentRobot,
@@ -352,6 +353,7 @@ export function AppLayout({
   const usdPreparedExportCacheRequestIdRef = useRef(0);
   const proModeRoundtripSessionRef = useRef<ProModeRoundtripSession | null>(null);
   const [pendingViewerToolMode, setPendingViewerToolMode] = useState<ToolMode | null>(null);
+  const [workspaceTransformPending, setWorkspaceTransformPending] = useState(false);
   const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [isSnapshotDialogOpen, setIsSnapshotDialogOpen] = useState(false);
@@ -578,8 +580,8 @@ export function AppLayout({
     assemblyRevision,
     assemblyBridgePreview: bridgePreview,
     assemblySelection,
+    workspaceTransformPending,
     sidebarTab,
-    getMergedRobotData,
     selection,
     robotName,
     robotLinks,
@@ -600,6 +602,12 @@ export function AppLayout({
     getUsdPreparedExportCache,
     setOriginalUrdfContent,
   });
+
+  useEffect(() => {
+    if (!shouldRenderAssembly) {
+      setWorkspaceTransformPending(false);
+    }
+  }, [shouldRenderAssembly]);
 
   const workspaceAssemblyRenderFailureRef = useRef<string | null>(null);
 
@@ -1041,6 +1049,13 @@ export function AppLayout({
     setHoveredSelection,
     focusOn,
   });
+  const handleWorkspaceTransformPendingChange = useCallback(
+    (pending: boolean) => {
+      handleTransformPendingChange(pending);
+      setWorkspaceTransformPending((current) => (current === pending ? current : pending));
+    },
+    [handleTransformPendingChange],
+  );
   const trySelectViewerAssemblyComponent = useCallback(
     (nextSelection: {
       type: Exclude<InteractionSelection['type'], null>;
@@ -1183,7 +1198,7 @@ export function AppLayout({
     setSelection,
     setPendingCollisionTransform,
     clearPendingCollisionTransform,
-    handleTransformPendingChange,
+    handleTransformPendingChange: handleWorkspaceTransformPendingChange,
   });
 
   const {
@@ -1414,16 +1429,23 @@ export function AppLayout({
 
   const handlePreviewFileWithFeedback = useCallback(
     (file: RobotFile) => {
+      const importedAssetPaths = collectStandaloneImportSupportAssetPaths(assets, availableFiles);
       const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
         file,
-        Object.keys(assets),
+        importedAssetPaths,
+        {
+          allFileContents,
+          sourcePath: file.name,
+        },
       );
       if (standaloneImportAssetWarning) {
         const assetLabel =
           standaloneImportAssetWarning.missingAssetPaths.length > 3
             ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
             : standaloneImportAssetWarning.missingAssetPaths.join(', ');
-        const warningMessage = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
+        const warningMessage = t.importPackageAssetBundleHint
+          .replace('{packages}', assetLabel)
+          .replace('{assets}', assetLabel);
 
         setDocumentLoadState({
           status: 'error',
@@ -1664,7 +1686,7 @@ export function AppLayout({
             selection={robot.selection}
             focusTarget={focusTarget}
             isMeshPreview={selectedFile?.format === 'mesh'}
-            onTransformPendingChange={handleTransformPendingChange}
+            onTransformPendingChange={handleWorkspaceTransformPendingChange}
             onCollisionTransform={handleCollisionTransform}
             assemblyState={assemblyState}
             assemblyWorkspaceActive={shouldRenderAssembly}
@@ -1690,6 +1712,8 @@ export function AppLayout({
           robot={propertyEditorSelectionContext.robot}
           onUpdate={handleUpdate}
           onSelect={handleSelectWithAssemblyClear}
+          onSelectGeometry={handleSelectGeometryWithAssemblyClear}
+          onAddCollisionBody={handleAddCollisionBody}
           onHover={handleHover}
           mode={mergedAppMode}
           assets={assets}

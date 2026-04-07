@@ -13,6 +13,7 @@ import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial, MJCFTexture } from './mjcfUtils';
+import { getMjcfCubeTextureFacePaths, getMjcfCubeTextureFaceRecord } from './mjcfCubeTextures';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import {
   disposeTemporaryTexturePromiseCache,
@@ -327,6 +328,17 @@ function collectReferencedTextureAssetUrls(
       }
 
       const textureDef = textureMap.get(materialDef.texture);
+      const cubeFacePaths = getMjcfCubeTextureFacePaths(textureDef);
+      if (cubeFacePaths.length > 0) {
+        cubeFacePaths.forEach((texturePath) => {
+          const assetUrl = findAssetByPath(texturePath, assets, sourceFileDir);
+          if (assetUrl) {
+            assetUrls.add(assetUrl);
+          }
+        });
+        return;
+      }
+
       if (!textureDef?.file) {
         return;
       }
@@ -401,6 +413,144 @@ async function loadMaterialTexture(
   return cloneTextureWithMaterialSettings(texture, materialDef);
 }
 
+async function loadCubeMaterialTextures(
+  materialDef: MJCFMaterial,
+  textureMap: Map<string, MJCFTexture>,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+  textureLoadCache: MJCFTextureLoadCache,
+  abortSignal?: MJCFLoadAbortSignal,
+): Promise<THREE.Texture[] | null> {
+  throwIfMJCFLoadAborted(abortSignal);
+  if (!materialDef.texture) {
+    return null;
+  }
+
+  const textureDef = textureMap.get(materialDef.texture);
+  const cubeFaceRecord = getMjcfCubeTextureFaceRecord(textureDef);
+  if (!cubeFaceRecord) {
+    return null;
+  }
+
+  const textures: THREE.Texture[] = [];
+  for (const texturePath of Object.values(cubeFaceRecord)) {
+    const assetUrl = findAssetByPath(texturePath, assets, sourceFileDir);
+    if (!assetUrl) {
+      console.error(`[MJCFLoader] Cube texture asset not found: ${texturePath}`);
+      return null;
+    }
+
+    const texture = await getTexturePromise(assetUrl, textureLoadCache);
+    if (!texture) {
+      return null;
+    }
+
+    throwIfMJCFLoadAborted(abortSignal);
+    textures.push(cloneTextureWithMaterialSettings(texture, materialDef));
+  }
+
+  return textures;
+}
+
+async function applyCubeMaterialAssetToMesh(
+  mesh: THREE.Object3D,
+  materialDef: MJCFMaterial,
+  textureMap: Map<string, MJCFTexture>,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+  textureLoadCache: MJCFTextureLoadCache,
+  abortSignal?: MJCFLoadAbortSignal,
+  materialName?: string,
+  inheritedGeomRgba?: [number, number, number, number],
+  hasExplicitGeomRgba: boolean = false,
+): Promise<boolean> {
+  const faceTextures = await loadCubeMaterialTextures(
+    materialDef,
+    textureMap,
+    assets,
+    sourceFileDir,
+    textureLoadCache,
+    abortSignal,
+  );
+  if (!faceTextures || faceTextures.length === 0) {
+    return false;
+  }
+
+  const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
+  const rgba = materialDef.rgba || [1, 1, 1, 1];
+  const r = Math.max(0, Math.min(1, rgba[0] ?? 1));
+  const g = Math.max(0, Math.min(1, rgba[1] ?? 1));
+  const b = Math.max(0, Math.min(1, rgba[2] ?? 1));
+  const inheritedAlphaOverride =
+    !hasExplicitGeomRgba &&
+    Array.isArray(inheritedGeomRgba) &&
+    inheritedGeomRgba.length >= 4 &&
+    Number.isFinite(inheritedGeomRgba[3]) &&
+    (inheritedGeomRgba[3] ?? 1) < 0.999
+      ? inheritedGeomRgba[3]
+      : null;
+  const alpha = Math.max(0, Math.min(1, inheritedAlphaOverride ?? rgba[3] ?? 1));
+  const roughness =
+    materialDef.shininess != null ? Math.max(0, Math.min(1, 1 - materialDef.shininess)) : undefined;
+  const metalness =
+    materialDef.reflectance != null ? Math.max(0, Math.min(1, materialDef.reflectance)) : undefined;
+  const emission =
+    materialDef.emission != null ? Math.max(0, Math.min(1, materialDef.emission)) : undefined;
+
+  let applied = false;
+  mesh.traverse((child: any) => {
+    if (!child?.isMesh) {
+      return;
+    }
+
+    const targetMesh = child as THREE.Mesh;
+    const geometry = targetMesh.geometry;
+    if (!(geometry instanceof THREE.BoxGeometry) && geometry.type !== 'BoxGeometry') {
+      return;
+    }
+
+    const preferDoubleSide = alpha < 1 || Boolean(targetMesh.userData?.mjcfPreferDoubleSide);
+    const currentMaterials = Array.isArray(targetMesh.material)
+      ? targetMesh.material
+      : [targetMesh.material];
+    const nextMaterials = faceTextures.map((texture, index) => {
+      const nextMaterial = createMatteMaterial({
+        color: createThreeColorFromSRGB(r, g, b),
+        opacity: alpha,
+        transparent: alpha < 1,
+        side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
+        map: texture,
+        name: `${materialName || materialDef.name || 'mjcf_material_asset'}_${index + 1}`,
+        preserveExactColor: hasAuthoredRgba || Boolean(materialDef.texture),
+      });
+
+      if (roughness != null) {
+        nextMaterial.roughness = roughness;
+      }
+      if (metalness != null) {
+        nextMaterial.metalness = metalness;
+      }
+      if (emission != null) {
+        nextMaterial.emissive = new THREE.Color(r, g, b);
+        nextMaterial.emissiveIntensity = emission;
+      }
+      nextMaterial.needsUpdate = true;
+      return nextMaterial;
+    });
+
+    targetMesh.material = nextMaterials;
+    currentMaterials.forEach((material) => material?.dispose?.());
+    applyVisualMeshShadowPolicy(targetMesh);
+    applied = true;
+  });
+
+  if (!applied) {
+    faceTextures.forEach((texture) => texture.dispose());
+  }
+
+  return applied;
+}
+
 async function applyMaterialAssetToMesh(
   mesh: THREE.Object3D,
   materialDef: MJCFMaterial,
@@ -419,6 +569,22 @@ async function applyMaterialAssetToMesh(
     onAsyncSceneMutation?: (() => void) | undefined;
   } = {},
 ): Promise<void> {
+  const appliedCubeTextureMaterials = await applyCubeMaterialAssetToMesh(
+    mesh,
+    materialDef,
+    textureMap,
+    assets,
+    sourceFileDir,
+    textureLoadCache,
+    abortSignal,
+    materialName,
+    inheritedGeomRgba,
+    hasExplicitGeomRgba,
+  );
+  if (appliedCubeTextureMaterials) {
+    return;
+  }
+
   const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
   const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
   const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));

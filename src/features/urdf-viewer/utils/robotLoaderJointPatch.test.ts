@@ -62,6 +62,58 @@ test('patchJointInPlace handles joints without explicit axis or limits', () => {
   assert.equal(invalidations.length, 1);
 });
 
+test('patchJointInPlace preserves MJCF scalar joint values and initializes missing limits', () => {
+  const robot = new THREE.Group() as THREE.Group & {
+    joints?: Record<string, RuntimeURDFJoint>;
+  };
+  const joint = new THREE.Group() as RuntimeURDFJoint & {
+    angle?: number;
+    axis?: THREE.Vector3;
+    jointValue?: number;
+    jointType?: string;
+    limit?: { lower: number; upper: number; effort?: number; velocity?: number };
+    lastSetValue?: number;
+    setJointValue: (value: number) => void;
+  };
+  joint.name = 'joint_1';
+  joint.jointType = JointType.REVOLUTE;
+  joint.axis = new THREE.Vector3(0, 0, 1);
+  joint.jointValue = 0.42;
+  joint.angle = 0.42;
+  joint.setJointValue = function setJointValue(value: number) {
+    this.jointValue = value;
+    this.angle = value;
+    this.lastSetValue = value;
+  };
+  robot.joints = { joint_1: joint };
+
+  const patch = {
+    jointName: 'joint_1',
+    previousJointData: makeJointPatchData(),
+    jointData: makeJointPatchData({
+      axis: { x: 0, y: 1, z: 0 },
+      origin: {
+        xyz: { x: 0, y: 0, z: 0.2 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+    }),
+  };
+
+  const invalidations: number[] = [];
+  const applied = patchJointInPlace(robot, patch, () => {
+    invalidations.push(1);
+  });
+
+  assert.equal(applied, true);
+  assert.equal(joint.lastSetValue, 0.42);
+  assert.deepEqual(joint.axis.toArray(), [0, 1, 0]);
+  assert.equal(joint.limit?.lower, 0);
+  assert.equal(joint.limit?.upper, 0);
+  assert.equal(joint.ignoreLimits, true);
+  assert.equal(joint.position.z, 0.2);
+  assert.equal(invalidations.length, 1);
+});
+
 test('patchJointsInPlace applies batched root-anchor updates without remounting the runtime scene', () => {
   const robot = new THREE.Group() as THREE.Group & {
     joints?: Record<string, RuntimeURDFJoint>;
@@ -82,44 +134,48 @@ test('patchJointsInPlace applies batched root-anchor updates without remounting 
   };
 
   const invalidations: number[] = [];
-  const applied = patchJointsInPlace(robot, [
-    {
-      jointName: 'joint_a',
-      previousJointData: makeJointPatchData({
-        id: 'joint_a',
-        name: 'joint_a',
-        childLinkId: 'link_a',
-      }),
-      jointData: makeJointPatchData({
-        id: 'joint_a',
-        name: 'joint_a',
-        childLinkId: 'link_a',
-        origin: {
-          xyz: { x: 0.25, y: 0, z: 0 },
-          rpy: { r: 0, p: 0, y: 0 },
-        },
-      }),
+  const applied = patchJointsInPlace(
+    robot,
+    [
+      {
+        jointName: 'joint_a',
+        previousJointData: makeJointPatchData({
+          id: 'joint_a',
+          name: 'joint_a',
+          childLinkId: 'link_a',
+        }),
+        jointData: makeJointPatchData({
+          id: 'joint_a',
+          name: 'joint_a',
+          childLinkId: 'link_a',
+          origin: {
+            xyz: { x: 0.25, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        }),
+      },
+      {
+        jointName: 'joint_b',
+        previousJointData: makeJointPatchData({
+          id: 'joint_b',
+          name: 'joint_b',
+          childLinkId: 'link_b',
+        }),
+        jointData: makeJointPatchData({
+          id: 'joint_b',
+          name: 'joint_b',
+          childLinkId: 'link_b',
+          origin: {
+            xyz: { x: -0.5, y: 0.1, z: 0.2 },
+            rpy: { r: 0, p: 0.2, y: 0 },
+          },
+        }),
+      },
+    ],
+    () => {
+      invalidations.push(1);
     },
-    {
-      jointName: 'joint_b',
-      previousJointData: makeJointPatchData({
-        id: 'joint_b',
-        name: 'joint_b',
-        childLinkId: 'link_b',
-      }),
-      jointData: makeJointPatchData({
-        id: 'joint_b',
-        name: 'joint_b',
-        childLinkId: 'link_b',
-        origin: {
-          xyz: { x: -0.5, y: 0.1, z: 0.2 },
-          rpy: { r: 0, p: 0.2, y: 0 },
-        },
-      }),
-    },
-  ], () => {
-    invalidations.push(1);
-  });
+  );
 
   assert.equal(applied, true);
   assert.equal(jointA.position.x, 0.25);

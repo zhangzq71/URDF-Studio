@@ -252,3 +252,85 @@ test('USD roundtrip preserves floating-root joint semantics for MJCF free joints
   assert.equal(floatingJoint?.type, JointType.FLOATING);
   assertWorldTransformsMatch(robot, toRobotState(adapted.robotData));
 });
+
+test('USD roundtrip preserves official drive damping and maxForce for supported joints', async () => {
+  const robot = createFloatingRootRobot();
+  robot.joints.child_joint.dynamics.damping = 0.35;
+  robot.joints.child_joint.limit.effort = 9;
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'floating_root_robot_drives',
+    assets: {},
+  });
+
+  const physicsLayerPath =
+    'floating_root_robot_drives/usd/configuration/floating_root_robot_drives_description_physics.usd';
+  const rootLayerText = await payload.archiveFiles.get(payload.rootLayerPath)?.text();
+  const baseLayerText = await payload.archiveFiles
+    .get(
+      'floating_root_robot_drives/usd/configuration/floating_root_robot_drives_description_base.usd',
+    )
+    ?.text();
+  const physicsLayerText = await payload.archiveFiles.get(physicsLayerPath)?.text();
+  const sensorLayerText = await payload.archiveFiles
+    .get(
+      'floating_root_robot_drives/usd/configuration/floating_root_robot_drives_description_sensor.usd',
+    )
+    ?.text();
+
+  assert.ok(rootLayerText);
+  assert.ok(baseLayerText);
+  assert.ok(physicsLayerText);
+  assert.ok(sensorLayerText);
+  assert.match(physicsLayerText, /float drive:angular:physics:damping = 0\.35/);
+  assert.match(physicsLayerText, /float drive:angular:physics:maxForce = 9/);
+
+  const stageSourcePath = `/${payload.rootLayerPath}`;
+  const metadata = createRoundtripMetadataSnapshot(robot, stageSourcePath, {
+    rootLayer: rootLayerText,
+    baseLayer: baseLayerText,
+    physicsLayer: physicsLayerText,
+    sensorLayer: sensorLayerText,
+  });
+
+  const childJointEntry = metadata.jointCatalogEntries.find(
+    (entry) => entry.jointName === 'child_joint',
+  );
+  assert.ok(childJointEntry, 'expected child_joint metadata to survive exported USD parsing');
+  assert.equal(childJointEntry?.driveDamping, 0.35);
+  assert.equal(childJointEntry?.driveMaxForce, 9);
+
+  const rootPrimMatch = rootLayerText.match(/defaultPrim = "([^"]+)"/);
+  assert.ok(rootPrimMatch, 'expected USD root layer to declare defaultPrim');
+
+  const adapted = adaptUsdViewerSnapshotToRobotData({
+    stageSourcePath,
+    stage: { defaultPrimPath: `/${rootPrimMatch[1]}` },
+    robotMetadataSnapshot: metadata,
+    robotTree: {
+      linkParentPairs: metadata.linkParentPairs,
+      jointCatalogEntries: metadata.jointCatalogEntries,
+      rootLinkPaths: [],
+    },
+    physics: {
+      linkDynamicsEntries: metadata.linkDynamicsEntries,
+    },
+    render: {
+      meshDescriptors: [],
+      materials: [],
+    },
+  });
+
+  assert.ok(adapted, 'expected driven USD snapshot to adapt back into robot data');
+  if (!adapted) {
+    return;
+  }
+
+  const childJoint = Object.values(adapted.robotData.joints).find(
+    (joint) => joint.name === 'child_joint',
+  );
+  assert.ok(childJoint, 'expected child_joint to survive USD reload');
+  assert.equal(childJoint?.dynamics.damping, 0.35);
+  assert.equal(childJoint?.limit.effort, 9);
+});

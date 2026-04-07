@@ -1,11 +1,9 @@
-import JSZip from 'jszip';
 import {
   resolveRobotFileData,
   isStandaloneXacroEntry,
   type RobotImportResult,
 } from '@/core/parsers/importRobotFile';
-import { isImageAssetPath } from '@/core/utils/assetFileTypes';
-import { resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
+import { resolveImportedAssetPath, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { isMJCF } from '@/core/parsers/mjcf';
 import { validateMJCFImportExternalAssets } from '@/core/parsers/mjcf/mjcfImportValidation';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
@@ -13,12 +11,17 @@ import { isSDF } from '@/core/parsers/sdf/sdfParser';
 import { isUSDA } from '@/core/parsers/usd';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { isXacro } from '@/core/parsers/xacro';
-import { isAssetFile, isMeshFile } from '@/features/file-io/utils/formatDetection';
+import { isAssetFile } from '@/features/file-io/utils/formatDetection';
 import {
   createImportPathCollisionMap,
   remapImportedPath,
 } from '@/features/file-io/utils/libraryImportPathCollisions';
 import { isMotorLibraryDataFilePath } from '@/shared/data/motorLibrary';
+import {
+  isAssetLibraryOnlyFormat,
+  isVisibleLibraryAssetPath,
+  isVisibleLibraryEntry,
+} from '@/shared/utils/robotFileSupport';
 import {
   isUrdfSelfContainedInImportBundle,
   pickPreferredImportFile,
@@ -28,6 +31,12 @@ import {
   inferCommonPackageAssetBundleRoot,
 } from './importPackageAssetReferences.ts';
 import { buildPreResolvedImportContentSignature } from './preResolvedImportSignature.ts';
+import {
+  isSupportedArchiveImportFile,
+  withArchiveImportSession,
+  type ArchiveImportEntry,
+  type ArchiveImportSession,
+} from './archiveImport.ts';
 import { GeometryType, type RobotData, type RobotFile, type UrdfLink } from '@/types';
 
 const USD_BINARY_MAGIC = new Uint8Array([80, 88, 82, 45, 85, 83, 68, 67]); // "PXR-USDC"
@@ -111,7 +120,7 @@ export interface PrepareImportWorkerRequest {
 export interface HydrateDeferredImportAssetsWorkerRequest {
   type: 'hydrate-deferred-import-assets';
   requestId: number;
-  zipFile: File;
+  archiveFile: File;
   assetFiles: PreparedDeferredImportAssetFile[];
 }
 
@@ -162,6 +171,19 @@ function createEmptyCollectedImportPayload(): CollectedImportPayload {
   };
 }
 
+function createEmptyPreparedImportPayload(): PreparedImportPayload {
+  return {
+    robotFiles: [],
+    assetFiles: [],
+    deferredAssetFiles: [],
+    usdSourceFiles: [],
+    libraryFiles: [],
+    textFiles: [],
+    preferredFileName: null,
+    preResolvedImports: [],
+  };
+}
+
 const LOOSE_IMPORT_ROOTLESS_FOLDERS = new Set([
   'meshes',
   'mesh',
@@ -190,6 +212,8 @@ const LOOSE_IMPORT_ROOTLESS_FOLDERS = new Set([
   'thumbnail',
   'thumbnails',
 ]);
+
+const MAX_EAGER_TEXT_MESH_ASSET_BYTES = 8 * 1024 * 1024;
 
 export const detectImportFormat = (
   content: string,
@@ -388,8 +412,8 @@ function inferBundleRootFromRobotFiles(robotFiles: readonly RobotFile[]): string
   }
 
   const firstDefinitionFile =
-    robotFiles.find((file) => file.format !== 'mesh' && file.format !== 'usd') ??
-    robotFiles.find((file) => file.format !== 'mesh') ??
+    robotFiles.find((file) => !isAssetLibraryOnlyFormat(file.format) && file.format !== 'usd') ??
+    robotFiles.find((file) => !isAssetLibraryOnlyFormat(file.format)) ??
     robotFiles[0];
 
   if (!firstDefinitionFile) {
@@ -451,7 +475,7 @@ function shouldWrapLooseImportUnderBundleRoot(
 
   const hasRootLevelDefinitionFile = payload.robotFiles.some(
     (file) =>
-      file.format !== 'mesh' &&
+      !isAssetLibraryOnlyFormat(file.format) &&
       file.format !== 'usd' &&
       getTopLevelImportSegment(file.name) === null,
   );
@@ -480,7 +504,7 @@ function shouldWrapLooseImportUnderBundleRoot(
     return false;
   }
 
-  return payload.robotFiles.some((file) => file.format !== 'mesh');
+  return payload.robotFiles.some((file) => !isAssetLibraryOnlyFormat(file.format));
 }
 
 function prefixCollectedImportPath(path: string, bundleRoot: string): string {
@@ -495,7 +519,7 @@ function prefixCollectedImportPath(path: string, bundleRoot: string): string {
 function normalizeLooseImportBundleRoot(payload: CollectedImportPayload): CollectedImportPayload {
   const packageAssetBundleRoot = inferCommonPackageAssetBundleRoot(
     payload.robotFiles
-      .filter((file) => file.format !== 'mesh' && file.format !== 'usd')
+      .filter((file) => !isAssetLibraryOnlyFormat(file.format) && file.format !== 'usd')
       .map((file) => ({ format: file.format, content: file.content })),
   );
   const bundleRoot =
@@ -551,15 +575,128 @@ function isImportableDefinitionPath(lowerPath: string): boolean {
 }
 
 function isAuxiliaryTextImportPath(lowerPath: string): boolean {
-  return lowerPath.endsWith('.material') || lowerPath.endsWith('.gazebo');
+  return (
+    lowerPath.endsWith('.material') || lowerPath.endsWith('.gazebo') || lowerPath.endsWith('.mtl')
+  );
 }
 
-function getZipEntryUncompressedSize(entry: JSZip.JSZipObject): number {
-  const candidateSize = Number(
-    (entry as JSZip.JSZipObject & { _data?: { uncompressedSize?: number } })._data
-      ?.uncompressedSize ?? 0,
+function shouldMirrorTextMeshAssetContent(lowerPath: string): boolean {
+  return lowerPath.endsWith('.dae') || lowerPath.endsWith('.obj');
+}
+
+function createVisibleImportedAssetFile(path: string): RobotFile | null {
+  if (!isVisibleLibraryAssetPath(path)) {
+    return null;
+  }
+
+  return {
+    name: path,
+    content: '',
+    format: 'mesh',
+  };
+}
+
+function shouldLoadAuxiliaryImportText(robotFiles: readonly RobotFile[]): boolean {
+  return robotFiles.some(
+    (file) => file.format === 'sdf' || file.format === 'xacro' || file.format === 'usd',
   );
-  return Number.isFinite(candidateSize) && candidateSize > 0 ? candidateSize : 0;
+}
+
+function normalizeResolvedImportAssetPath(
+  assetPath: string,
+  sourceFilePath?: string | null,
+): string {
+  return normalizeImportPath(resolveImportedAssetPath(assetPath, sourceFilePath));
+}
+
+function parseObjMaterialLibraryPaths(meshPath: string, content: string): string[] {
+  const materialLibraryPaths = new Set<string>();
+  const matches = content.matchAll(/^[ \t]*mtllib[ \t]+(.+)$/gim);
+
+  for (const match of matches) {
+    const rawValue = String(match[1] || '').trim();
+    if (!rawValue) {
+      continue;
+    }
+
+    const resolvedPath = normalizeResolvedImportAssetPath(rawValue, meshPath);
+    if (!resolvedPath) {
+      continue;
+    }
+
+    materialLibraryPaths.add(resolvedPath);
+  }
+
+  return [...materialLibraryPaths];
+}
+
+function collectReferencedMjcfTextMeshPaths(
+  robotFiles: readonly RobotFile[],
+  preResolvePreferredImport: boolean,
+): Set<string> {
+  if (!preResolvePreferredImport) {
+    return new Set<string>();
+  }
+
+  const preferredFile = pickFastPreparedPreferredFile([...robotFiles], [...robotFiles]);
+  if (!preferredFile || preferredFile.format !== 'mjcf') {
+    return new Set<string>();
+  }
+
+  const referencedTextMeshPaths = new Set<string>();
+  const addFallbackReferences = () => {
+    extractStandaloneImportAssetReferences(preferredFile, {
+      sourcePath: preferredFile.name,
+    }).forEach((assetPath) => {
+      const resolvedPath = normalizeResolvedImportAssetPath(assetPath, preferredFile.name);
+      if (resolvedPath && shouldMirrorTextMeshAssetContent(resolvedPath.toLowerCase())) {
+        referencedTextMeshPaths.add(resolvedPath);
+      }
+    });
+  };
+
+  try {
+    const importResult = resolveRobotFileData(preferredFile, {
+      availableFiles: [...robotFiles],
+    });
+
+    if (importResult.status === 'ready') {
+      collectRobotAssetPaths(importResult.robotData).forEach((assetPath) => {
+        const normalizedPath = normalizeImportPath(assetPath);
+        if (normalizedPath && shouldMirrorTextMeshAssetContent(normalizedPath.toLowerCase())) {
+          referencedTextMeshPaths.add(normalizedPath);
+        }
+      });
+    }
+  } catch {
+    // Fall back to source-level asset reference extraction if early MJCF parse fails.
+  }
+
+  if (referencedTextMeshPaths.size === 0) {
+    addFallbackReferences();
+  }
+
+  return referencedTextMeshPaths;
+}
+
+function collectReferencedMjcfObjMaterialPaths(
+  textFiles: readonly PreparedImportTextFile[],
+): Set<string> {
+  const materialPaths = new Set<string>();
+
+  textFiles.forEach((file) => {
+    if (!file.path.toLowerCase().endsWith('.obj')) {
+      return;
+    }
+
+    parseObjMaterialLibraryPaths(file.path, file.content).forEach((materialPath) => {
+      if (materialPath.toLowerCase().endsWith('.mtl')) {
+        materialPaths.add(materialPath);
+      }
+    });
+  });
+
+  return materialPaths;
 }
 
 function clampImportProgressPercent(value: number | null): number | null {
@@ -914,24 +1051,30 @@ function compareFastImportPathPreference(leftName: string, rightName: string): n
   return leftName.localeCompare(rightName);
 }
 
-function pickFastPreparedPreferredFile(files: RobotFile[]): RobotFile | null {
-  const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+function pickFastPreparedPreferredFile(
+  files: RobotFile[],
+  filePool: RobotFile[] = files,
+): RobotFile | null {
+  const visibleFiles = files.filter(isVisibleLibraryEntry);
+  const robotDefinitionFiles = visibleFiles.filter(
+    (file) => !isAssetLibraryOnlyFormat(file.format),
+  );
   if (robotDefinitionFiles.length === 0) {
-    return files[0] ?? null;
+    return visibleFiles.find((file) => file.format === 'mesh') ?? null;
   }
 
   const urdfFiles = robotDefinitionFiles.filter((file) => file.format === 'urdf');
   const mjcfFiles = robotDefinitionFiles.filter((file) => file.format === 'mjcf');
 
   if (urdfFiles.length > 0 && mjcfFiles.length > 0) {
-    return pickPreferredImportFile(robotDefinitionFiles, robotDefinitionFiles);
+    return pickPreferredImportFile(robotDefinitionFiles, filePool);
   }
 
   if (urdfFiles.length > 0) {
     return (
       [...urdfFiles].sort((left, right) => {
-        const leftSelfContained = isUrdfSelfContainedInImportBundle(left, robotDefinitionFiles);
-        const rightSelfContained = isUrdfSelfContainedInImportBundle(right, robotDefinitionFiles);
+        const leftSelfContained = isUrdfSelfContainedInImportBundle(left, filePool);
+        const rightSelfContained = isUrdfSelfContainedInImportBundle(right, filePool);
         if (leftSelfContained !== rightSelfContained) {
           return Number(rightSelfContained) - Number(leftSelfContained);
         }
@@ -997,7 +1140,7 @@ function pickFastPreparedPreferredFile(files: RobotFile[]): RobotFile | null {
     );
   }
 
-  return robotDefinitionFiles[0] ?? files[0] ?? null;
+  return robotDefinitionFiles[0] ?? visibleFiles[0] ?? null;
 }
 
 function renameCollectedImportPayload(
@@ -1046,17 +1189,20 @@ function renameCollectedImportPayload(
   const importTextFileContents = shouldPreResolvePreferredImport
     ? Object.fromEntries(renamedPayload.textFiles.map((file) => [file.path, file.content]))
     : {};
+  const visibleRobotFiles = renamedPayload.robotFiles.filter(isVisibleLibraryEntry);
   const standaloneRootXacro =
     shouldPreResolvePreferredImport &&
-    renamedPayload.robotFiles.every((file) => file.format === 'xacro' || file.format === 'mesh')
-      ? (renamedPayload.robotFiles.find(
+    visibleRobotFiles.length > 0 &&
+    visibleRobotFiles.every(
+      (file) => file.format === 'xacro' || isAssetLibraryOnlyFormat(file.format),
+    )
+      ? (visibleRobotFiles.find(
           (file) => file.format === 'xacro' && isStandaloneXacroEntry(file),
         ) ?? null)
       : null;
   const preferredFile = shouldPreResolvePreferredImport
-    ? (standaloneRootXacro ??
-      pickPreferredImportFile(renamedPayload.robotFiles, renamedPayload.robotFiles))
-    : pickFastPreparedPreferredFile(renamedPayload.robotFiles);
+    ? (standaloneRootXacro ?? pickPreferredImportFile(visibleRobotFiles, renamedPayload.robotFiles))
+    : pickFastPreparedPreferredFile(visibleRobotFiles, renamedPayload.robotFiles);
   const preferredImportResult =
     shouldPreResolvePreferredImport && preferredFile
       ? preferredFile.format === 'xacro' || preferredFile.format === 'sdf'
@@ -1088,18 +1234,14 @@ function renameCollectedImportPayload(
   };
 }
 
-async function collectImportPayloadFromZipFile(
-  zipFile: File,
+async function collectImportPayloadFromArchiveSession(
+  archiveSession: ArchiveImportSession,
+  options: {
+    preResolvePreferredImport?: boolean;
+  } = {},
   onProgress?: (progress: PrepareImportProgress) => void,
 ): Promise<CollectedImportPayload> {
-  const payload: CollectedImportPayload = {
-    robotFiles: [],
-    assetFiles: [],
-    deferredAssetFiles: [],
-    usdSourceFiles: [],
-    libraryFiles: [],
-    textFiles: [],
-  };
+  const payload = createEmptyCollectedImportPayload();
   const emitProgress = createImportProgressEmitter(onProgress);
   emitProgress({
     phase: 'reading-archive',
@@ -1110,24 +1252,14 @@ async function collectImportPayloadFromZipFile(
     totalBytes: 0,
   });
 
-  const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
-  const processableEntries: Array<{ path: string; entry: JSZip.JSZipObject; size: number }> = [];
-  const auxiliaryTextEntries: Array<{ path: string; entry: JSZip.JSZipObject }> = [];
-  const usdEntries: Array<{ path: string; entry: JSZip.JSZipObject }> = [];
-  const definitionEntries: Array<{ path: string; entry: JSZip.JSZipObject }> = [];
-  const libraryEntries: Array<{ path: string; entry: JSZip.JSZipObject }> = [];
-
-  zip.forEach((relativePath, fileEntry) => {
-    if (fileEntry.dir || shouldSkipImportPath(relativePath)) {
-      return;
-    }
-
-    processableEntries.push({
-      path: relativePath,
-      entry: fileEntry,
-      size: getZipEntryUncompressedSize(fileEntry),
-    });
-  });
+  const processableEntries = archiveSession.entries.filter(
+    (entry) => !shouldSkipImportPath(entry.path),
+  );
+  const auxiliaryTextEntries: ArchiveImportEntry[] = [];
+  const mirroredTextMeshAssetEntries: ArchiveImportEntry[] = [];
+  const usdEntries: ArchiveImportEntry[] = [];
+  const definitionEntries: ArchiveImportEntry[] = [];
+  const libraryEntries: ArchiveImportEntry[] = [];
 
   const totalEntries = processableEntries.length;
   const totalBytes = processableEntries.reduce((sum, current) => sum + current.size, 0);
@@ -1146,24 +1278,28 @@ async function collectImportPayloadFromZipFile(
 
   reportExtractionProgress();
 
-  processableEntries.forEach(({ path, entry, size }) => {
+  processableEntries.forEach((entry) => {
+    const { path, size } = entry;
     const lowerPath = path.toLowerCase();
 
     if (isUsdFamilyPath(path)) {
-      usdEntries.push({ path, entry });
+      usdEntries.push(entry);
     } else if (isImportableDefinitionPath(lowerPath)) {
-      definitionEntries.push({ path, entry });
+      definitionEntries.push(entry);
     } else if (isMotorLibraryDataFilePath(path)) {
-      libraryEntries.push({ path, entry });
+      libraryEntries.push(entry);
     } else if (isAuxiliaryTextImportPath(lowerPath)) {
-      auxiliaryTextEntries.push({ path, entry });
+      auxiliaryTextEntries.push(entry);
     } else if (isAssetFile(path)) {
       payload.deferredAssetFiles.push({ name: path, sourcePath: path });
-      if (isMeshFile(path) || isImageAssetPath(path)) {
-        payload.robotFiles.push({ name: path, content: '', format: 'mesh' });
+      if (shouldMirrorTextMeshAssetContent(lowerPath) && size <= MAX_EAGER_TEXT_MESH_ASSET_BYTES) {
+        mirroredTextMeshAssetEntries.push(entry);
+      }
+      const visibleAssetFile = createVisibleImportedAssetFile(path);
+      if (visibleAssetFile) {
+        payload.robotFiles.push(visibleAssetFile);
       }
     }
-
     processedEntries += 1;
     processedBytes += size;
     reportExtractionProgress();
@@ -1171,33 +1307,95 @@ async function collectImportPayloadFromZipFile(
 
   const concurrency = resolveImportPreparationConcurrency();
 
-  await processWithConcurrency(usdEntries, concurrency, async ({ path, entry }) => {
-    const bytes = await entry.async('uint8array');
+  const extractedUsdEntries = await archiveSession.extractEntries(
+    usdEntries.map((entry) => entry.path),
+  );
+  await processWithConcurrency(extractedUsdEntries, concurrency, async ({ path, file }) => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
     payload.robotFiles.push(createImportedUsdFile(path, bytes));
     payload.usdSourceFiles.push({ name: path, blob: new Blob([bytes]) });
   });
 
-  await processWithConcurrency(definitionEntries, concurrency, async ({ path, entry }) => {
-    const content = await entry.async('string');
+  const extractedDefinitionEntries = await archiveSession.extractEntries(
+    definitionEntries.map((entry) => entry.path),
+  );
+  await processWithConcurrency(extractedDefinitionEntries, concurrency, async ({ path, file }) => {
+    const content = await file.text();
     const format = detectImportFormat(content, path);
     if (format) {
       payload.robotFiles.push({ name: path, content, format });
     }
   });
 
-  await processWithConcurrency(libraryEntries, concurrency, async ({ path, entry }) => {
-    const content = await entry.async('string');
+  const extractedLibraryEntries = await archiveSession.extractEntries(
+    libraryEntries.map((entry) => entry.path),
+  );
+  await processWithConcurrency(extractedLibraryEntries, concurrency, async ({ path, file }) => {
+    const content = await file.text();
     payload.libraryFiles.push({ path, content });
   });
 
-  if (
-    payload.robotFiles.some((file) => file.format === 'sdf' || file.format === 'xacro') &&
-    auxiliaryTextEntries.length > 0
-  ) {
-    await processWithConcurrency(auxiliaryTextEntries, concurrency, async ({ path, entry }) => {
-      const content = await entry.async('string');
-      payload.textFiles.push({ path, content });
-    });
+  const referencedMjcfTextMeshPaths = collectReferencedMjcfTextMeshPaths(
+    payload.robotFiles,
+    options.preResolvePreferredImport !== false,
+  );
+
+  if (shouldLoadAuxiliaryImportText(payload.robotFiles) && auxiliaryTextEntries.length > 0) {
+    const extractedAuxiliaryTextEntries = await archiveSession.extractEntries(
+      auxiliaryTextEntries.map((entry) => entry.path),
+    );
+    await processWithConcurrency(
+      extractedAuxiliaryTextEntries,
+      concurrency,
+      async ({ path, file }) => {
+        const content = await file.text();
+        payload.textFiles.push({ path, content });
+      },
+    );
+  }
+
+  if (referencedMjcfTextMeshPaths.size > 0 && mirroredTextMeshAssetEntries.length > 0) {
+    const targetedMirroredTextMeshEntries = mirroredTextMeshAssetEntries.filter((entry) =>
+      referencedMjcfTextMeshPaths.has(normalizeImportPath(entry.path)),
+    );
+
+    if (targetedMirroredTextMeshEntries.length > 0) {
+      const extractedMirroredTextMeshEntries = await archiveSession.extractEntries(
+        targetedMirroredTextMeshEntries.map((entry) => entry.path),
+      );
+      const importedMjcfMeshTextFiles: PreparedImportTextFile[] = [];
+
+      await processWithConcurrency(
+        extractedMirroredTextMeshEntries,
+        concurrency,
+        async ({ path, file }) => {
+          importedMjcfMeshTextFiles.push({ path, content: await file.text() });
+        },
+      );
+
+      payload.textFiles.push(...importedMjcfMeshTextFiles);
+
+      const referencedMjcfMaterialPaths =
+        collectReferencedMjcfObjMaterialPaths(importedMjcfMeshTextFiles);
+      if (referencedMjcfMaterialPaths.size > 0 && auxiliaryTextEntries.length > 0) {
+        const targetedAuxiliaryTextEntries = auxiliaryTextEntries.filter((entry) =>
+          referencedMjcfMaterialPaths.has(normalizeImportPath(entry.path)),
+        );
+
+        if (targetedAuxiliaryTextEntries.length > 0) {
+          const extractedAuxiliaryTextEntries = await archiveSession.extractEntries(
+            targetedAuxiliaryTextEntries.map((entry) => entry.path),
+          );
+          await processWithConcurrency(
+            extractedAuxiliaryTextEntries,
+            concurrency,
+            async ({ path, file }) => {
+              payload.textFiles.push({ path, content: await file.text() });
+            },
+          );
+        }
+      }
+    }
   }
 
   emitProgress({
@@ -1212,8 +1410,8 @@ async function collectImportPayloadFromZipFile(
   return payload;
 }
 
-export async function hydrateDeferredImportAssets(
-  zipFile: File,
+async function hydrateDeferredImportAssetsFromArchiveSession(
+  archiveSession: ArchiveImportSession,
   assetFiles: readonly PreparedDeferredImportAssetFile[],
   onProgress?: (progress: PrepareImportProgress) => void,
 ): Promise<PreparedImportBlobFile[]> {
@@ -1240,65 +1438,65 @@ export async function hydrateDeferredImportAssets(
     return [];
   }
 
-  const zip = await JSZip.loadAsync(await zipFile.arrayBuffer());
-  const zipEntries = assetFiles.map((assetFile) => {
-    const zipEntry = zip.file(assetFile.sourcePath);
-    if (!zipEntry) {
-      throw new Error(`Missing deferred asset "${assetFile.sourcePath}" in ZIP archive.`);
-    }
-
-    return {
-      assetFile,
-      zipEntry,
-      size: getZipEntryUncompressedSize(zipEntry),
-    };
-  });
-  const totalBytes = zipEntries.reduce((sum, current) => sum + current.size, 0);
-  let processedEntries = 0;
-  let processedBytes = 0;
+  const assetFileLookup = new Map(assetFiles.map((file) => [file.sourcePath, file] as const));
+  const extractedAssetFiles = await archiveSession.extractEntries(
+    assetFiles.map((file) => file.sourcePath),
+    ({ processedEntries, processedBytes, totalBytes }) => {
+      emitProgress({
+        phase: 'extracting-files',
+        progressPercent: totalBytes > 0 ? (processedBytes / totalBytes) * 100 : 100,
+        processedEntries,
+        totalEntries,
+        processedBytes,
+        totalBytes,
+      });
+    },
+  );
   const hydratedAssetFiles: PreparedImportBlobFile[] = [];
-  const reportExtractionProgress = () => {
-    emitProgress({
-      phase: 'extracting-files',
-      progressPercent: totalBytes > 0 ? (processedBytes / totalBytes) * 100 : 100,
-      processedEntries,
-      totalEntries,
-      processedBytes,
-      totalBytes,
-    });
-  };
-
-  reportExtractionProgress();
 
   await processWithConcurrency(
-    zipEntries,
+    extractedAssetFiles,
     resolveImportPreparationConcurrency(),
-    async ({ assetFile, zipEntry, size }) => {
+    async ({ path, file }) => {
+      const assetFile = assetFileLookup.get(path);
+      if (!assetFile) {
+        throw new Error(`Missing deferred asset "${path}" in archive.`);
+      }
+
       hydratedAssetFiles.push({
         name: assetFile.name,
-        blob: await zipEntry.async('blob'),
+        blob: file,
       });
-
-      processedEntries += 1;
-      processedBytes += size;
-      reportExtractionProgress();
     },
   );
 
   emitProgress({
     phase: 'finalizing-import',
     progressPercent: 100,
-    processedEntries,
+    processedEntries: extractedAssetFiles.length,
     totalEntries,
-    processedBytes,
-    totalBytes,
+    processedBytes: extractedAssetFiles.reduce((sum, current) => sum + current.size, 0),
+    totalBytes: extractedAssetFiles.reduce((sum, current) => sum + current.size, 0),
   });
 
   return hydratedAssetFiles.sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export async function hydrateDeferredImportAssets(
+  archiveFile: File,
+  assetFiles: readonly PreparedDeferredImportAssetFile[],
+  onProgress?: (progress: PrepareImportProgress) => void,
+): Promise<PreparedImportBlobFile[]> {
+  return withArchiveImportSession(archiveFile, async (archiveSession) =>
+    hydrateDeferredImportAssetsFromArchiveSession(archiveSession, assetFiles, onProgress),
+  );
+}
+
 async function collectImportPayloadFromLooseFiles(
   files: readonly ImportPreparationFileInput[],
+  options: {
+    preResolvePreferredImport?: boolean;
+  } = {},
   onProgress?: (progress: PrepareImportProgress) => void,
 ): Promise<CollectedImportPayload> {
   const payload: CollectedImportPayload = {
@@ -1309,8 +1507,9 @@ async function collectImportPayloadFromLooseFiles(
     libraryFiles: [],
     textFiles: [],
   };
-  const auxiliaryTextFiles: Array<{ path: string; file: File }> = [];
   const emitProgress = createImportProgressEmitter(onProgress);
+  const auxiliaryTextFiles: Array<{ path: string; file: File }> = [];
+  const mirroredTextMeshFiles: Array<{ path: string; file: File }> = [];
   const totalEntries = files.length;
   const totalBytes = files.reduce((sum, input) => sum + resolveImportInputFile(input).size, 0);
   let processedEntries = 0;
@@ -1355,9 +1554,16 @@ async function collectImportPayloadFromLooseFiles(
     } else if (isAuxiliaryTextImportPath(lowerPath)) {
       auxiliaryTextFiles.push({ path, file });
     } else if (isAssetFile(path)) {
+      if (
+        shouldMirrorTextMeshAssetContent(lowerPath) &&
+        file.size <= MAX_EAGER_TEXT_MESH_ASSET_BYTES
+      ) {
+        mirroredTextMeshFiles.push({ path, file });
+      }
       payload.assetFiles.push({ name: path, blob: file });
-      if (isMeshFile(path) || isImageAssetPath(path)) {
-        payload.robotFiles.push({ name: path, content: '', format: 'mesh' });
+      const visibleAssetFile = createVisibleImportedAssetFile(path);
+      if (visibleAssetFile) {
+        payload.robotFiles.push(visibleAssetFile);
       }
     }
 
@@ -1366,18 +1572,57 @@ async function collectImportPayloadFromLooseFiles(
     reportExtractionProgress();
   });
 
-  if (
-    payload.robotFiles.some((file) => file.format === 'sdf' || file.format === 'xacro') &&
-    auxiliaryTextFiles.length > 0
-  ) {
+  if (shouldLoadAuxiliaryImportText(payload.robotFiles) && auxiliaryTextFiles.length > 0) {
     await processWithConcurrency(
       auxiliaryTextFiles,
       resolveImportPreparationConcurrency(),
       async ({ path, file }) => {
-        const content = await file.text();
-        payload.textFiles.push({ path, content });
+        payload.textFiles.push({ path, content: await file.text() });
       },
     );
+  }
+
+  const referencedMjcfTextMeshPaths = collectReferencedMjcfTextMeshPaths(
+    payload.robotFiles,
+    options.preResolvePreferredImport !== false,
+  );
+
+  if (referencedMjcfTextMeshPaths.size > 0 && mirroredTextMeshFiles.length > 0) {
+    const targetedMirroredTextMeshFiles = mirroredTextMeshFiles.filter(({ path }) =>
+      referencedMjcfTextMeshPaths.has(normalizeImportPath(path)),
+    );
+
+    if (targetedMirroredTextMeshFiles.length > 0) {
+      const importedMjcfMeshTextFiles: PreparedImportTextFile[] = [];
+
+      await processWithConcurrency(
+        targetedMirroredTextMeshFiles,
+        resolveImportPreparationConcurrency(),
+        async ({ path, file }) => {
+          importedMjcfMeshTextFiles.push({ path, content: await file.text() });
+        },
+      );
+
+      payload.textFiles.push(...importedMjcfMeshTextFiles);
+
+      const referencedMjcfMaterialPaths =
+        collectReferencedMjcfObjMaterialPaths(importedMjcfMeshTextFiles);
+      if (referencedMjcfMaterialPaths.size > 0 && auxiliaryTextFiles.length > 0) {
+        const targetedAuxiliaryTextFiles = auxiliaryTextFiles.filter(({ path }) =>
+          referencedMjcfMaterialPaths.has(normalizeImportPath(path)),
+        );
+
+        if (targetedAuxiliaryTextFiles.length > 0) {
+          await processWithConcurrency(
+            targetedAuxiliaryTextFiles,
+            resolveImportPreparationConcurrency(),
+            async ({ path, file }) => {
+              payload.textFiles.push({ path, content: await file.text() });
+            },
+          );
+        }
+      }
+    }
   }
 
   emitProgress({
@@ -1434,71 +1679,117 @@ export async function prepareImportPayload({
   onProgress,
 }: PrepareImportPayloadArgs): Promise<PreparedImportPayload> {
   const firstFile = files[0] ? resolveImportInputFile(files[0]) : null;
-  const isSingleZipImport =
-    files.length === 1 && firstFile && firstFile.name.toLowerCase().endsWith('.zip');
-  const collectedPayload = isSingleZipImport
-    ? await collectImportPayloadFromZipFile(
-        firstFile,
+  const isSingleArchiveImport =
+    files.length === 1 && firstFile ? isSupportedArchiveImportFile(firstFile.name) : false;
+  if (isSingleArchiveImport) {
+    return withArchiveImportSession(firstFile, async (archiveSession) => {
+      const collectedPayload = await collectImportPayloadFromArchiveSession(
+        archiveSession,
+        {
+          preResolvePreferredImport,
+        },
         onProgress
           ? (progress) => onProgress(mapImportProgressToPercentRange(progress, 0, 72))
           : undefined,
-      )
-    : await collectImportPayloadFromLooseFiles(files, onProgress);
+      );
+      const sortedCollectedPayload = sortCollectedImportPayload(collectedPayload);
 
-  const preparedPayload = renameCollectedImportPayload(
-    normalizeLooseImportBundleRoot(sortCollectedImportPayload(collectedPayload)),
+      if (
+        sortedCollectedPayload.robotFiles.length === 0 &&
+        sortedCollectedPayload.libraryFiles.length === 0
+      ) {
+        return createEmptyPreparedImportPayload();
+      }
+
+      const preparedPayload = renameCollectedImportPayload(
+        normalizeLooseImportBundleRoot(sortedCollectedPayload),
+        existingPaths,
+        {
+          preResolvePreferredImport,
+        },
+      );
+
+      if (preparedPayload.deferredAssetFiles.length === 0) {
+        return preparedPayload;
+      }
+
+      const preferredFile = preparedPayload.preferredFileName
+        ? (preparedPayload.robotFiles.find(
+            (file) => file.name === preparedPayload.preferredFileName,
+          ) ?? null)
+        : null;
+      const preparedTextFileContents = Object.fromEntries(
+        preparedPayload.textFiles.map((file) => [file.path, file.content]),
+      );
+      const preResolvedPreferredImport =
+        preferredFile == null
+          ? null
+          : (preparedPayload.preResolvedImports.find(
+              (entry) => entry.fileName === preferredFile.name,
+            ) ?? null);
+      const preferredImportResult =
+        preResolvedPreferredImport?.result ??
+        (preferredFile && preferredFile.format !== 'usd'
+          ? resolveRobotFileData(preferredFile, {
+              availableFiles: preparedPayload.robotFiles,
+              allFileContents: preparedTextFileContents,
+            })
+          : null);
+      const criticalDeferredAssetNames = determineCriticalDeferredAssetNames(
+        preferredFile,
+        preferredImportResult,
+        preparedPayload.deferredAssetFiles,
+        preparedPayload.robotFiles,
+        preparedTextFileContents,
+      );
+
+      if (criticalDeferredAssetNames.size === 0) {
+        return preparedPayload;
+      }
+
+      const immediateDeferredAssetFiles = preparedPayload.deferredAssetFiles.filter((file) =>
+        criticalDeferredAssetNames.has(file.name),
+      );
+      const remainingDeferredAssetFiles = preparedPayload.deferredAssetFiles.filter(
+        (file) => !criticalDeferredAssetNames.has(file.name),
+      );
+      const criticalAssetFiles = await hydrateDeferredImportAssetsFromArchiveSession(
+        archiveSession,
+        immediateDeferredAssetFiles,
+        onProgress
+          ? (progress) => onProgress(mapImportProgressToPercentRange(progress, 72, 92))
+          : undefined,
+      );
+
+      return {
+        ...preparedPayload,
+        assetFiles: [...preparedPayload.assetFiles, ...criticalAssetFiles],
+        deferredAssetFiles: remainingDeferredAssetFiles,
+      };
+    });
+  }
+
+  const collectedPayload = await collectImportPayloadFromLooseFiles(
+    files,
+    {
+      preResolvePreferredImport,
+    },
+    onProgress,
+  );
+  const sortedCollectedPayload = sortCollectedImportPayload(collectedPayload);
+
+  if (
+    sortedCollectedPayload.robotFiles.length === 0 &&
+    sortedCollectedPayload.libraryFiles.length === 0
+  ) {
+    return createEmptyPreparedImportPayload();
+  }
+
+  return renameCollectedImportPayload(
+    normalizeLooseImportBundleRoot(sortedCollectedPayload),
     existingPaths,
     {
       preResolvePreferredImport,
     },
   );
-
-  if (!isSingleZipImport || preparedPayload.deferredAssetFiles.length === 0) {
-    return preparedPayload;
-  }
-
-  const preferredFile = preparedPayload.preferredFileName
-    ? (preparedPayload.robotFiles.find((file) => file.name === preparedPayload.preferredFileName) ??
-      null)
-    : null;
-  const preferredImportResult =
-    preferredFile && preferredFile.format !== 'usd'
-      ? resolveRobotFileData(preferredFile, {
-          availableFiles: preparedPayload.robotFiles,
-          allFileContents: Object.fromEntries(
-            preparedPayload.textFiles.map((file) => [file.path, file.content]),
-          ),
-        })
-      : (preparedPayload.preResolvedImports[0]?.result ?? null);
-  const criticalDeferredAssetNames = determineCriticalDeferredAssetNames(
-    preferredFile,
-    preferredImportResult,
-    preparedPayload.deferredAssetFiles,
-    preparedPayload.robotFiles,
-    Object.fromEntries(preparedPayload.textFiles.map((file) => [file.path, file.content])),
-  );
-
-  if (criticalDeferredAssetNames.size === 0) {
-    return preparedPayload;
-  }
-
-  const immediateDeferredAssetFiles = preparedPayload.deferredAssetFiles.filter((file) =>
-    criticalDeferredAssetNames.has(file.name),
-  );
-  const remainingDeferredAssetFiles = preparedPayload.deferredAssetFiles.filter(
-    (file) => !criticalDeferredAssetNames.has(file.name),
-  );
-  const criticalAssetFiles = await hydrateDeferredImportAssets(
-    firstFile,
-    immediateDeferredAssetFiles,
-    onProgress
-      ? (progress) => onProgress(mapImportProgressToPercentRange(progress, 72, 92))
-      : undefined,
-  );
-
-  return {
-    ...preparedPayload,
-    assetFiles: [...preparedPayload.assetFiles, ...criticalAssetFiles],
-    deferredAssetFiles: remainingDeferredAssetFiles,
-  };
 }

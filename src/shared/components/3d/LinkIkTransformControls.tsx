@@ -22,8 +22,10 @@ import {
   diffLinkIkDragKinematicState,
   hasMeaningfulLinkIkTargetDelta,
   hasLinkIkKinematicStateChanges,
+  limitLinkIkPreviewKinematicStateStep,
   resolveLinkIkCommittedStateEpsilon,
   resolveLinkIkSolveRequestOptions,
+  shouldAcceptLinkIkSolveState,
   shouldScheduleLinkIkPreviewSolve,
 } from './linkIkDragPreview';
 
@@ -91,6 +93,9 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   const dragStartWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const dragHasMeaningfulMotionRef = useRef(false);
   const solveFrameRef = useRef<number | null>(null);
+  const finishDragRef = useRef<() => void>(() => undefined);
+  const clearPreviewOverridesRef = useRef<() => void>(() => undefined);
+  const resetSolveQueueRef = useRef<() => void>(() => undefined);
   // Mirror the detached-goal workflow used in closed-chain-ik-js:
   // solve against the drag-start snapshot, but keep the latest accepted
   // preview state around as the next seed so the gizmo stays responsive.
@@ -145,10 +150,18 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     committedPreviewStateRef.current = createEmptyLinkIkDragKinematicState();
   }, [cancelScheduledSolve]);
 
+  useEffect(() => {
+    resetSolveQueueRef.current = resetSolveQueue;
+  }, [resetSolveQueue]);
+
   const clearPreviewOverrides = useCallback(() => {
     onClearPreviewKinematicOverrides?.();
     committedPreviewStateRef.current = createEmptyLinkIkDragKinematicState();
   }, [onClearPreviewKinematicOverrides]);
+
+  useEffect(() => {
+    clearPreviewOverridesRef.current = clearPreviewOverrides;
+  }, [clearPreviewOverrides]);
 
   const readProxyWorldPosition = useCallback(() => {
     const proxy = translateProxyRef.current;
@@ -222,11 +235,38 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
         angles: result.angles,
         quaternions: result.quaternions,
       });
-      previewSolveStateRef.current = nextSolveState;
+      if (
+        !shouldAcceptLinkIkSolveState({
+          seedState: solveSeedState,
+          nextState: nextSolveState,
+          preview,
+          converged: result.converged,
+          failureReason: result.failureReason,
+        })
+      ) {
+        return;
+      }
 
+      previewSolveStateRef.current = nextSolveState;
+      const previewBaseState = buildBaseKinematicState(baseRobot, nextSolveState);
+      const nextAppliedState = preview
+        ? limitLinkIkPreviewKinematicStateStep(
+            {
+              angles: {
+                ...previewBaseState.angles,
+                ...committedPreviewStateRef.current.angles,
+              },
+              quaternions: {
+                ...previewBaseState.quaternions,
+                ...committedPreviewStateRef.current.quaternions,
+              },
+            },
+            nextSolveState,
+          )
+        : nextSolveState;
       const changedOverrides = diffLinkIkDragKinematicState(
         committedPreviewStateRef.current,
-        nextSolveState,
+        nextAppliedState,
         resolveLinkIkCommittedStateEpsilon(preview),
       );
 
@@ -235,8 +275,8 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
       }
 
       didMutateRef.current = true;
-      onPreviewKinematicOverrides?.(nextSolveState);
-      committedPreviewStateRef.current = nextSolveState;
+      onPreviewKinematicOverrides?.(nextAppliedState);
+      committedPreviewStateRef.current = nextAppliedState;
       invalidate();
     },
     [coordinateRoot, ikRobotState, invalidate, onPreviewKinematicOverrides, selectedLinkId],
@@ -260,14 +300,14 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
       dragHasMeaningfulMotionRef.current ||
       hasMeaningfulLinkIkTargetDelta(dragStartWorldPosition, nextTargetWorldPosition);
 
-    if (
-      !shouldScheduleLinkIkPreviewSolve({
-        pendingTargetWorldPosition: pendingTargetWorldPositionRef.current,
-        lastSolvedTargetWorldPosition: lastSolvedTargetWorldPositionRef.current,
-        nextTargetWorldPosition,
-        hasMeaningfulDragMotion,
-      })
-    ) {
+    const shouldSchedule = shouldScheduleLinkIkPreviewSolve({
+      pendingTargetWorldPosition: pendingTargetWorldPositionRef.current,
+      lastSolvedTargetWorldPosition: lastSolvedTargetWorldPositionRef.current,
+      nextTargetWorldPosition,
+      hasMeaningfulDragMotion,
+    });
+
+    if (!shouldSchedule) {
       return;
     }
 
@@ -416,6 +456,10 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     syncTranslateProxy,
   ]);
 
+  useEffect(() => {
+    finishDragRef.current = finishDrag;
+  }, [finishDrag]);
+
   const handleDraggingChanged = useCallback(
     (event?: { value?: boolean }) => {
       if (event?.value) {
@@ -444,31 +488,22 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     }
   }, [clearPreviewOverrides, resetSolveQueue, selectedHandle, selectedLinkId, syncTranslateProxy]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    return () => {
       if (isDraggingRef.current) {
-        finishDrag();
+        finishDragRef.current();
         return;
       }
 
-      clearPreviewOverrides();
-      resetSolveQueue();
-    },
-    [clearPreviewOverrides, finishDrag, resetSolveQueue],
-  );
+      clearPreviewOverridesRef.current();
+      resetSolveQueueRef.current();
+    };
+  }, []);
 
   useFrame(() => {
-    if (transformRef.current?.dragging) {
-      schedulePreviewSolve();
-      return;
+    if (!isDraggingRef.current) {
+      syncTranslateProxy(translateProxyRef.current);
     }
-
-    if (isDraggingRef.current) {
-      finishDrag();
-      return;
-    }
-
-    syncTranslateProxy(translateProxyRef.current);
   }, 1000);
 
   if (!enabled || !selectedLinkId || !selectedHandle || !coordinateRoot || !ikRobotState) {
@@ -485,9 +520,9 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
           mode="translate"
           size={VISUALIZER_UNIFIED_GIZMO_SIZE}
           translateSpace="world"
-          rotateEnabled={false}
-          hoverStyle="stock"
-          displayStyle="stock"
+          hoverStyle="single-axis"
+          displayStyle="thick-primary"
+          enabled={enabled}
           onChange={handleObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />

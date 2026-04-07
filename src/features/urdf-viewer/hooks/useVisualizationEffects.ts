@@ -5,6 +5,7 @@ import { createJointAxisVisualization } from '../utils/visualizationFactories';
 import { syncRobotGeometryVisibility } from '../utils/robotGeometryVisibilitySync';
 import { getRobotSceneNodeIndex } from '../utils/robotSceneNodeIndex';
 import { getRobotVisualMeshIndex } from '../utils/robotVisualMeshIndex';
+import { rebuildLinkMeshMapFromRobot } from '../utils/robotLoaderPatchUtils';
 import {
   syncInertiaVisualizationForLinks,
   syncIkHandleVisualizationForLinks,
@@ -335,10 +336,15 @@ export function useVisualizationEffects({
       highlightedMeshes: highlightedMeshesRef.current,
     });
 
+    if (didMutate || effectiveLinkMeshMapRef.current.size === 0) {
+      rebuildLinkMeshMapFromRobot(effectiveLinkMeshMapRef, robot);
+    }
+
     if (didMutate) {
       invalidate();
     }
   }, [
+    effectiveLinkMeshMapRef,
     robot,
     showCollision,
     showVisual,

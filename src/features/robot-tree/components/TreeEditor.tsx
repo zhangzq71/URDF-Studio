@@ -9,7 +9,11 @@ import { getPrimaryTreeRenderRootLinkId, getTreeRenderRootLinkIds } from '@/core
 import type { AppMode, AssemblyState, RobotFile, RobotState, Theme } from '@/types';
 import { translations } from '@/shared/i18n';
 import { Button, Dialog } from '@/shared/components/ui';
-import { isLibraryRobotExportableFormat } from '@/shared/utils';
+import {
+  isLibraryComponentAddableFile,
+  isLibraryRobotExportableFormat,
+  isVisibleLibraryEntry,
+} from '@/shared/utils';
 import { useAssemblyStore, useSelectionStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
 import { buildChildJointsByParent, buildParentLinkByChild } from '../utils/treeSelectionScope';
@@ -27,6 +31,7 @@ export interface TreeEditorProps {
     linkId: string,
     subType: 'visual' | 'collision',
     objectIndex?: number,
+    suppressPulse?: boolean,
   ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
@@ -177,7 +182,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
   );
   const robotSelection = useSelectionStore((state) => state.selection);
 
-  const browserAvailableFiles = availableFiles;
+  const browserAvailableFiles = useMemo(
+    () => availableFiles.filter(isVisibleLibraryEntry),
+    [availableFiles],
+  );
   const fileTree = useMemo(() => buildFileTree(browserAvailableFiles), [browserAvailableFiles]);
   const treeRobot = useMemo<RobotState>(() => {
     if (isAssemblyView) {
@@ -380,9 +388,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
       event.preventDefault();
       event.stopPropagation();
 
+      const canAddToAssembly = isProMode && isLibraryComponentAddableFile(file);
       const supportsExport = isLibraryRobotExportableFormat(file.format);
       const actionCount =
-        (isProMode ? 1 : 0) + (supportsExport ? 1 : 0) + (onDeleteLibraryFile ? 1 : 0);
+        (canAddToAssembly ? 1 : 0) + (supportsExport ? 1 : 0) + (onDeleteLibraryFile ? 1 : 0);
       if (actionCount === 0) return;
 
       const menuWidth = 180;
@@ -463,6 +472,7 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
 
   const handleAddFileToAssembly = useCallback(() => {
     if (!fileContextMenu || fileContextMenu.target.type !== 'file' || !onAddComponent) return;
+    if (!isLibraryComponentAddableFile(fileContextMenu.target.file)) return;
     onAddComponent(fileContextMenu.target.file);
     setFileContextMenu(null);
   }, [fileContextMenu, onAddComponent]);
@@ -669,7 +679,11 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
         onAdd={handleAddFileToAssembly}
         onRename={handleRenameFolderFromMenu}
         onExport={handleExportLibraryFile}
-        showAddAction={isProMode && fileContextMenu?.target.type === 'file'}
+        showAddAction={Boolean(
+          isProMode &&
+          fileContextMenu?.target.type === 'file' &&
+          isLibraryComponentAddableFile(fileContextMenu.target.file),
+        )}
         showRenameAction={Boolean(
           fileContextMenu?.target.type === 'folder' && onRenameLibraryFolder,
         )}

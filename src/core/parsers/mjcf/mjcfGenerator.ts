@@ -10,7 +10,11 @@ import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
-import { getVisualGeometryEntries, resolveVisualMaterialOverride } from '@/core/robot';
+import {
+  getBoxFaceMaterialPalette,
+  getVisualGeometryEntries,
+  resolveVisualMaterialOverride,
+} from '@/core/robot';
 import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '../meshPathUtils';
 
 export type MjcfActuatorType = 'position' | 'velocity' | 'motor';
@@ -396,10 +400,23 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     objectIndex: number;
     color: string;
     texture?: string;
+    cubeTextureKey?: string;
     specular?: number;
     shininess?: number;
     reflectance?: number;
     emission?: number;
+  }
+
+  interface CubeTextureAssetEntry {
+    key: string;
+    owningLinkId: string;
+    owningObjectIndex: number;
+    fileright: string;
+    fileleft: string;
+    fileup: string;
+    filedown: string;
+    filefront: string;
+    fileback: string;
   }
 
   interface VisualVariantMaterialAssetEntry {
@@ -478,7 +495,11 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
     if (resolvedMaterial.source === 'authored') {
       return {
-        color: resolvedMaterial.color || visual.color || '#808080',
+        color:
+          resolvedMaterial.color ||
+          (resolvedMaterial.texture ? '#ffffff' : undefined) ||
+          visual.color ||
+          '#808080',
         texture: resolvedMaterial.texture,
         source: 'authored',
       };
@@ -507,7 +528,10 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
   const visualVariantMaterialAssets = new Map<string, VisualVariantMaterialAssetEntry>();
   const visualVariantMaterialNameMap = new Map<string, string>();
   const visualInlineColorMap = new Map<string, string>();
+  const cubeTextureAssets = new Map<string, CubeTextureAssetEntry>();
+  const cubeTextureAssetNameMap = new Map<string, string>();
   const usedMaterialNames = new Set<string>();
+  const usedCubeTextureNames = new Set<string>();
   const buildVisualMaterialAssetName = (link: UrdfLink, objectIndex: number): string => {
     const base = sanitizeMaterialAssetName(
       objectIndex === 0
@@ -542,6 +566,24 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return candidate;
   };
 
+  const buildCubeTextureAssetKey = (facePaths: string[]): string => JSON.stringify(facePaths);
+
+  const buildCubeTextureAssetName = (link: UrdfLink, objectIndex: number): string => {
+    const base = sanitizeMaterialAssetName(
+      objectIndex === 0
+        ? `${link.name || link.id}_cube_tex`
+        : `${link.name || link.id}_cube_tex_${objectIndex + 1}`,
+    );
+    let candidate = base;
+    let suffix = 2;
+    while (usedCubeTextureNames.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    usedCubeTextureNames.add(candidate);
+    return candidate;
+  };
+
   Object.entries(links).forEach(([linkId, link]) => {
     getVisualGeometryEntries(link).forEach((entry) => {
       if (entry.geometry.type === GeometryType.NONE) {
@@ -553,6 +595,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         isPrimaryVisual: entry.bodyIndex === null,
       });
       visualInlineColorMap.set(visualKey, materialState.color);
+      const boxFacePalette = getBoxFaceMaterialPalette(entry.geometry);
 
       const variants =
         entry.geometry.type === GeometryType.MESH
@@ -577,7 +620,35 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       }
 
       const pbr = entry.bodyIndex === null ? resolveLinkMaterialPbr(link) : {};
+      const cubeTextureFacePaths = boxFacePalette.map((faceEntry) =>
+        normalizeTexturePathForExport(faceEntry.material.texture || ''),
+      );
+      const canExportCubeTexture =
+        boxFacePalette.length > 0 && cubeTextureFacePaths.every((path) => Boolean(path));
+      let cubeTextureKey: string | undefined;
+      if (canExportCubeTexture) {
+        cubeTextureKey = buildCubeTextureAssetKey(cubeTextureFacePaths);
+        if (!cubeTextureAssets.has(cubeTextureKey)) {
+          cubeTextureAssets.set(cubeTextureKey, {
+            key: cubeTextureKey,
+            owningLinkId: linkId,
+            owningObjectIndex: entry.objectIndex,
+            fileright: cubeTextureFacePaths[0]!,
+            fileleft: cubeTextureFacePaths[1]!,
+            fileup: cubeTextureFacePaths[2]!,
+            filedown: cubeTextureFacePaths[3]!,
+            filefront: cubeTextureFacePaths[4]!,
+            fileback: cubeTextureFacePaths[5]!,
+          });
+          cubeTextureAssetNameMap.set(
+            cubeTextureKey,
+            buildCubeTextureAssetName(link, entry.objectIndex),
+          );
+        }
+      }
+
       const shouldCreateMaterialAsset =
+        Boolean(cubeTextureKey) ||
         materialState.source !== 'inline' ||
         Object.values(pbr).some((value) => Number.isFinite(value as number));
       if (!shouldCreateMaterialAsset) {
@@ -589,8 +660,9 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         visualKey,
         linkId,
         objectIndex: entry.objectIndex,
-        color: materialState.color,
-        texture: materialState.texture,
+        color: cubeTextureKey ? '#ffffff' : materialState.color,
+        texture: cubeTextureKey ? undefined : materialState.texture,
+        ...(cubeTextureKey ? { cubeTextureKey } : {}),
         ...pbr,
       });
       visualMaterialNameMap.set(visualKey, materialName);
@@ -665,6 +737,14 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return textureAssetNameMap.get(normalizedPath) || null;
   };
 
+  const resolveCubeTextureAssetName = (cubeTextureKey?: string): string | null => {
+    if (!cubeTextureKey) {
+      return null;
+    }
+
+    return cubeTextureAssetNameMap.get(cubeTextureKey) || null;
+  };
+
   const hasGeometry = (link: UrdfLink | undefined): boolean => {
     if (!link) return false;
 
@@ -735,13 +815,22 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     }
     xml += `    <texture name="${textureName}" type="2d" file="${path}" />\n`;
   });
+  cubeTextureAssets.forEach((cubeTextureAsset) => {
+    const textureName = cubeTextureAssetNameMap.get(cubeTextureAsset.key);
+    if (!textureName) {
+      return;
+    }
+
+    xml += `    <texture name="${textureName}" type="cube" fileright="${cubeTextureAsset.fileright}" fileleft="${cubeTextureAsset.fileleft}" fileup="${cubeTextureAsset.fileup}" filedown="${cubeTextureAsset.filedown}" filefront="${cubeTextureAsset.filefront}" fileback="${cubeTextureAsset.fileback}" />\n`;
+  });
   visualMaterialAssets.forEach(
-    ({ visualKey, color, texture, specular, shininess, reflectance, emission }) => {
+    ({ visualKey, color, texture, cubeTextureKey, specular, shininess, reflectance, emission }) => {
       const materialName = visualMaterialNameMap.get(visualKey);
       if (!materialName) {
         return;
       }
       const textureAssetName = resolveTextureAssetName(texture);
+      const cubeTextureAssetName = resolveCubeTextureAssetName(cubeTextureKey);
       const pbrAttrs = [
         Number.isFinite(specular) ? ` specular="${formatNumberWithMaxDecimals(specular!, 4)}"` : '',
         Number.isFinite(shininess)
@@ -752,9 +841,11 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
           : '',
         Number.isFinite(emission) ? ` emission="${formatNumberWithMaxDecimals(emission!, 4)}"` : '',
       ].join('');
-      xml += textureAssetName
-        ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${textureAssetName}"${pbrAttrs} />\n`
-        : `    <material name="${materialName}" rgba="${hexToRgba(color)}"${pbrAttrs} />\n`;
+      xml += cubeTextureAssetName
+        ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${cubeTextureAssetName}"${pbrAttrs} />\n`
+        : textureAssetName
+          ? `    <material name="${materialName}" rgba="${hexToRgba(color)}" texture="${textureAssetName}"${pbrAttrs} />\n`
+          : `    <material name="${materialName}" rgba="${hexToRgba(color)}"${pbrAttrs} />\n`;
     },
   );
   visualVariantMaterialAssets.forEach(({ key, color, specular }) => {
@@ -810,6 +901,12 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       if (parentJoint.type === JointType.FLOATING) {
         bodyXml += `${indent}  <freejoint name="${parentJoint.name}"/>\n`;
       } else {
+        if (parentJoint.type === JointType.PLANAR) {
+          throw new Error(
+            `[MJCF export] Joint "${parentJoint.name}" uses unsupported planar type.`,
+          );
+        }
+
         let jType = 'hinge';
         if (parentJoint.type === JointType.PRISMATIC) {
           jType = 'slide';
@@ -824,10 +921,35 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         const limitStr = shouldEmitRange
           ? ` range="${formatScalar(parentJoint.limit!.lower)} ${formatScalar(parentJoint.limit!.upper)}"`
           : '';
+        const limitedStr = shouldEmitRange ? ' limited="true"' : '';
         const axisStr =
           parentJoint.type === JointType.BALL ? '' : ` axis="${vecStr(parentJoint.axis)}"`;
+        const supportsScalarReference =
+          parentJoint.type === JointType.REVOLUTE ||
+          parentJoint.type === JointType.CONTINUOUS ||
+          parentJoint.type === JointType.PRISMATIC;
+        const referencePosition = Number.isFinite(parentJoint.referencePosition)
+          ? parentJoint.referencePosition
+          : undefined;
+        const referencePositionStr =
+          supportsScalarReference && referencePosition !== undefined
+            ? ` ref="${formatScalar(referencePosition)}"`
+            : '';
+        const effortLimit =
+          supportsScalarReference && Number.isFinite(parentJoint.limit?.effort)
+            ? Math.abs(parentJoint.limit!.effort)
+            : undefined;
+        const actuatorForceRangeStr =
+          effortLimit && effortLimit > 1e-12
+            ? ` actuatorfrclimited="true" actuatorfrcrange="${formatScalar(-effortLimit)} ${formatScalar(effortLimit)}"`
+            : '';
+        const armature = parentJoint.hardware?.armature;
+        const armatureStr =
+          Number.isFinite(armature) && Math.abs(armature as number) > 1e-12
+            ? ` armature="${formatScalar(armature as number)}"`
+            : '';
 
-        bodyXml += `${indent}  <joint name="${parentJoint.name}" type="${jType}"${axisStr}${limitStr} damping="${formatScalar(parentJoint.dynamics.damping)}" frictionloss="${formatScalar(parentJoint.dynamics.friction)}"/>\n`;
+        bodyXml += `${indent}  <joint name="${parentJoint.name}" type="${jType}"${axisStr}${limitedStr}${limitStr}${referencePositionStr}${actuatorForceRangeStr}${armatureStr} damping="${formatScalar(parentJoint.dynamics.damping)}" frictionloss="${formatScalar(parentJoint.dynamics.friction)}"/>\n`;
       }
     }
 

@@ -60,14 +60,27 @@ export {
   updateVisualGeometryByObjectIndex,
 } from './visualBodies';
 export {
+  BOX_FACE_MATERIAL_ORDER,
   canEditGeometryBaseTexture,
   collectGeometryTexturePaths,
   getEffectiveGeometryAuthoredMaterials,
+  getBoxFaceMaterialPalette,
   getGeometryAuthoredMaterials,
+  getPreferredSingleMaterialFromBoxFacePalette,
+  hasBoxFaceMaterialPalette,
   hasMultipleAuthoredMaterials,
   resolveVisualMaterialOverride,
+  updateVisualAuthoredMaterialByObjectIndex,
   updateVisualBaseTextureByObjectIndex,
 } from './visualMaterials';
+export type { BoxFaceMaterialEntry, BoxFaceMaterialName } from './visualMaterials';
+export {
+  applyMeshMaterialPaintEdit,
+  getGeometryMeshMaterialGroups,
+  getGeometryMeshMaterialGroupsForMesh,
+  hasGeometryMeshMaterialGroups,
+  normalizeGeometryAuthoredMaterials,
+} from './visualMeshMaterialGroups';
 
 export { resolveJointKey, resolveLinkKey } from './identity';
 

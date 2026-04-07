@@ -793,6 +793,14 @@ function createJointFromViewerEntry(
   const jointType = jointTypeFromViewerValue(entry.jointTypeName || entry.jointType);
   const lower = degreesToRadians(entry.lowerLimitDeg);
   const upper = degreesToRadians(entry.upperLimitDeg);
+  const driveDamping =
+    typeof entry.driveDamping === 'number' && Number.isFinite(entry.driveDamping)
+      ? entry.driveDamping
+      : undefined;
+  const driveMaxForce =
+    typeof entry.driveMaxForce === 'number' && Number.isFinite(entry.driveMaxForce)
+      ? entry.driveMaxForce
+      : undefined;
   const originXyz =
     entry.originXyz && typeof entry.originXyz.length === 'number'
       ? toVector3(entry.originXyz)
@@ -821,10 +829,15 @@ function createJointFromViewerEntry(
         : { r: 0, p: 0, y: 0 },
     },
     axis: axisFromViewerEntry(entry),
+    dynamics: {
+      ...DEFAULT_JOINT.dynamics,
+      ...(driveDamping !== undefined ? { damping: driveDamping } : {}),
+    },
     limit: {
       ...DEFAULT_JOINT.limit,
       ...(lower !== undefined ? { lower } : {}),
       ...(upper !== undefined ? { upper } : {}),
+      ...(driveMaxForce !== undefined ? { effort: driveMaxForce } : {}),
     },
   };
 }

@@ -4,7 +4,7 @@ export function shouldMountRobotBeforeAssetsComplete(sourceFormat: 'urdf' | 'mjc
 }
 
 export function shouldForceViewerRuntimeRemount(
-  sourceFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh' | null | undefined,
+  sourceFormat: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh' | 'asset' | null | undefined,
 ): boolean {
   return sourceFormat === 'usd';
 }

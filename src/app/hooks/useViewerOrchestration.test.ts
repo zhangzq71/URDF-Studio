@@ -179,6 +179,64 @@ test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while 
   assert.equal(useUIStore.getState().detailLinkTab, 'visual');
 });
 
+test('handleSelectGeometry pulses the selected link geometry so the tree can relocate it', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  let nextSelection: RobotState['selection'] | null = null;
+  let pulsedSelection: RobotState['selection'] | null = null;
+  const hook = renderHook({
+    setSelection: (selection) => {
+      nextSelection = selection;
+    },
+    pulseSelection: (selection) => {
+      pulsedSelection = selection;
+    },
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleSelectGeometry('arm_link', 'collision', 2);
+
+  assert.deepEqual(nextSelection, {
+    type: 'link',
+    id: 'arm_link',
+    subType: 'collision',
+    objectIndex: 2,
+  });
+  assert.deepEqual(pulsedSelection, nextSelection);
+});
+
+test('handleSelectGeometry can skip relocation pulses for in-tree geometry clicks', () => {
+  resetSelectionStore();
+  resetUiStore();
+
+  let nextSelection: RobotState['selection'] | null = null;
+  let pulsedSelection: RobotState['selection'] | null = null;
+  const hook = renderHook({
+    setSelection: (selection) => {
+      nextSelection = selection;
+    },
+    pulseSelection: (selection) => {
+      pulsedSelection = selection;
+    },
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleSelectGeometry('arm_link', 'visual', 0, true);
+
+  assert.deepEqual(nextSelection, {
+    type: 'link',
+    id: 'arm_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+  assert.equal(pulsedSelection, null);
+});
+
 test('handleViewerMeshSelect does not pin hover while selecting a body', () => {
   resetSelectionStore();
   resetUiStore();
@@ -270,5 +328,6 @@ test('handleHover preserves helper identity so helper-only hover changes are not
     subType: undefined,
     objectIndex: undefined,
     helperKind: 'center-of-mass',
+    highlightObjectId: undefined,
   });
 });

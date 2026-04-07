@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+
+import {
+  applyVisualMaterialOverrideToObject,
+  hasExplicitGeometryMaterialOverride,
+  resolveVisualMaterialOverrideFromGeometry,
+} from './visualMaterialOverrides';
+
+test('resolveVisualMaterialOverrideFromGeometry includes first-batch PBR parameters', () => {
+  const override = resolveVisualMaterialOverrideFromGeometry({
+    color: '#808080',
+    authoredMaterials: [
+      {
+        color: '#123456',
+        texture: 'textures/body.png',
+        opacity: 0.35,
+        roughness: 0.72,
+        metalness: 0.18,
+        emissive: '#102030',
+        emissiveIntensity: 1.4,
+      },
+    ],
+  });
+
+  assert.deepEqual(override, {
+    color: '#123456',
+    texture: 'textures/body.png',
+    opacity: 0.35,
+    roughness: 0.72,
+    metalness: 0.18,
+    emissive: '#102030',
+    emissiveIntensity: 1.4,
+  });
+});
+
+test('hasExplicitGeometryMaterialOverride detects PBR-only authored overrides', () => {
+  assert.equal(
+    hasExplicitGeometryMaterialOverride({
+      authoredMaterials: [{ roughness: 0.2 }],
+    }),
+    true,
+  );
+});
+
+test('applyVisualMaterialOverrideToObject applies PBR parameters to generated materials', () => {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: '#ffffff' }),
+  );
+  const root = new THREE.Group();
+  root.add(mesh);
+
+  applyVisualMaterialOverrideToObject(root, {
+    color: '#abcdef',
+    opacity: 0.6,
+    roughness: 0.25,
+    metalness: 0.85,
+    emissive: '#224466',
+    emissiveIntensity: 0.9,
+  });
+
+  const appliedMaterial = mesh.material as THREE.MeshStandardMaterial;
+  assert.equal(appliedMaterial.color.getHexString(), 'abcdef');
+  assert.ok(Math.abs(appliedMaterial.opacity - 0.6) <= 1e-6);
+  assert.equal(appliedMaterial.transparent, true);
+  assert.ok(Math.abs(appliedMaterial.roughness - 0.25) <= 1e-6);
+  assert.ok(Math.abs(appliedMaterial.metalness - 0.85) <= 1e-6);
+  assert.equal(appliedMaterial.emissive.getHexString(), '224466');
+  assert.ok(Math.abs(appliedMaterial.emissiveIntensity - 0.9) <= 1e-6);
+});

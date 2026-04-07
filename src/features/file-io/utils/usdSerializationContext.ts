@@ -26,6 +26,12 @@ export type UsdPreviewMaterialRecord = {
 
 export type UsdNumericAttribute = THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
 
+export type UsdNumericAttributeSource = {
+  array: ArrayLike<number>;
+  stride: number;
+  offset: number;
+};
+
 export type UsdMeshGeometryData = {
   triangleCount: number;
   faceVertexIndices: number[];
@@ -63,6 +69,41 @@ type CollectUsdSerializationContextOptions = {
 
 const DEFAULT_OBJECT_YIELD_INTERVAL = 8;
 const DEFAULT_VERTEX_YIELD_INTERVAL = 4096;
+
+const isDirectReadableUsdNumericArray = (
+  value: ArrayLike<number>,
+): value is Float32Array | Float64Array =>
+  value instanceof Float32Array || value instanceof Float64Array;
+
+export const getUsdNumericAttributeSource = (
+  attribute: UsdNumericAttribute,
+): UsdNumericAttributeSource | null => {
+  if (
+    attribute instanceof THREE.BufferAttribute &&
+    !attribute.normalized &&
+    isDirectReadableUsdNumericArray(attribute.array)
+  ) {
+    return {
+      array: attribute.array,
+      stride: attribute.itemSize,
+      offset: 0,
+    };
+  }
+
+  if (
+    attribute instanceof THREE.InterleavedBufferAttribute &&
+    !attribute.normalized &&
+    isDirectReadableUsdNumericArray(attribute.data.array)
+  ) {
+    return {
+      array: attribute.data.array,
+      stride: attribute.data.stride,
+      offset: attribute.offset,
+    };
+  }
+
+  return null;
+};
 
 const isExternalAssetPath = (path: string): boolean => {
   return /^(?:blob:|https?:\/\/|data:)/i.test(path);
@@ -249,14 +290,26 @@ export const extractUsdMeshGeometryData = async (
   }
 
   let signatureHash = 2166136261;
-  for (let index = 0; index < position.count; index += 1) {
-    const x = position.getX(index);
-    const y = position.getY(index);
-    const z = position.getZ(index);
-    signatureHash = hashGeometryNumber(signatureHash, x);
-    signatureHash = hashGeometryNumber(signatureHash, y);
-    signatureHash = hashGeometryNumber(signatureHash, z);
-    await yieldPeriodically(index + 1, vertexYieldInterval);
+  const positionSource = getUsdNumericAttributeSource(position);
+  if (positionSource && position.itemSize >= 3) {
+    const { array, stride, offset } = positionSource;
+    for (let index = 0; index < position.count; index += 1) {
+      const base = index * stride + offset;
+      signatureHash = hashGeometryNumber(signatureHash, Number(array[base] ?? 0));
+      signatureHash = hashGeometryNumber(signatureHash, Number(array[base + 1] ?? 0));
+      signatureHash = hashGeometryNumber(signatureHash, Number(array[base + 2] ?? 0));
+      await yieldPeriodically(index + 1, vertexYieldInterval);
+    }
+  } else {
+    for (let index = 0; index < position.count; index += 1) {
+      const x = position.getX(index);
+      const y = position.getY(index);
+      const z = position.getZ(index);
+      signatureHash = hashGeometryNumber(signatureHash, x);
+      signatureHash = hashGeometryNumber(signatureHash, y);
+      signatureHash = hashGeometryNumber(signatureHash, z);
+      await yieldPeriodically(index + 1, vertexYieldInterval);
+    }
   }
 
   const indexValues = collectUsdFaceVertexIndices(mesh, geometry, position.count);
@@ -276,16 +329,33 @@ export const extractUsdMeshGeometryData = async (
   if (uv && uv.count > 0 && faceVertexIndices.length > 0) {
     let uvSignatureHash = signatureHash;
     let hasCompleteUvCoverage = true;
-    for (let index = 0; index < faceVertexIndices.length; index += 1) {
-      const faceVertexIndex = faceVertexIndices[index];
-      if (faceVertexIndex < 0 || faceVertexIndex >= uv.count) {
-        hasCompleteUvCoverage = false;
-        break;
-      }
+    const uvSource = getUsdNumericAttributeSource(uv);
+    if (uvSource && uv.itemSize >= 2) {
+      const { array, stride, offset } = uvSource;
+      for (let index = 0; index < faceVertexIndices.length; index += 1) {
+        const faceVertexIndex = faceVertexIndices[index];
+        if (faceVertexIndex < 0 || faceVertexIndex >= uv.count) {
+          hasCompleteUvCoverage = false;
+          break;
+        }
 
-      uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getX(faceVertexIndex));
-      uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getY(faceVertexIndex));
-      await yieldPeriodically(index + 1, vertexYieldInterval);
+        const base = faceVertexIndex * stride + offset;
+        uvSignatureHash = hashGeometryNumber(uvSignatureHash, Number(array[base] ?? 0));
+        uvSignatureHash = hashGeometryNumber(uvSignatureHash, Number(array[base + 1] ?? 0));
+        await yieldPeriodically(index + 1, vertexYieldInterval);
+      }
+    } else {
+      for (let index = 0; index < faceVertexIndices.length; index += 1) {
+        const faceVertexIndex = faceVertexIndices[index];
+        if (faceVertexIndex < 0 || faceVertexIndex >= uv.count) {
+          hasCompleteUvCoverage = false;
+          break;
+        }
+
+        uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getX(faceVertexIndex));
+        uvSignatureHash = hashGeometryNumber(uvSignatureHash, uv.getY(faceVertexIndex));
+        await yieldPeriodically(index + 1, vertexYieldInterval);
+      }
     }
 
     if (hasCompleteUvCoverage) {

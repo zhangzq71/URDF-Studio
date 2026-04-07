@@ -1,9 +1,20 @@
 import * as THREE from 'three';
 import { stackCoincidentVisualRoots } from '@/core/loaders/visualMeshStacking';
 import { isImageAssetPath } from '@/core/utils/assetFileTypes';
-import { getCollisionGeometryEntries, getVisualGeometryEntries } from '@/core/robot';
-import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
+import {
+  applyVisualMaterialOverrideToObject,
+  hasExplicitGeometryMaterialOverride,
+  resolveVisualMaterialOverrideFromGeometry,
+} from '@/core/utils/visualMaterialOverrides';
+import {
+  getBoxFaceMaterialPalette,
+  getCollisionGeometryEntries,
+  hasGeometryMeshMaterialGroups,
+  getVisualGeometryEntries,
+} from '@/core/robot';
+import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import {
   GeometryType,
@@ -156,40 +167,6 @@ function createPrimitiveMaterial(color?: string): THREE.MeshStandardMaterial {
   });
 }
 
-function applyVisualColorOverrideToLoadedObject(object: THREE.Object3D, color?: string): void {
-  const parsedColor = parseThreeColorWithOpacity(color);
-  if (!parsedColor) {
-    return;
-  }
-
-  object.traverse((child) => {
-    if (!(child as THREE.Mesh).isMesh) {
-      return;
-    }
-
-    const mesh = child as THREE.Mesh;
-    const replace = (material: THREE.Material) =>
-      createMatteMaterial({
-        color: parsedColor.color,
-        opacity: parsedColor.opacity ?? material.opacity ?? 1,
-        transparent: material.transparent || (parsedColor.opacity ?? 1) < 1,
-        side: material.side,
-        map: (material as any).map || null,
-        name: material.name,
-        preserveExactColor: true,
-      });
-
-    if (Array.isArray(mesh.material)) {
-      mesh.material = mesh.material.map((material) => replace(material));
-      return;
-    }
-
-    if (mesh.material) {
-      mesh.material = replace(mesh.material);
-    }
-  });
-}
-
 function applyMeshScale(group: THREE.Object3D, geometry: RobotLink['visual']): void {
   if (geometry.type !== GeometryType.MESH) {
     return;
@@ -245,12 +222,26 @@ function createImagePreviewMesh(
 function createPrimitiveMesh(
   geometry: RobotLink['visual'],
   isCollision: boolean,
+  manager?: THREE.LoadingManager,
 ): THREE.Mesh | null {
   const dimensions = geometry.dimensions;
   const material = createPrimitiveMaterial(isCollision ? undefined : geometry.color);
+  const boxFacePalette = !isCollision ? getBoxFaceMaterialPalette(geometry) : [];
 
   if (geometry.type === GeometryType.BOX) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      boxFacePalette.length > 0
+        ? createBoxFaceMaterialArray(
+            boxFacePalette.map((entry) => entry.material),
+            {
+              fallbackColor: geometry.color,
+              manager,
+              label: 'URDFViewer:box-face-material',
+            },
+          )
+        : material,
+    );
     mesh.scale.set(dimensions.x || 0.1, dimensions.y || 0.1, dimensions.z || 0.1);
     return mesh;
   }
@@ -351,6 +342,13 @@ export async function buildRuntimeRobotFromState({
     isCollision: boolean,
   ) => {
     const group = isCollision ? new URDFCollider() : new URDFVisual();
+    const hasBoxFacePalette = !isCollision && getBoxFaceMaterialPalette(geometry).length > 0;
+    const visualMaterialOverride =
+      !isCollision && !hasBoxFacePalette
+        ? resolveVisualMaterialOverrideFromGeometry(geometry)
+        : null;
+    const hasExplicitMaterialOverride =
+      !isCollision && hasExplicitGeometryMaterialOverride(geometry);
     group.name = runtimeKey;
     group.urdfName = runtimeKey;
     group.userData.runtimeKey = runtimeKey;
@@ -375,10 +373,14 @@ export async function buildRuntimeRobotFromState({
 
           if (
             !isCollision &&
-            geometry.color &&
-            !loadedObjectShouldPreserveEmbeddedMaterials(object)
+            visualMaterialOverride &&
+            (hasExplicitMaterialOverride || !loadedObjectShouldPreserveEmbeddedMaterials(object))
           ) {
-            applyVisualColorOverrideToLoadedObject(object, geometry.color);
+            applyVisualMaterialOverrideToObject(object, visualMaterialOverride, manager);
+          }
+
+          if (!isCollision && hasGeometryMeshMaterialGroups(geometry)) {
+            applyVisualMeshMaterialGroupsToObject(object, geometry, { manager });
           }
 
           group.add(object);
@@ -389,8 +391,11 @@ export async function buildRuntimeRobotFromState({
         });
       }
     } else {
-      const primitiveMesh = createPrimitiveMesh(geometry, isCollision);
+      const primitiveMesh = createPrimitiveMesh(geometry, isCollision, manager);
       if (primitiveMesh) {
+        if (!isCollision && visualMaterialOverride) {
+          applyVisualMaterialOverrideToObject(primitiveMesh, visualMaterialOverride, manager);
+        }
         group.add(primitiveMesh);
       }
     }

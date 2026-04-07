@@ -131,3 +131,20 @@ test('createMatteMaterial derives opacity from 8-digit hex colors without changi
   assert.equal(material.transparent, true);
   assert.equal(material.toneMapped, false);
 });
+
+test('createMatteMaterial applies explicit PBR overrides over inferred presets', () => {
+  const material = createMatteMaterial({
+    color: '#8a8f96',
+    name: 'aluminum_bracket',
+    roughness: 0.9,
+    metalness: 0.2,
+    emissive: '#224466',
+    emissiveIntensity: 1.4,
+  });
+
+  assert.equal(material.userData.materialPreset, 'metal');
+  assert.equal(material.roughness, 0.9);
+  assert.equal(material.metalness, 0.2);
+  assert.ok(Math.abs(material.emissiveIntensity - 1.4) <= 1e-6);
+  assertColorClose(material.emissive, new THREE.Color('#224466'));
+});

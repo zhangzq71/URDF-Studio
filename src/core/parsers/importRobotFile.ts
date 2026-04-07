@@ -7,6 +7,7 @@ import {
 } from '@/types';
 import { parseURDF } from './urdf/parser';
 import { parseMJCF } from './mjcf/mjcfParser';
+import { syncMjcfMeshTextMaterialColors } from './mjcf/mjcfMeshTextColorSync';
 import { resolveMJCFSource } from './mjcf/mjcfSourceResolver';
 import { parseSDF } from './sdf/sdfParser';
 import { processXacro } from './xacro/xacroParser';
@@ -139,16 +140,20 @@ function createReadyImportResult(
   options: {
     sourceFilePath?: string;
     resolvedUrdfContent?: string | null;
+    allFileContents?: Record<string, string>;
   } = {},
 ): RobotImportResult {
-  const { sourceFilePath = file.name, resolvedUrdfContent = null } = options;
+  const { sourceFilePath = file.name, resolvedUrdfContent = null, allFileContents = {} } = options;
+  const rewrittenRobotData = rewriteRobotMeshPathsForSource(robotData, sourceFilePath);
+  const mjcfMeshColorSyncedRobotData =
+    file.format === 'mjcf'
+      ? syncMjcfMeshTextMaterialColors(rewrittenRobotData, allFileContents)
+      : rewrittenRobotData;
 
   return {
     status: 'ready',
     format: file.format,
-    robotData: syncRobotVisualColorsFromMaterials(
-      rewriteRobotMeshPathsForSource(robotData, sourceFilePath),
-    ),
+    robotData: syncRobotVisualColorsFromMaterials(mjcfMeshColorSyncedRobotData),
     resolvedUrdfContent,
     resolvedUrdfSourceFilePath: resolvedUrdfContent ? sourceFilePath : null,
   };
@@ -391,7 +396,10 @@ export function resolveRobotFileData(
 
         const parsed = parseMJCF(resolved.content);
         return parsed
-          ? createReadyImportResult(file, toRobotData(parsed))
+          ? createReadyImportResult(file, toRobotData(parsed), {
+              sourceFilePath: resolved.sourceFile.name,
+              allFileContents,
+            })
           : createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
       }
       case 'sdf': {
@@ -454,6 +462,12 @@ export function resolveRobotFileData(
       }
       case 'mesh':
         return createReadyImportResult(file, createMeshRobotData(file));
+      case 'asset':
+        return createErrorImportResult(
+          file,
+          'unsupported_format',
+          buildImportFailureMessage(file, 'Generic asset files are stored in the library only.'),
+        );
       default:
         return createErrorImportResult(
           file,

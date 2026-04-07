@@ -3,11 +3,46 @@ import { URDFJoint as RuntimeURDFJoint } from '@/core/parsers/urdf/loader';
 import type { JointPatchCandidate } from './robotLoaderDiff';
 import { applyOriginToJoint } from './robotLoaderPatchUtils';
 
-function applyJointPatch(
-  joint: RuntimeURDFJoint,
-  patch: JointPatchCandidate,
-): void {
-  const currentValues = Array.isArray(joint.jointValue) ? [...joint.jointValue] : [];
+function getCurrentJointValues(joint: RuntimeURDFJoint): number[] {
+  const jointValue = (
+    joint as RuntimeURDFJoint & {
+      jointValue?: unknown;
+      angle?: number;
+    }
+  ).jointValue;
+
+  if (Array.isArray(jointValue)) {
+    return jointValue.filter((value): value is number => typeof value === 'number');
+  }
+
+  if (typeof jointValue === 'number') {
+    return [jointValue];
+  }
+
+  if (typeof (joint as RuntimeURDFJoint & { angle?: number }).angle === 'number') {
+    return [(joint as RuntimeURDFJoint & { angle?: number }).angle as number];
+  }
+
+  return [];
+}
+
+function applyJointPatch(joint: RuntimeURDFJoint, patch: JointPatchCandidate): void {
+  const currentValues = getCurrentJointValues(joint);
+  const jointWithMutableState = joint as RuntimeURDFJoint & {
+    axis?: THREE.Vector3;
+    angle?: number;
+    ignoreLimits?: boolean;
+    limit?: {
+      lower: number;
+      upper: number;
+      effort?: number;
+      velocity?: number;
+    };
+  };
+  const jointAxis = jointWithMutableState.axis ?? new THREE.Vector3(1, 0, 0);
+  jointWithMutableState.axis = jointAxis;
+  const jointLimit =
+    jointWithMutableState.limit ?? (jointWithMutableState.limit = { lower: 0, upper: 0 });
 
   joint.jointType = patch.jointData.type as RuntimeURDFJoint['jointType'];
   applyOriginToJoint(joint, patch.jointData.origin);
@@ -15,30 +50,29 @@ function applyJointPatch(
   joint.origQuaternion = joint.quaternion.clone();
 
   const axis = patch.jointData.axis;
-  const axisLengthSq = axis
-    ? axis.x * axis.x + axis.y * axis.y + axis.z * axis.z
-    : 0;
+  const axisLengthSq = axis ? axis.x * axis.x + axis.y * axis.y + axis.z * axis.z : 0;
   if (axisLengthSq > 0) {
-    joint.axis.set(axis.x, axis.y, axis.z).normalize();
+    jointAxis.set(axis.x, axis.y, axis.z).normalize();
   } else if (joint.jointType === 'planar') {
-    joint.axis.set(0, 0, 1);
+    jointAxis.set(0, 0, 1);
   } else {
-    joint.axis.set(1, 0, 0);
+    jointAxis.set(1, 0, 0);
   }
 
   const nextLimit = patch.jointData.limit;
   if (nextLimit) {
-    joint.limit.lower = nextLimit.lower;
-    joint.limit.upper = nextLimit.upper;
-    joint.limit.effort = nextLimit.effort;
-    joint.limit.velocity = nextLimit.velocity;
-    joint.ignoreLimits = false;
+    jointLimit.lower = nextLimit.lower;
+    jointLimit.upper = nextLimit.upper;
+    jointLimit.effort = nextLimit.effort;
+    jointLimit.velocity = nextLimit.velocity;
+    jointWithMutableState.ignoreLimits = false;
   } else {
-    joint.limit.lower = 0;
-    joint.limit.upper = 0;
-    delete joint.limit.effort;
-    delete joint.limit.velocity;
-    joint.ignoreLimits = joint.jointType === 'revolute' || joint.jointType === 'prismatic';
+    jointLimit.lower = 0;
+    jointLimit.upper = 0;
+    delete jointLimit.effort;
+    delete jointLimit.velocity;
+    jointWithMutableState.ignoreLimits =
+      joint.jointType === 'revolute' || joint.jointType === 'prismatic';
   }
 
   switch (joint.jointType) {
@@ -54,11 +88,7 @@ function applyJointPatch(
       joint.setJointValue(currentValues[0] ?? 0);
       break;
     case 'planar':
-      joint.setJointValue(
-        currentValues[0] ?? 0,
-        currentValues[1] ?? 0,
-        currentValues[2] ?? 0,
-      );
+      joint.setJointValue(currentValues[0] ?? 0, currentValues[1] ?? 0, currentValues[2] ?? 0);
       break;
     case 'floating':
       joint.setJointValue(

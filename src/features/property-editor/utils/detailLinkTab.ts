@@ -9,11 +9,15 @@ export function resolveDetailLinkTabAfterViewerMeshSelect(
   // property panel follows the user's explicit target across all app modes.
   void mode;
   void currentTab;
+
   return objectType;
 }
 
 export function resolveDetailLinkTabAfterGeometrySelection(
   subType: 'visual' | 'collision',
+  currentTab: DetailLinkTab,
 ): DetailLinkTab {
+  void currentTab;
+
   return subType;
 }

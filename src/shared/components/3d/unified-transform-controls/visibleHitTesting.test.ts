@@ -21,6 +21,7 @@ function createControls() {
       userData: {} as {
         urdfLastVisibleAxisHit?: VisibleAxisCacheEntry;
         urdfVisiblePointerDownFallbackPatched?: boolean;
+        urdfUseVisibleHitFallback?: boolean;
       },
       pointerDown: (_pointer?: { x: number; y: number; button?: number }) => {
         pointerDownCalls += 1;
@@ -32,6 +33,7 @@ function createControls() {
 
 test('patchVisiblePointerDownFallback reuses the cached axis when the pointer position matches', () => {
   const { controls, getPointerDownCalls } = createControls();
+  controls.userData.urdfUseVisibleHitFallback = true;
   controls.userData.urdfLastVisibleAxisHit = {
     axis: 'X',
     x: 0.25,
@@ -47,6 +49,7 @@ test('patchVisiblePointerDownFallback reuses the cached axis when the pointer po
 
 test('patchVisiblePointerDownFallback invalidates the cached axis after the pointer moves', () => {
   const { controls, getPointerDownCalls } = createControls();
+  controls.userData.urdfUseVisibleHitFallback = true;
   controls.userData.urdfLastVisibleAxisHit = {
     axis: 'Y',
     x: 0.1,
@@ -58,4 +61,15 @@ test('patchVisiblePointerDownFallback invalidates the cached axis after the poin
 
   assert.equal(controls.axis, null);
   assert.equal(getPointerDownCalls(), 0);
+});
+
+test('patchVisiblePointerDownFallback preserves stock gizmo pointerDown behavior when fallback is disabled', () => {
+  const { controls, getPointerDownCalls } = createControls();
+  controls.userData.urdfUseVisibleHitFallback = false;
+
+  patchVisiblePointerDownFallback(controls);
+  controls.pointerDown({ x: 0.5, y: 0.5, button: 0 });
+
+  assert.equal(controls.axis, null);
+  assert.equal(getPointerDownCalls(), 1);
 });

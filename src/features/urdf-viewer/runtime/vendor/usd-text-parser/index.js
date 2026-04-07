@@ -361,6 +361,8 @@ export function extractJointRecordsFromLayerText(layerText) {
         const axisToken = normalizeAxisToken(body.match(/physics:axis\s*=\s*"?([A-Za-z]+)"?/i)?.[1] || "X");
         const lowerLimitDeg = toFiniteNumberLocal(body.match(/physics:lowerLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
         const upperLimitDeg = toFiniteNumberLocal(body.match(/physics:upperLimit\s*=\s*([-+0-9.eE]+)/i)?.[1]);
+        const driveDamping = toFiniteNumberLocal(body.match(/drive:[A-Za-z0-9_]+:physics:damping\s*=\s*([-+0-9.eE]+)/i)?.[1]);
+        const driveMaxForce = toFiniteNumberLocal(body.match(/drive:[A-Za-z0-9_]+:physics:maxForce\s*=\s*([-+0-9.eE]+)/i)?.[1]);
         const axisLocal = parseVector3FromTupleLiteral(body.match(/urdf:axisLocal\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         const closedLoopId = String(body.match(/urdf:closedLoopId\s*=\s*"([^"]+)"/i)?.[1] || "").trim();
         const closedLoopType = String(body.match(/urdf:closedLoopType\s*=\s*"([^"]+)"/i)?.[1] || "").trim();
@@ -382,6 +384,8 @@ export function extractJointRecordsFromLayerText(layerText) {
             axisLocal,
             lowerLimitDeg: lowerLimitDeg === undefined ? null : lowerLimitDeg,
             upperLimitDeg: upperLimitDeg === undefined ? null : upperLimitDeg,
+            driveDamping: driveDamping === undefined ? null : driveDamping,
+            driveMaxForce: driveMaxForce === undefined ? null : driveMaxForce,
             closedLoopId: closedLoopId || null,
             closedLoopType: closedLoopType || null,
             originXyz,

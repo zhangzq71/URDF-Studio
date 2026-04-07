@@ -5,6 +5,7 @@ export interface GeometryPatchCandidate {
   previousLinkData: UrdfLink;
   linkData: UrdfLink;
   visualChanged: boolean;
+  visualBodiesChanged: boolean;
   collisionChanged: boolean;
   collisionBodiesChanged: boolean;
   inertialChanged: boolean;
@@ -22,6 +23,53 @@ export const DEFAULT_RPY = { r: 0, p: 0, y: 0 };
 
 export function sameVisibleFlag(a: boolean | undefined, b: boolean | undefined): boolean {
   return (a ?? true) === (b ?? true);
+}
+
+function normalizeMaterialField(value: string | undefined): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function sameAuthoredMaterials(
+  a: LinkGeometry['authoredMaterials'] | undefined,
+  b: LinkGeometry['authoredMaterials'] | undefined,
+): boolean {
+  const left = a || [];
+  const right = b || [];
+
+  return (
+    left.length === right.length &&
+    left.every((material, index) => {
+      const target = right[index];
+      return (
+        normalizeMaterialField(material?.name) === normalizeMaterialField(target?.name) &&
+        normalizeMaterialField(material?.color) === normalizeMaterialField(target?.color) &&
+        normalizeMaterialField(material?.texture) === normalizeMaterialField(target?.texture)
+      );
+    })
+  );
+}
+
+function sameMeshMaterialGroups(
+  a: LinkGeometry['meshMaterialGroups'] | undefined,
+  b: LinkGeometry['meshMaterialGroups'] | undefined,
+): boolean {
+  const left = a || [];
+  const right = b || [];
+
+  return (
+    left.length === right.length &&
+    left.every((group, index) => {
+      const target = right[index];
+      return (
+        String(group?.meshKey || '').trim() === String(target?.meshKey || '').trim() &&
+        Number(group?.start) === Number(target?.start) &&
+        Number(group?.count) === Number(target?.count) &&
+        Number(group?.materialIndex) === Number(target?.materialIndex)
+      );
+    })
+  );
 }
 
 export function sameVec3(
@@ -62,6 +110,8 @@ export function sameGeometry(a: LinkGeometry | undefined, b: LinkGeometry | unde
     sameOrigin(a.origin, b.origin) &&
     (a.meshPath || '') === (b.meshPath || '') &&
     (a.color || '') === (b.color || '') &&
+    sameAuthoredMaterials(a.authoredMaterials, b.authoredMaterials) &&
+    sameMeshMaterialGroups(a.meshMaterialGroups, b.meshMaterialGroups) &&
     sameVisibleFlag(a.visible, b.visible)
   );
 }
@@ -101,6 +151,7 @@ function isSameLink(prev: UrdfLink, next: UrdfLink): boolean {
     prev.visible === next.visible &&
     sameInertial(prev.inertial, next.inertial) &&
     sameGeometry(prev.visual, next.visual) &&
+    sameGeometryList(prev.visualBodies, next.visualBodies) &&
     sameGeometry(prev.collision, next.collision) &&
     sameGeometryList(prev.collisionBodies, next.collisionBodies)
   );
@@ -116,11 +167,13 @@ function getGeometryPatchForLink(prev: UrdfLink, next: UrdfLink): GeometryPatchC
   const inertialChanged = !sameInertial(prev.inertial, next.inertial);
   const visibilityChanged = prev.visible !== next.visible;
   const visualChanged = !sameGeometry(prev.visual, next.visual);
+  const visualBodiesChanged = !sameGeometryList(prev.visualBodies, next.visualBodies);
   const collisionChanged = !sameGeometry(prev.collision, next.collision);
   const collisionBodiesChanged = !sameGeometryList(prev.collisionBodies, next.collisionBodies);
 
   if (
     !visualChanged &&
+    !visualBodiesChanged &&
     !collisionChanged &&
     !collisionBodiesChanged &&
     !inertialChanged &&
@@ -134,6 +187,7 @@ function getGeometryPatchForLink(prev: UrdfLink, next: UrdfLink): GeometryPatchC
     previousLinkData: prev,
     linkData: next,
     visualChanged,
+    visualBodiesChanged,
     collisionChanged,
     collisionBodiesChanged,
     inertialChanged,

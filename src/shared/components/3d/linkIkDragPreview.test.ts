@@ -5,6 +5,9 @@ import * as THREE from 'three';
 
 import {
   LINK_IK_COMMIT_EPSILON,
+  LINK_IK_PREVIEW_COORDINATE_PAIR_MAX_DISTANCE,
+  LINK_IK_PREVIEW_MAX_ANGLE_STEP,
+  LINK_IK_PREVIEW_MAX_QUATERNION_STEP_RADIANS,
   LINK_IK_PREVIEW_MAX_ITERATIONS,
   LINK_IK_PREVIEW_COMMIT_EPSILON,
   LINK_IK_PREVIEW_POSITION_TOLERANCE,
@@ -14,8 +17,10 @@ import {
   diffLinkIkDragKinematicState,
   hasMeaningfulLinkIkTargetDelta,
   hasLinkIkKinematicStateChanges,
+  limitLinkIkPreviewKinematicStateStep,
   resolveLinkIkCommittedStateEpsilon,
   resolveLinkIkSolveRequestOptions,
+  shouldAcceptLinkIkSolveState,
   shouldScheduleLinkIkPreviewSolve,
 } from './linkIkDragPreview.ts';
 
@@ -90,6 +95,7 @@ test('shouldScheduleLinkIkPreviewSolve only queues genuinely new moved targets o
 
 test('resolveLinkIkSolveRequestOptions lowers preview solve budget only during drag preview', () => {
   assert.deepEqual(resolveLinkIkSolveRequestOptions(true), {
+    coordinatePairMaxDistance: LINK_IK_PREVIEW_COORDINATE_PAIR_MAX_DISTANCE,
     maxIterations: LINK_IK_PREVIEW_MAX_ITERATIONS,
     positionTolerance: LINK_IK_PREVIEW_POSITION_TOLERANCE,
     stallTolerance: LINK_IK_PREVIEW_STALL_TOLERANCE,
@@ -136,4 +142,97 @@ test('drag preview state helpers clone and report state changes safely', () => {
 
   assert.equal(hasLinkIkKinematicStateChanges(clonedState), true);
   assert.equal(clonedState.angles.joint1, 0.25);
+});
+
+test('limitLinkIkPreviewKinematicStateStep caps abrupt preview jumps', () => {
+  const nextQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.4);
+  const limitedState = limitLinkIkPreviewKinematicStateStep(
+    {
+      angles: { joint1: 0 },
+      quaternions: { joint2: { x: 0, y: 0, z: 0, w: 1 } },
+    },
+    {
+      angles: { joint1: 0.4 },
+      quaternions: {
+        joint2: {
+          x: nextQuaternion.x,
+          y: nextQuaternion.y,
+          z: nextQuaternion.z,
+          w: nextQuaternion.w,
+        },
+      },
+    },
+  );
+
+  assert.ok(Math.abs(limitedState.angles.joint1 - LINK_IK_PREVIEW_MAX_ANGLE_STEP) < 1e-9);
+
+  const limitedQuaternion = new THREE.Quaternion(
+    limitedState.quaternions.joint2.x,
+    limitedState.quaternions.joint2.y,
+    limitedState.quaternions.joint2.z,
+    limitedState.quaternions.joint2.w,
+  );
+  const limitedAngle = 2 * Math.acos(Math.min(1, Math.abs(limitedQuaternion.w)));
+  assert.ok(
+    Math.abs(limitedAngle - LINK_IK_PREVIEW_MAX_QUATERNION_STEP_RADIANS) < 1e-6,
+    `expected quaternion step to be capped at ${LINK_IK_PREVIEW_MAX_QUATERNION_STEP_RADIANS}, got ${limitedAngle}`,
+  );
+});
+
+test('limitLinkIkPreviewKinematicStateStep treats opposite-sign quaternions as the same orientation', () => {
+  const limitedState = limitLinkIkPreviewKinematicStateStep(
+    {
+      quaternions: { joint1: { x: 0, y: 0, z: 0, w: 1 } },
+    },
+    {
+      quaternions: { joint1: { x: 0, y: 0, z: 0, w: -1 } },
+    },
+  );
+
+  assert.ok(Math.abs(limitedState.quaternions.joint1.x) < 1e-12);
+  assert.ok(Math.abs(limitedState.quaternions.joint1.y) < 1e-12);
+  assert.ok(Math.abs(limitedState.quaternions.joint1.z) < 1e-12);
+  assert.equal(limitedState.quaternions.joint1.w, 1);
+});
+
+test('shouldAcceptLinkIkSolveState rejects stalled seed echoes but keeps stalled progress', () => {
+  const emptyState = createEmptyLinkIkDragKinematicState();
+  const seededState = cloneLinkIkDragKinematicState({
+    angles: { joint1: 0.12, joint2: -0.04 },
+  });
+
+  assert.equal(
+    shouldAcceptLinkIkSolveState({
+      seedState: emptyState,
+      nextState: emptyState,
+      preview: true,
+      converged: false,
+      failureReason: 'stalled',
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldAcceptLinkIkSolveState({
+      seedState: seededState,
+      nextState: cloneLinkIkDragKinematicState(seededState),
+      preview: true,
+      converged: false,
+      failureReason: 'stalled',
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldAcceptLinkIkSolveState({
+      seedState: seededState,
+      nextState: cloneLinkIkDragKinematicState({
+        angles: { joint1: 0.17, joint2: -0.04 },
+      }),
+      preview: true,
+      converged: false,
+      failureReason: 'stalled',
+    }),
+    true,
+  );
 });

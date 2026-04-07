@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-import { getCollisionGeometryEntries, getVisualGeometryEntries } from '@/core/robot';
+import {
+  getCollisionGeometryEntries,
+  getVisualGeometryEntries,
+  resolveVisualMaterialOverride,
+} from '@/core/robot';
 import {
   MAX_GEOMETRY_DIMENSION_DECIMALS,
   MAX_PROPERTY_DECIMALS,
@@ -16,7 +20,7 @@ import {
   type UrdfVisual,
   type Vector3,
 } from '@/types';
-import { normalizeMeshPathForExport } from '../meshPathUtils';
+import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '../meshPathUtils';
 
 export interface GenerateSDFOptions {
   packageName?: string;
@@ -130,25 +134,49 @@ function hexToRgba(hex?: string): string | null {
   return `${r} ${g} ${b} ${a}`;
 }
 
-function resolveVisualColor(
+function resolveVisualMaterialState(
   robot: RobotState,
   link: UrdfLink,
   visual: UrdfVisual,
   isPrimaryVisual: boolean,
-): string | undefined {
-  if (visual.color) {
-    return visual.color;
+): { color?: string; texture?: string } {
+  const resolvedMaterial = resolveVisualMaterialOverride(robot, link, visual, {
+    isPrimaryVisual,
+  });
+
+  if (resolvedMaterial.source === 'authored') {
+    return {
+      color:
+        resolvedMaterial.color ||
+        (resolvedMaterial.texture ? '#ffffff' : undefined) ||
+        visual.color ||
+        undefined,
+      texture: resolvedMaterial.texture,
+    };
   }
 
-  if (!isPrimaryVisual) {
-    return visual.authoredMaterials?.find((material) => material.color)?.color;
+  if (resolvedMaterial.source === 'legacy-link') {
+    return {
+      color:
+        resolvedMaterial.color ||
+        (resolvedMaterial.texture ? '#ffffff' : undefined) ||
+        visual.color ||
+        undefined,
+      texture: resolvedMaterial.texture,
+    };
   }
 
-  return (
-    robot.materials?.[link.id]?.color ||
-    robot.materials?.[link.name]?.color ||
-    visual.authoredMaterials?.find((material) => material.color)?.color
+  const inlineAuthoredMaterial = visual.authoredMaterials?.find(
+    (material) => material.color || material.texture,
   );
+  return {
+    color:
+      visual.color ||
+      inlineAuthoredMaterial?.color ||
+      (inlineAuthoredMaterial?.texture ? '#ffffff' : undefined) ||
+      undefined,
+    texture: inlineAuthoredMaterial?.texture,
+  };
 }
 
 function buildMeshUri(meshPath: string, packageName: string): string {
@@ -226,18 +254,42 @@ function generateGeometryXml(geometry: UrdfVisual, packageName: string): string 
   return ['        <geometry>', '          <empty/>', '        </geometry>'].join('\n');
 }
 
-function generateMaterialXml(color?: string): string {
-  const rgba = hexToRgba(color);
-  if (!rgba) {
+function buildTextureUri(texturePath: string, packageName: string): string {
+  if (isExternalAssetPath(texturePath)) {
+    return texturePath;
+  }
+
+  const exportPath = normalizeTexturePathForExport(texturePath) || texturePath.replace(/\\/g, '/');
+  return `model://${packageName}/textures/${exportPath}`;
+}
+
+function generateMaterialXml(
+  materialState: { color?: string; texture?: string },
+  packageName: string,
+): string {
+  const resolvedColor = materialState.color || (materialState.texture ? '#ffffff' : undefined);
+  const rgba = hexToRgba(resolvedColor);
+  if (!rgba && !materialState.texture) {
     return '';
   }
 
-  return [
-    '        <material>',
-    `          <ambient>${rgba}</ambient>`,
-    `          <diffuse>${rgba}</diffuse>`,
-    '        </material>',
-  ].join('\n');
+  const lines = ['        <material>'];
+  if (rgba) {
+    lines.push(`          <ambient>${rgba}</ambient>`, `          <diffuse>${rgba}</diffuse>`);
+  }
+
+  if (materialState.texture) {
+    lines.push(
+      '          <pbr>',
+      '            <metal>',
+      `              <albedo_map>${escapeXml(buildTextureUri(materialState.texture, packageName))}</albedo_map>`,
+      '            </metal>',
+      '          </pbr>',
+    );
+  }
+
+  lines.push('        </material>');
+  return lines.join('\n');
 }
 
 function generateVisualXml(
@@ -254,7 +306,10 @@ function generateVisualXml(
   }
   lines.push(generateGeometryXml(visual, packageName));
 
-  const materialXml = generateMaterialXml(resolveVisualColor(robot, link, visual, isPrimaryVisual));
+  const materialXml = generateMaterialXml(
+    resolveVisualMaterialState(robot, link, visual, isPrimaryVisual),
+    packageName,
+  );
   if (materialXml) {
     lines.push(materialXml);
   }
@@ -369,6 +424,12 @@ function buildLinkWorldMatrices(robot: RobotState): Map<string, THREE.Matrix4> {
 }
 
 function generateJointXml(joint: UrdfJoint): string {
+  if (joint.type === JointType.FLOATING) {
+    throw new Error(
+      `[SDF export] Joint "${joint.name || joint.id}" uses unsupported floating type.`,
+    );
+  }
+
   const lines = [
     `    <joint name="${escapeXml(joint.name || joint.id)}" type="${escapeXml(joint.type)}">`,
   ];

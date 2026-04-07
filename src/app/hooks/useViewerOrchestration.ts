@@ -6,7 +6,7 @@ import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import {
   resolveDetailLinkTabAfterGeometrySelection,
   resolveDetailLinkTabAfterViewerMeshSelect,
-} from '@/features/property-editor';
+} from '@/features/property-editor/utils';
 
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;
@@ -92,7 +92,7 @@ export function useViewerOrchestration({
   );
 
   const handleSelectGeometry = useCallback(
-    (linkId: string, subType: 'visual' | 'collision', objectIndex = 0) => {
+    (linkId: string, subType: 'visual' | 'collision', objectIndex = 0, suppressPulse = false) => {
       if (transformPendingRef.current) return;
       const nextSelection = { type: 'link' as const, id: linkId, subType, objectIndex };
       if (!isInteractionAllowed(nextSelection)) {
@@ -100,13 +100,16 @@ export function useViewerOrchestration({
       }
 
       setSelection(nextSelection);
+      if (!suppressPulse) {
+        pulseSelection(nextSelection);
+      }
       const uiState = useUIStore.getState();
-      const nextTab = resolveDetailLinkTabAfterGeometrySelection(subType);
+      const nextTab = resolveDetailLinkTabAfterGeometrySelection(subType, uiState.detailLinkTab);
       if (uiState.detailLinkTab !== nextTab) {
         uiState.setDetailLinkTab(nextTab);
       }
     },
-    [isInteractionAllowed, setSelection, transformPendingRef],
+    [isInteractionAllowed, pulseSelection, setSelection, transformPendingRef],
   );
 
   const handleViewerSelect = useCallback(

@@ -10,6 +10,10 @@ import {
   type PickTargetMode,
 } from '../utils/pickTargets';
 import { resolveTopLayerInteractionSubType } from '../utils/interactionMode';
+import {
+  getSyntheticGeomParentName,
+  resolveRuntimeGeometryRoot,
+} from '../utils/runtimeGeometrySelection';
 
 export interface UseHighlightManagerOptions {
   robot: THREE.Object3D | null;
@@ -276,7 +280,7 @@ export function useHighlightManager({
     (mesh: THREE.Mesh): HighlightedMeshSnapshot => {
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
 
-      return {
+      const snapshot = {
         material: mesh.material,
         renderOrder: mesh.renderOrder,
         materialStates: materials.map((material) => ({
@@ -296,6 +300,9 @@ export function useHighlightManager({
         })),
         activeRole: null,
       };
+
+      mesh.userData.__urdfHighlightSnapshot = snapshot;
+      return snapshot;
     },
     [],
   );
@@ -347,6 +354,7 @@ export function useHighlightManager({
         material.needsUpdate = true;
       });
       snapshot.activeRole = null;
+      delete mesh.userData.__urdfHighlightSnapshot;
     },
     [disposeHighlightOverrideMaterials],
   );
@@ -484,13 +492,19 @@ export function useHighlightManager({
         // PERFORMANCE: Use pre-built linkMeshMap for O(1) lookup
         if (linkName) {
           if (typeof meshToHighlight === 'number') {
-            const linkObj = (robot as any).links?.[linkName];
+            const runtimeLinkCandidates = [linkName, getSyntheticGeomParentName(linkName)].filter(
+              (candidate): candidate is string => Boolean(candidate),
+            );
+            const linkObj = runtimeLinkCandidates
+              .map((candidate) => (robot as any).links?.[candidate] as THREE.Object3D | undefined)
+              .find((candidate): candidate is THREE.Object3D => Boolean(candidate));
             if (linkObj) {
-              const isCollision = targetSubType === 'collision';
-              const siblings = linkObj.children.filter((c: any) =>
-                isCollision ? c.isURDFCollider : c.isURDFVisual,
+              const targetGroup = resolveRuntimeGeometryRoot(
+                linkObj,
+                linkName,
+                targetSubType,
+                meshToHighlight,
               );
-              const targetGroup = siblings[meshToHighlight];
               if (targetGroup) {
                 targetGroup.traverse((c: any) => {
                   if (c.isMesh && !c.userData?.isGizmo) {

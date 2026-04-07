@@ -11,7 +11,9 @@ import {
   createMeshLoader,
   markMaterialAsCoplanarOffset,
 } from '@/core/loaders';
+import { resolveRuntimeMeshMaterialGroupKey } from '@/core/utils/meshMaterialGroups';
 import { DEFAULT_LINK, GeometryType, type RobotState } from '@/types';
+import { disposeObject3D } from '@/shared/utils/three/dispose';
 
 import { __mjcfMeshExportInternals, prepareMjcfMeshExportAssets } from './mjcfMeshExport';
 
@@ -756,6 +758,81 @@ test('prepareMjcfMeshExportAssets reuses identical native OBJ meshes from extrac
   assert.equal(prepared.convertedSourceMeshPaths.has(leftPath), false);
   assert.equal(prepared.convertedSourceMeshPaths.has(rearPath), true);
   assert.equal(prepared.archiveFiles.size, 0);
+});
+
+test('prepareMjcfMeshExportAssets exports visual variants for native OBJ face-material groups', async () => {
+  const meshPath = 'paint/native-square.obj';
+  const objContent = [
+    'o native_square',
+    'v 0 0 0',
+    'v 1 0 0',
+    'v 1 1 0',
+    'v 0 1 0',
+    'f 1 2 3',
+    'f 1 3 4',
+    '',
+  ].join('\n');
+  const assets = {
+    [meshPath]: `data:text/plain;base64,${Buffer.from(objContent).toString('base64')}`,
+  };
+  const robot: RobotState = {
+    name: 'native-obj-face-groups',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          meshPath,
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const referenceObject = await loadReferenceMeshObject(meshPath, assets, robot);
+  let referenceMesh: THREE.Mesh | null = null;
+  referenceObject.traverse((child) => {
+    if (!referenceMesh && (child as THREE.Mesh).isMesh) {
+      referenceMesh = child as THREE.Mesh;
+    }
+  });
+  assert.ok(referenceMesh, 'expected native OBJ fixture to load a mesh');
+  const meshKey = resolveRuntimeMeshMaterialGroupKey(referenceMesh!, referenceObject);
+  disposeObject3D(referenceObject, true);
+
+  robot.links.base_link.visual = {
+    ...robot.links.base_link.visual,
+    authoredMaterials: [
+      { name: 'base', color: '#808080' },
+      { name: 'paint_slot_1', color: '#ff5500' },
+    ],
+    meshMaterialGroups: [
+      { meshKey, start: 0, count: 3, materialIndex: 1 },
+      { meshKey, start: 3, count: 3, materialIndex: 0 },
+    ],
+  };
+
+  const prepared = await prepareMjcfMeshExportAssets({
+    robot,
+    assets,
+  });
+  const variants = prepared.visualMeshVariants.get(meshPath);
+
+  assert.ok(variants, 'expected face-material groups to create visual mesh variants');
+  assert.equal(variants?.length, 2);
+  assert.equal(prepared.archiveFiles.size, 2);
+  assert.equal(prepared.convertedSourceMeshPaths.has(meshPath), true);
 });
 
 test('prepareMjcfMeshExportAssets can disable native OBJ sharing when requested', async () => {

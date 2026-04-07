@@ -260,6 +260,6 @@ export interface AssemblyState {
 export interface RobotFile {
   name: string;
   content: string;
-  format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh';
+  format: 'urdf' | 'mjcf' | 'usd' | 'xacro' | 'sdf' | 'mesh' | 'asset';
   blobUrl?: string;
 }

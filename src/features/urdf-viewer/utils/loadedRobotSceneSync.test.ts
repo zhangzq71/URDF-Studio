@@ -26,6 +26,24 @@ function toLinearTuple(r: number, g: number, b: number): number[] {
     .map((value) => Number(value.toFixed(4)));
 }
 
+function createMjcfVisualRoot(
+  name: string,
+  color: string,
+  visualOrder: number,
+): { visual: URDFVisual; mesh: THREE.Mesh } {
+  const visual = new URDFVisual();
+  visual.name = name;
+  visual.userData.visualOrder = visualOrder;
+
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name, color: new THREE.Color(color) }),
+  );
+  visual.add(mesh);
+
+  return { visual, mesh };
+}
+
 test('syncLoadedRobotScene upgrades late URDF visual meshes to shared matte materials', () => {
   const urdfMaterials = parseURDFMaterials(`<?xml version="1.0"?>
 <robot name="demo">
@@ -317,6 +335,206 @@ test('syncLoadedRobotScene maps folded MJCF visual meshes onto semantic syntheti
   assert.equal(mainMesh.userData.parentLinkName, 'base_link');
   assert.equal(attachmentMesh.userData.parentLinkName, 'base_link_geom_1');
   assert.equal(attachmentMesh.userData.runtimeParentLinkName, 'base_link');
+});
+
+test('syncLoadedRobotScene prefers MJCF visualOrder over traversal order for folded synthetic links', () => {
+  const robot = new THREE.Group();
+  const headLink = new URDFLink();
+  headLink.name = 'head';
+
+  const tooth = createMjcfVisualRoot('tooth_visual', '#ffffff', 5);
+  const nose = createMjcfVisualRoot('nose_visual', '#ffb333', 4);
+  const head = createMjcfVisualRoot('head_visual', '#8c9ebf', 0);
+  const eyebrow = createMjcfVisualRoot('eyebrow_visual', '#736b59', 1);
+  const hair = createMjcfVisualRoot('hair_visual', '#736b59', 2);
+  const face = createMjcfVisualRoot('face_visual', '#ffffff', 3);
+
+  // Intentionally scramble runtime child order to match the xuebao regression shape.
+  headLink.add(tooth.visual, nose.visual, head.visual, eyebrow.visual, hair.visual, face.visual);
+  robot.add(headLink);
+  (robot as any).links = { head: headLink };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+    robotLinks: {
+      head: {
+        ...DEFAULT_LINK,
+        id: 'head',
+        name: 'head',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_1: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_1',
+        name: 'head_geom_1',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_2: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_2',
+        name: 'head_geom_2',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_3: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_3',
+        name: 'head_geom_3',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_4: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_4',
+        name: 'head_geom_4',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_5: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_5',
+        name: 'head_geom_5',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+    },
+  });
+
+  assert.equal(result.linkMeshMap.get('head:visual')?.includes(head.mesh), true);
+  assert.equal(result.linkMeshMap.get('head_geom_1:visual')?.includes(eyebrow.mesh), true);
+  assert.equal(result.linkMeshMap.get('head_geom_2:visual')?.includes(hair.mesh), true);
+  assert.equal(result.linkMeshMap.get('head_geom_3:visual')?.includes(face.mesh), true);
+  assert.equal(result.linkMeshMap.get('head_geom_4:visual')?.includes(nose.mesh), true);
+  assert.equal(result.linkMeshMap.get('head_geom_5:visual')?.includes(tooth.mesh), true);
+  assert.equal(head.mesh.userData.parentLinkName, 'head');
+  assert.equal(eyebrow.mesh.userData.parentLinkName, 'head_geom_1');
+  assert.equal(hair.mesh.userData.parentLinkName, 'head_geom_2');
+  assert.equal(face.mesh.userData.parentLinkName, 'head_geom_3');
+  assert.equal(nose.mesh.userData.parentLinkName, 'head_geom_4');
+  assert.equal(tooth.mesh.userData.parentLinkName, 'head_geom_5');
+});
+
+test('syncLoadedRobotScene normalizes non-zero MJCF visualOrder offsets before mapping synthetic links', () => {
+  const robot = new THREE.Group();
+  const headLink = new URDFLink();
+  headLink.name = 'head';
+
+  const head = createMjcfVisualRoot('head_visual', '#8c9ebf', 4);
+  const eyebrow = createMjcfVisualRoot('eyebrow_visual', '#736b59', 5);
+  const hair = createMjcfVisualRoot('hair_visual', '#736b59', 6);
+  const face = createMjcfVisualRoot('face_visual', '#ffffff', 7);
+  const nose = createMjcfVisualRoot('nose_visual', '#ffb333', 8);
+  const tooth = createMjcfVisualRoot('tooth_visual', '#ffffff', 9);
+
+  const hiddenOffsetGroup = new THREE.Group();
+  hiddenOffsetGroup.name = 'head_geom_offset';
+  const hiddenHelperMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshPhongMaterial({ name: 'hidden_helper', color: new THREE.Color('#222222') }),
+  );
+  hiddenOffsetGroup.add(hiddenHelperMesh);
+  headLink.add(
+    hiddenOffsetGroup,
+    head.visual,
+    eyebrow.visual,
+    hair.visual,
+    face.visual,
+    nose.visual,
+    tooth.visual,
+  );
+
+  robot.add(headLink);
+  (robot as any).links = { head: headLink };
+
+  syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+    robotLinks: {
+      head: {
+        ...DEFAULT_LINK,
+        id: 'head',
+        name: 'head',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_1: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_1',
+        name: 'head_geom_1',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_2: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_2',
+        name: 'head_geom_2',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_3: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_3',
+        name: 'head_geom_3',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_4: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_4',
+        name: 'head_geom_4',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+      head_geom_5: {
+        ...DEFAULT_LINK,
+        id: 'head_geom_5',
+        name: 'head_geom_5',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+        },
+      },
+    },
+  });
+
+  assert.equal(hiddenHelperMesh.userData.parentLinkName, 'head');
+  assert.equal(head.mesh.userData.parentLinkName, 'head');
+  assert.equal(eyebrow.mesh.userData.parentLinkName, 'head_geom_1');
+  assert.equal(hair.mesh.userData.parentLinkName, 'head_geom_2');
+  assert.equal(face.mesh.userData.parentLinkName, 'head_geom_3');
+  assert.equal(nose.mesh.userData.parentLinkName, 'head_geom_4');
+  assert.equal(tooth.mesh.userData.parentLinkName, 'head_geom_5');
 });
 
 test('syncLoadedRobotScene keeps MJCF visual and collision ownership on the same semantic link id when assembly prefixes diverge from runtime names', () => {

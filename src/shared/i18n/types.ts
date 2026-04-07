@@ -91,7 +91,12 @@ export interface TranslationKeys {
   previewReadOnlyHint: string;
   name: string;
   visualGeometry: string;
+  material: string;
   collisionGeometry: string;
+  collisionBodiesList: string;
+  collisionBodyItem: string;
+  collisionBodyPrimary: string;
+  collisionBodyEmpty: string;
   parentJoint: string;
   childJoint: string;
   noLinkedJoints: string;
@@ -112,6 +117,7 @@ export interface TranslationKeys {
   meshScale: string;
   visible: string;
   hidden: string;
+  slot: string;
   materialSource: string;
   materialSourceInline: string;
   materialSourceNamed: string;
@@ -135,6 +141,16 @@ export interface TranslationKeys {
   eulerRadians: string;
   quaternion: string;
   color: string;
+  opacity: string;
+  roughness: string;
+  metalness: string;
+  emissiveColor: string;
+  emissiveIntensity: string;
+  tone: string;
+  presets: string;
+  recentColors: string;
+  lighter: string;
+  darker: string;
   texture: string;
   meshLibrary: string;
   textureLibrary: string;
@@ -352,6 +368,7 @@ export interface TranslationKeys {
   viewMode: string;
   faceMode: string;
   measureMode: string;
+  paintMode: string;
   closeToolbar: string;
 
   // Toolbox Descriptions
@@ -494,6 +511,7 @@ export interface TranslationKeys {
   libraryImportSuccessful: string;
   libraryImportPartialWithErrors: string;
   noDefinitionFilesFound: string;
+  noSupportedImportFilesFound: string;
   importFailedCheckFiles: string;
   jointName: string;
   motorType: string;
@@ -609,6 +627,23 @@ export interface TranslationKeys {
   undo: string;
   redo: string;
   clearAll: string;
+  paintTool: string;
+  paintColor: string;
+  paintToolHint: string;
+  paintSelectionScope: string;
+  paintSelectionFace: string;
+  paintSelectionIsland: string;
+  paintOperation: string;
+  paintOperationPaint: string;
+  paintOperationErase: string;
+  paintUnsupportedRobotOnly: string;
+  paintStatusReady: string;
+  paintStatusApplied: string;
+  paintStatusRemoved: string;
+  paintErrorVisualMeshOnly: string;
+  paintErrorMultiMaterial: string;
+  paintErrorFaceUnavailable: string;
+  paintErrorSelectionUnavailable: string;
 
   // Performance
   performance: string;
@@ -644,6 +679,9 @@ export interface TranslationKeys {
   exportDefaultKp: string;
   exportIncludeMeshes: string;
   exportSdfTextureOverrideNotice: string;
+  exportUrdfBoxFaceTextureFallbackWarning: string;
+  exportSdfBoxFaceTextureFallbackWarning: string;
+  exportXacroBoxFaceTextureFallbackWarning: string;
   exportRelativePaths: string;
   exportRelativePathsDesc: string;
   exportIncludeExtended: string;

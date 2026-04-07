@@ -791,6 +791,7 @@ export const VisualizerScene = React.memo(
             ikRobotState={robot}
             enabled={active && Boolean(selectedIkHandleDescriptor?.jointIds.length)}
             historyLabel="Move IK handle"
+            setIsDragging={setHoverFrozen}
             onPreviewKinematicOverrides={(overrides) =>
               controller.previewLinkIkKinematics(overrides.angles, overrides.quaternions)
             }

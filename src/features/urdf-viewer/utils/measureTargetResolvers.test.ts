@@ -284,6 +284,65 @@ test('resolves robot measure targets for folded MJCF synthetic links through the
   assert.deepEqual(target.point.toArray(), [15, 2, -1]);
 });
 
+test('resolves robot measure targets for folded MJCF synthetic links from semantic object metadata', () => {
+  const robot = new THREE.Group();
+  const runtimeParentLink = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  runtimeParentLink.isURDFLink = true;
+  runtimeParentLink.name = 'base_link';
+  runtimeParentLink.position.set(10, 2, -1);
+
+  const mainVisual = new THREE.Group();
+  mainVisual.userData.parentLinkName = 'base_link';
+  mainVisual.userData.visualObjectIndex = 0;
+  const mainMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  mainMesh.position.set(-3, 0, 0);
+  mainMesh.userData.parentLinkName = 'base_link';
+  mainMesh.userData.isVisualMesh = true;
+  mainMesh.userData.visualObjectIndex = 0;
+  mainVisual.add(mainMesh);
+
+  const attachmentVisual = new THREE.Group();
+  attachmentVisual.userData.parentLinkName = 'base_link_geom_1';
+  attachmentVisual.userData.runtimeParentLinkName = 'base_link';
+  attachmentVisual.userData.visualObjectIndex = 0;
+  const attachmentMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(2, 2, 2),
+    new THREE.MeshBasicMaterial(),
+  );
+  attachmentMesh.position.set(5, 0, 0);
+  attachmentMesh.userData.parentLinkName = 'base_link_geom_1';
+  attachmentMesh.userData.runtimeParentLinkName = 'base_link';
+  attachmentMesh.userData.isVisualMesh = true;
+  attachmentMesh.userData.visualObjectIndex = 0;
+  attachmentVisual.add(attachmentMesh);
+
+  runtimeParentLink.add(mainVisual, attachmentVisual);
+  robot.add(runtimeParentLink);
+  robot.updateMatrixWorld(true);
+
+  const target = resolveRobotMeasureTargetFromSelection(
+    robot,
+    {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+      base_link_geom_1: {
+        ...DEFAULT_LINK,
+        id: 'base_link_geom_1',
+        name: 'base_link_geom_1',
+      },
+    },
+    { type: 'link', id: 'base_link_geom_1', subType: 'visual', objectIndex: 0 },
+    'geometry',
+  );
+
+  assert.ok(target);
+  assert.equal(target.linkName, 'base_link_geom_1');
+  assert.deepEqual(target.point.toArray(), [15, 2, -1]);
+});
+
 test('resolves usd measure targets through the shared selection contract', () => {
   const firstMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
   firstMesh.position.set(1, 0, 0);

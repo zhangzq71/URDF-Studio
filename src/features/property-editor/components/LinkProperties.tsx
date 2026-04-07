@@ -5,11 +5,24 @@
  * - Visual/Collision/Physics tabs
  */
 import React, { useMemo } from 'react';
-import { Eye, Box, Waypoints } from 'lucide-react';
-import type { DetailLinkTab, RobotState, AppMode, MotorSpec, UrdfLink } from '@/types';
+import { Eye, EyeOff, Box, Minus, Plus, Waypoints } from 'lucide-react';
+import type {
+  DetailLinkTab,
+  InteractionSelection,
+  RobotState,
+  AppMode,
+  MotorSpec,
+  UrdfLink,
+} from '@/types';
+import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import { useUIStore, type Language, type MassInertiaChangeBehavior } from '@/store';
 import { MAX_PROPERTY_DECIMALS, formatNumberWithMaxDecimals } from '@/core/utils/numberPrecision';
+import {
+  appendCollisionBody,
+  getCollisionGeometryEntries,
+  removeCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import {
   composeInertiaTensorFromDerivedValues,
   computeInertialDerivedValues,
@@ -22,8 +35,11 @@ import {
   CollapsibleSection,
   InlineInputGroup,
   NumberInput,
+  PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
+  PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
+  PROPERTY_EDITOR_SECTION_TITLE_CLASS,
   ReadonlyVectorStatHeader,
   ReadonlyVectorStatRow,
   ReadonlyValueField,
@@ -168,12 +184,45 @@ const DetailGeometryTabPanel = ({
   </div>
 );
 
+const getGeometryTypeLabel = (type: GeometryType, t: (typeof translations)['en']) =>
+  type === GeometryType.BOX
+    ? t.box
+    : type === GeometryType.PLANE
+      ? t.plane
+      : type === GeometryType.CYLINDER
+        ? t.cylinder
+        : type === GeometryType.SPHERE
+          ? t.sphere
+          : type === GeometryType.ELLIPSOID
+            ? t.ellipsoid
+            : type === GeometryType.CAPSULE
+              ? t.capsule
+              : type === GeometryType.HFIELD
+                ? t.hfield
+                : type === GeometryType.SDF
+                  ? t.sdf
+                  : type === GeometryType.MESH
+                    ? t.mesh
+                    : t.none;
+
 interface LinkPropertiesProps {
   data: UrdfLink;
   robot: RobotState;
   mode: AppMode;
-  selection: { id: string | null; type: string; subType?: 'visual' | 'collision' };
+  selection: RobotState['selection'];
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onSelect?: (
+    type: Exclude<InteractionSelection['type'], null>,
+    id: string,
+    subType?: 'visual' | 'collision',
+  ) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+    suppressPulse?: boolean,
+  ) => void;
+  onAddCollisionBody?: (linkId: string) => void;
   motorLibrary: Record<string, MotorSpec[]>;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
@@ -186,6 +235,9 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
   robot,
   selection,
   onUpdate,
+  onSelect,
+  onSelectGeometry,
+  onAddCollisionBody,
   assets,
   onUploadAsset,
   t,
@@ -209,7 +261,12 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     () => computeInertialDerivedValues(data.inertial),
     [data.inertial],
   );
+  const collisionGeometryEntries = useMemo(() => getCollisionGeometryEntries(data), [data]);
   const densityLabel = t.density;
+  const selectedCollisionObjectIndex =
+    selection.type === 'link' && selection.id === data.id && selection.subType === 'collision'
+      ? (selection.objectIndex ?? 0)
+      : (collisionGeometryEntries[0]?.objectIndex ?? 0);
 
   const handleTabChange = (tab: DetailLinkTab) => {
     setDetailLinkTab(tab);
@@ -498,6 +555,163 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     </>
   );
 
+  const handleSelectCollisionGeometry = React.useCallback(
+    (objectIndex: number) => {
+      if (onSelectGeometry) {
+        onSelectGeometry(data.id, 'collision', objectIndex);
+        return;
+      }
+
+      onSelect?.('link', data.id, 'collision');
+    },
+    [data.id, onSelect, onSelectGeometry],
+  );
+
+  const handleAddCollisionBodyClick = React.useCallback(() => {
+    if (onAddCollisionBody) {
+      onAddCollisionBody(data.id);
+      return;
+    }
+
+    const nextLink = appendCollisionBody(data);
+    const nextEntries = getCollisionGeometryEntries(nextLink);
+    const nextObjectIndex = Math.max(0, nextEntries.length - 1);
+
+    onUpdate('link', data.id, nextLink);
+    onSelectGeometry?.(data.id, 'collision', nextObjectIndex);
+  }, [data, onAddCollisionBody, onSelectGeometry, onUpdate]);
+
+  const handleDeleteCollisionBodyClick = React.useCallback(() => {
+    if (collisionGeometryEntries.length === 0) {
+      return;
+    }
+
+    const {
+      link: nextLink,
+      removed,
+      nextObjectIndex,
+    } = removeCollisionGeometryByObjectIndex(data, selectedCollisionObjectIndex);
+
+    if (!removed) {
+      return;
+    }
+
+    onUpdate('link', data.id, nextLink);
+
+    if (nextObjectIndex === null) {
+      onSelect?.('link', data.id);
+      return;
+    }
+
+    if (onSelectGeometry) {
+      onSelectGeometry(data.id, 'collision', nextObjectIndex);
+      return;
+    }
+
+    onSelect?.('link', data.id, 'collision');
+  }, [
+    collisionGeometryEntries.length,
+    data,
+    onSelect,
+    onSelectGeometry,
+    onUpdate,
+    selectedCollisionObjectIndex,
+  ]);
+
+  const collisionBodiesSection = (
+    <div className="mb-2.5">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <h3 className={PROPERTY_EDITOR_SECTION_TITLE_CLASS}>{t.collisionBodiesList}</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label={t.deleteCollisionGeometry}
+            title={t.deleteCollisionGeometry}
+            onClick={handleDeleteCollisionBodyClick}
+            disabled={collisionGeometryEntries.length === 0}
+            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} w-6 px-0`}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={t.addCollisionBody}
+            title={t.addCollisionBody}
+            onClick={handleAddCollisionBodyClick}
+            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} w-6 px-0`}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {collisionGeometryEntries.length ? (
+        <div className="space-y-1">
+          {collisionGeometryEntries.map((entry) => {
+            const isSelected = selectedCollisionObjectIndex === entry.objectIndex;
+            const geometryTypeLabel = getGeometryTypeLabel(entry.geometry.type, t);
+            const collisionLabel = fillTemplate(t.collisionBodyItem, {
+              index: String(entry.objectIndex + 1),
+            });
+            const isVisible = entry.geometry.visible !== false;
+
+            return (
+              <button
+                key={`${data.id}:collision:${entry.objectIndex}`}
+                type="button"
+                aria-label={collisionLabel}
+                aria-pressed={isSelected}
+                onClick={() => handleSelectCollisionGeometry(entry.objectIndex)}
+                className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left transition-colors ${
+                  isSelected
+                    ? 'border-system-blue/50 bg-system-blue/10'
+                    : 'border-border-black/60 bg-panel-bg hover:bg-element-hover'
+                }`}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <div
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${
+                      isSelected
+                        ? 'border-system-blue/40 bg-system-blue/15 text-system-blue'
+                        : 'border-border-black/60 bg-element-bg/70 text-text-secondary'
+                    }`}
+                  >
+                    {entry.objectIndex + 1}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-[10px] font-semibold text-text-primary">
+                        {collisionLabel}
+                      </span>
+                      {entry.bodyIndex === null ? (
+                        <span className="shrink-0 rounded-full bg-system-blue/10 px-1.5 py-px text-[9px] font-semibold text-system-blue">
+                          {t.collisionBodyPrimary}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex min-w-0 items-center gap-1.5 text-[9px] text-text-tertiary">
+                      <span className="truncate">{geometryTypeLabel}</span>
+                      <span aria-hidden="true">•</span>
+                      <span>{isVisible ? t.visible : t.hidden}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 text-text-tertiary">
+                  {isVisible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed border-border-black/60 bg-element-bg/60 px-3 py-2">
+          <p className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>{t.collisionBodyEmpty}</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
       {nameField}
@@ -527,34 +741,40 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           />
         </div>
 
-        {/* Visual Tab Content - always mounted to preserve snapshot cache */}
         <DetailGeometryTabPanel activeTab={linkTab} tab="visual">
-          <GeometryEditor
-            data={data}
-            robot={robot}
-            category="visual"
-            onUpdate={(d) => onUpdate('link', selection.id!, d)}
-            assets={assets}
-            onUploadAsset={onUploadAsset}
-            t={t}
-            lang={lang}
-            isTabbed={true}
-          />
+          {linkTab === 'visual' ? (
+            <GeometryEditor
+              data={data}
+              robot={robot}
+              category="visual"
+              onUpdate={(d) => onUpdate('link', selection.id!, d)}
+              assets={assets}
+              onUploadAsset={onUploadAsset}
+              t={t}
+              lang={lang}
+              isTabbed={true}
+            />
+          ) : null}
         </DetailGeometryTabPanel>
 
-        {/* Collision Tab Content - always mounted to preserve snapshot cache */}
         <DetailGeometryTabPanel activeTab={linkTab} tab="collision">
-          <GeometryEditor
-            data={data}
-            robot={robot}
-            category="collision"
-            onUpdate={(d) => onUpdate('link', selection.id!, d)}
-            assets={assets}
-            onUploadAsset={onUploadAsset}
-            t={t}
-            lang={lang}
-            isTabbed={true}
-          />
+          {linkTab === 'collision' ? (
+            <div className="space-y-2">
+              {collisionBodiesSection}
+              <GeometryEditor
+                data={data}
+                robot={robot}
+                category="collision"
+                onUpdate={(d) => onUpdate('link', selection.id!, d)}
+                assets={assets}
+                onUploadAsset={onUploadAsset}
+                t={t}
+                lang={lang}
+                isTabbed={true}
+                showCollisionDeleteAction={false}
+              />
+            </div>
+          ) : null}
         </DetailGeometryTabPanel>
 
         <DetailGeometryTabPanel activeTab={linkTab} tab="physics">

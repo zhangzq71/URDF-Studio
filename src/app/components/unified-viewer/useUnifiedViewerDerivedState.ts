@@ -150,19 +150,31 @@ export function useUnifiedViewerDerivedState({
     [assemblyWorkspaceActive, robot, visualizerRobotInput],
   );
   const viewerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
-    [activePreview, robot.links],
+    () =>
+      buildViewerRobotLinksScopeSignature(
+        activePreview ? undefined : robot.links,
+        activePreview ? undefined : robot.materials,
+      ),
+    [activePreview, robot.links, robot.materials],
   );
   const viewerRobotLinksForScope = React.useMemo(
     () => (activePreview ? undefined : robot.links),
     [activePreview, viewerRobotLinksScopeSignature],
   );
+  const viewerRobotMaterialsForScope = React.useMemo(
+    () => (activePreview ? undefined : robot.materials),
+    [activePreview, viewerRobotLinksScopeSignature],
+  );
   const visualizerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(visualizerRobot.links),
-    [visualizerRobot.links],
+    () => buildViewerRobotLinksScopeSignature(visualizerRobot.links, visualizerRobot.materials),
+    [visualizerRobot.links, visualizerRobot.materials],
   );
   const visualizerRobotLinksForScope = React.useMemo(
     () => visualizerRobot.links,
+    [visualizerRobotLinksScopeSignature],
+  );
+  const visualizerRobotMaterialsForScope = React.useMemo(
+    () => visualizerRobot.materials,
     [visualizerRobotLinksScopeSignature],
   );
   const {
@@ -181,7 +193,9 @@ export function useUnifiedViewerDerivedState({
       assets,
       availableFiles,
       viewerRobotLinks: viewerRobotLinksForScope,
+      viewerRobotMaterials: viewerRobotMaterialsForScope,
       visualizerRobotLinks: visualizerRobotLinksForScope,
+      visualizerRobotMaterials: visualizerRobotMaterialsForScope,
       previousViewerResourceScope: viewerResourceScopeRef.current,
       previousVisualizerResourceScope: visualizerResourceScopeRef.current,
     });
@@ -196,7 +210,9 @@ export function useUnifiedViewerDerivedState({
     sourceFilePath,
     urdfContent,
     viewerRobotLinksForScope,
+    viewerRobotMaterialsForScope,
     visualizerRobotLinksForScope,
+    visualizerRobotMaterialsForScope,
   ]);
 
   React.useEffect(() => {

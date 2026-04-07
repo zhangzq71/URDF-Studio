@@ -8,6 +8,7 @@ import { disposeObject3D } from '../utils/dispose';
 import {
   alignRobotToGroundBeforeFirstMount,
   beginInitialGroundAlignment,
+  copyRobotRootTransform,
   offsetRobotToGround,
   setInitialGroundAlignment,
   setPreserveAuthoredRootTransform,
@@ -153,6 +154,7 @@ export function useRobotLoader({
   const pendingDisposeRobotRef = useRef<THREE.Object3D | null>(null);
   const pendingDisposeFrameRef = useRef<number | null>(null);
   const groundAlignTimerRef = useRef<number[]>([]);
+  const mountedRobotSourceScopeKeyRef = useRef<string | null>(null);
   const progressDispatchFrameRef = useRef<number | null>(null);
   const pendingLoadingDispatchRef = useRef<PendingLoadingDispatch | null>(null);
   const lastPublishedLoadingDispatchKeyRef = useRef('');
@@ -186,6 +188,7 @@ export function useRobotLoader({
     resolvedSourceFormat === 'urdf' &&
     Boolean(robotLinks && robotJoints) &&
     (Object.keys(robotLinks ?? {}).length > 0 || Object.keys(robotJoints ?? {}).length > 0);
+  const currentSourceScopeKey = `${resolvedSourceFormat}:${sourceFilePath ?? '__inline__'}`;
 
   // Keep refs in sync
   useEffect(() => {
@@ -396,7 +399,9 @@ export function useRobotLoader({
     [clearGroundAlignTimers, invalidate],
   );
 
-  // Incremental path: update exactly one changed link geometry in-place and skip next full URDF reload.
+  // Incremental path: update exactly one changed link geometry in-place and skip
+  // the next full robot reload. MJCF runtime roots expose the same link/group
+  // structure here, so link-local visual edits can stay incremental too.
   useEffect(() => {
     if (isMeshPreview) return;
     if (!robotLinks) return;
@@ -406,7 +411,6 @@ export function useRobotLoader({
     prevRobotLinksRef.current = robotLinks;
 
     if (!previousLinks || !currentRobot) return;
-    if (resolvedSourceFormat === 'mjcf') return;
 
     const patch = detectSingleGeometryPatch(previousLinks, robotLinks);
     if (!patch) return;
@@ -442,8 +446,8 @@ export function useRobotLoader({
   ]);
 
   // Incremental path: update changed joint metadata/origins in-place and skip
-  // the next full URDF reload. This is especially important for assembly
-  // bridge previews, which can move several component root anchors at once.
+  // the next full robot reload. MJCF runtime joints expose the same mutators,
+  // so joint-local edits can stay incremental there as well.
   useEffect(() => {
     if (isMeshPreview) return;
     if (!robotJoints) return;
@@ -453,7 +457,6 @@ export function useRobotLoader({
     prevRobotJointsRef.current = robotJoints;
 
     if (!previousJoints || !currentRobot) return;
-    if (resolvedSourceFormat === 'mjcf') return;
 
     const patches = detectJointPatches(previousJoints, robotJoints);
     if (!patches || patches.length === 0) return;
@@ -486,6 +489,7 @@ export function useRobotLoader({
         disposeRobotObject(robotRef.current);
         robotRef.current = null;
       }
+      mountedRobotSourceScopeKeyRef.current = null;
     };
   }, [
     clearGroundAlignTimers,
@@ -553,6 +557,7 @@ export function useRobotLoader({
 
         let robotModel: THREE.Object3D | null = null;
         let hasMountedRobot = false;
+        let preservedRootTransformFromPreviousRobot = false;
         const isMJCFAsset = resolvedSourceFormat === 'mjcf';
         const preserveAuthoredRootTransform = false;
         const urdfMaterials = isMJCFAsset
@@ -588,6 +593,11 @@ export function useRobotLoader({
           }
 
           hasMountedRobot = true;
+          const previousRobot = robotRef.current;
+          const shouldPreservePreviousRootTransform =
+            Boolean(previousRobot) &&
+            mountedRobotSourceScopeKeyRef.current === currentSourceScopeKey;
+
           setPreserveAuthoredRootTransform(loadedRobot, preserveAuthoredRootTransform);
           syncLoadedRobot(loadedRobot);
 
@@ -604,18 +614,28 @@ export function useRobotLoader({
             loadedRobot.updateMatrixWorld(true);
           }
 
-          // Place the robot on the ground before the first visible mount so
-          // the scene never shows it popping up from below the grid.
-          alignRobotToGroundBeforeFirstMount(loadedRobot, groundPlaneOffsetRef.current);
+          if (shouldPreservePreviousRootTransform) {
+            preservedRootTransformFromPreviousRobot = copyRobotRootTransform(
+              previousRobot,
+              loadedRobot,
+            );
+          }
 
-          const previousRobot = robotRef.current;
+          if (!preservedRootTransformFromPreviousRobot) {
+            // Place the robot on the ground before the first visible mount so
+            // the scene never shows it popping up from below the grid.
+            alignRobotToGroundBeforeFirstMount(loadedRobot, groundPlaneOffsetRef.current);
+          }
 
           robotRef.current = loadedRobot;
+          mountedRobotSourceScopeKeyRef.current = currentSourceScopeKey;
           setRobot(loadedRobot);
           setRobotVersion((v) => v + 1);
           setError(null);
           invalidate();
-          scheduleGroundAlignment(loadedRobot);
+          if (!preservedRootTransformFromPreviousRobot) {
+            scheduleGroundAlignment(loadedRobot);
+          }
 
           if (previousRobot && previousRobot !== loadedRobot) {
             schedulePreviousRobotDispose(previousRobot);
@@ -650,10 +670,12 @@ export function useRobotLoader({
           );
           setError(null);
           invalidate();
-          if (wasMountedBeforeFinalize) {
+          if (wasMountedBeforeFinalize && !preservedRootTransformFromPreviousRobot) {
             setInitialGroundAlignment(loadedRobot, false);
           }
-          scheduleGroundAlignment(loadedRobot);
+          if (!preservedRootTransformFromPreviousRobot) {
+            scheduleGroundAlignment(loadedRobot);
+          }
           onRobotLoadedRef.current?.(loadedRobot);
         };
 

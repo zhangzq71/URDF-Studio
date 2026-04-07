@@ -2,17 +2,21 @@ import * as THREE from 'three';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 import { getVisualGeometryEntries } from '@/core/robot';
 import type { UrdfLink, UrdfVisual, UrdfVisualMaterial } from '@/types';
+import { disposeMaterial } from './dispose';
 
 // ============================================================
 // URDF Material Parser - Extract rgba colors from URDF XML
 // Supports multiple materials per visual (for DAE files with named materials)
 // ============================================================
 export interface URDFMaterialInfo {
-    name?: string;
-    rgba?: [number, number, number, number];
+  name?: string;
+  rgba?: [number, number, number, number];
 }
 
-function toMaterialRgba(colorValue?: string, textureValue?: string): [number, number, number, number] | null {
+function toMaterialRgba(
+  colorValue?: string,
+  textureValue?: string,
+): [number, number, number, number] | null {
   const raw = String(colorValue || '').trim();
   if (!raw) {
     return textureValue ? [1, 1, 1, 1] : null;
@@ -22,8 +26,28 @@ function toMaterialRgba(colorValue?: string, textureValue?: string): [number, nu
   return [color.r, color.g, color.b, 1];
 }
 
-function collectAuthoredMaterials(geometry: UrdfVisual): UrdfVisualMaterial[] {
-  return Array.isArray(geometry.authoredMaterials) ? geometry.authoredMaterials : [];
+function collectAuthoredMaterials(
+  geometry: Pick<UrdfVisual, 'authoredMaterials'> | null | undefined,
+): UrdfVisualMaterial[] {
+  return Array.isArray(geometry?.authoredMaterials) ? geometry.authoredMaterials : [];
+}
+
+export function collectURDFMaterialsFromVisualGeometry(
+  geometry: Pick<UrdfVisual, 'authoredMaterials'> | null | undefined,
+): Map<string, URDFMaterialInfo> {
+  const namedMaterials = new Map<string, URDFMaterialInfo>();
+
+  for (const material of collectAuthoredMaterials(geometry)) {
+    const name = material.name?.trim();
+    const rgba = toMaterialRgba(material.color, material.texture);
+    if (!name || !rgba) {
+      continue;
+    }
+
+    namedMaterials.set(name, { name, rgba });
+  }
+
+  return namedMaterials;
 }
 
 export function collectURDFMaterialsFromLinks(
@@ -37,14 +61,8 @@ export function collectURDFMaterialsFromLinks(
 
   for (const link of Object.values(links)) {
     for (const entry of getVisualGeometryEntries(link)) {
-      for (const material of collectAuthoredMaterials(entry.geometry)) {
-        const name = material.name?.trim();
-        const rgba = toMaterialRgba(material.color, material.texture);
-        if (!name || !rgba) {
-          continue;
-        }
-
-        namedMaterials.set(name, { name, rgba });
+      for (const [name, material] of collectURDFMaterialsFromVisualGeometry(entry.geometry)) {
+        namedMaterials.set(name, material);
       }
     }
   }
@@ -83,13 +101,60 @@ function findURDFMaterialByName(
   return undefined;
 }
 
+function disposeTransientViewerMaterial(material: THREE.Material): void {
+  if (
+    (material as any).userData?.isSharedMaterial ||
+    (material as any).userData?.isCollisionMaterial
+  ) {
+    return;
+  }
+
+  disposeMaterial(material, false);
+}
+
+export function applyURDFMaterialInfoToMaterial(
+  material: THREE.Material,
+  materials: Map<string, URDFMaterialInfo>,
+): THREE.Material {
+  const materialName = material.name;
+  const urdfMaterial = findURDFMaterialByName(materials, materialName);
+
+  if (!urdfMaterial?.rgba) {
+    return material;
+  }
+
+  const [r, g, b, a] = urdfMaterial.rgba;
+  const color = createThreeColorFromSRGB(r, g, b);
+  const cloned = material.clone();
+
+  if ((cloned as any).color?.copy) {
+    (cloned as any).color.copy(color);
+  } else {
+    (cloned as any).color = color;
+  }
+
+  cloned.name = materialName || urdfMaterial.name || cloned.name;
+  cloned.userData.urdfColorApplied = true;
+  cloned.userData.urdfColor = color.clone();
+  if (urdfMaterial.name) {
+    cloned.userData.urdfMaterialName = urdfMaterial.name;
+  }
+  if (a < 1) {
+    cloned.transparent = true;
+    cloned.opacity = a;
+  }
+  cloned.needsUpdate = true;
+
+  return cloned;
+}
+
 /**
  * Parse URDF materials - returns a Map keyed by material NAME (not link name)
  * This allows matching materials in DAE files by their name
  */
 export function parseURDFMaterials(urdfContent: string): Map<string, URDFMaterialInfo> {
   const namedMaterials = new Map<string, URDFMaterialInfo>();
-  
+
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(urdfContent, 'text/xml');
@@ -100,7 +165,7 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
 
     // First pass: collect global materials (defined at robot level)
     const robotMaterials = doc.querySelectorAll('robot > material');
-    robotMaterials.forEach(matEl => {
+    robotMaterials.forEach((matEl) => {
       const name = matEl.getAttribute('name');
       if (name) {
         const colorEl = matEl.querySelector('color');
@@ -111,7 +176,7 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
             if (parts.length >= 3) {
               namedMaterials.set(name, {
                 name,
-                rgba: [parts[0], parts[1], parts[2], parts[3] ?? 1]
+                rgba: [parts[0], parts[1], parts[2], parts[3] ?? 1],
               });
             }
           }
@@ -122,16 +187,16 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
     // Second pass: get ALL materials from each link's visual elements
     // This handles DAE files where each visual can have multiple named materials
     const links = doc.querySelectorAll('link');
-    links.forEach(linkEl => {
+    links.forEach((linkEl) => {
       const linkName = linkEl.getAttribute('name');
       if (!linkName) return;
 
       // Get ALL visual elements (not just first)
       const visualEls = linkEl.querySelectorAll('visual');
-      visualEls.forEach(visualEl => {
+      visualEls.forEach((visualEl) => {
         // Get ALL material elements in this visual (not just first)
         const matEls = visualEl.querySelectorAll('material');
-        matEls.forEach(matEl => {
+        matEls.forEach((matEl) => {
           const matName = matEl.getAttribute('name');
           if (!matName) return;
 
@@ -141,10 +206,15 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
             if (rgbaStr) {
               const parts = rgbaStr.trim().split(/\s+/).map(Number);
               if (parts.length >= 3) {
-                const rgba: [number, number, number, number] = [parts[0], parts[1], parts[2], parts[3] ?? 1];
+                const rgba: [number, number, number, number] = [
+                  parts[0],
+                  parts[1],
+                  parts[2],
+                  parts[3] ?? 1,
+                ];
                 namedMaterials.set(matName, {
                   name: matName,
-                  rgba
+                  rgba,
                 });
               }
             }
@@ -152,7 +222,6 @@ export function parseURDFMaterials(urdfContent: string): Map<string, URDFMateria
         });
       });
     });
-
   } catch (error) {
     const context = {
       contentLength: urdfContent.length,
@@ -184,50 +253,36 @@ export function resolveURDFMaterialsForScene(
  * Apply URDF materials to robot model by matching material NAMES
  * This works with DAE files where materials have specific names like "深色橡胶_005-effect"
  */
-export function applyURDFMaterials(robot: THREE.Object3D, materials: Map<string, URDFMaterialInfo>) {
+export function applyURDFMaterials(
+  robot: THREE.Object3D,
+  materials: Map<string, URDFMaterialInfo>,
+) {
   if (materials.size === 0) return;
 
   robot.traverse((child: any) => {
     if (!child.isMesh) return;
 
-    // Process each material on this mesh
-    const processMaterial = (mat: THREE.Material): THREE.Material => {
-      // Try to match by material name
-      const matName = mat.name;
-      const urdfMaterial = findURDFMaterialByName(materials, matName);
-
-      if (urdfMaterial?.rgba) {
-        const [r, g, b, a] = urdfMaterial.rgba;
-        const color = createThreeColorFromSRGB(r, g, b);
-        const cloned = mat.clone();
-
-        if ((cloned as any).color?.copy) {
-          (cloned as any).color.copy(color);
-        } else {
-          (cloned as any).color = color;
-        }
-
-        cloned.name = matName || urdfMaterial.name || cloned.name;
-        cloned.userData.urdfColorApplied = true;
-        cloned.userData.urdfColor = color.clone();
-        if (urdfMaterial.name) {
-          cloned.userData.urdfMaterialName = urdfMaterial.name;
-        }
-        if (a < 1) {
-          cloned.transparent = true;
-          cloned.opacity = a;
-        }
-        cloned.needsUpdate = true;
-        return cloned;
-      }
-
-      return mat;
-    };
-
-    if (Array.isArray(child.material)) {
-      child.material = child.material.map(processMaterial);
-    } else if (child.material) {
-      child.material = processMaterial(child.material);
+    const previousMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
+    const previousMaterials = Array.isArray(previousMaterial)
+      ? previousMaterial
+      : previousMaterial
+        ? [previousMaterial]
+        : [];
+    const nextMaterials = previousMaterials.map((material) =>
+      applyURDFMaterialInfoToMaterial(material, materials),
+    );
+    const hasReplacement = nextMaterials.some(
+      (material, index) => material !== previousMaterials[index],
+    );
+    if (!hasReplacement) {
+      return;
     }
+
+    child.material = Array.isArray(previousMaterial) ? nextMaterials : nextMaterials[0];
+    previousMaterials.forEach((material, index) => {
+      if (nextMaterials[index] !== material) {
+        disposeTransientViewerMaterial(material);
+      }
+    });
   });
 }

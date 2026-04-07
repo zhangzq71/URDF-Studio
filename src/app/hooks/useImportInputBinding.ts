@@ -3,7 +3,7 @@ import { useEffect, type RefObject } from 'react';
 interface UseImportInputBindingOptions {
   importInputRef: RefObject<HTMLInputElement>;
   importFolderInputRef: RefObject<HTMLInputElement>;
-  onImport: (files: FileList | null) => void | Promise<void>;
+  onImport: (files: FileList | null) => void | Promise<unknown>;
 }
 
 export function useImportInputBinding({

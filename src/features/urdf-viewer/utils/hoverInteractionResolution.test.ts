@@ -40,10 +40,12 @@ function createHelperCandidate(
   };
 }
 
-function createMesh(options: {
-  renderOrder?: number;
-  depthTest?: boolean;
-} = {}): THREE.Mesh {
+function createMesh(
+  options: {
+    renderOrder?: number;
+    depthTest?: boolean;
+  } = {},
+): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(1, 1, 1),
     new THREE.MeshBasicMaterial({ color: 0xffffff }),
@@ -78,7 +80,7 @@ test('resolveHoverInteractionResolution uses nearest hit when candidates share t
   assert.equal(result.primaryInteraction?.id, 'right_wrist_roll_link');
 });
 
-test('resolveHoverInteractionResolution promotes the preferred front-end layer over a nearer hit', () => {
+test('resolveHoverInteractionResolution keeps the nearer geometry hit ahead of a farther preferred layer', () => {
   const candidates = [
     createLinkCandidate('visual_link', 0.58, 'visual', createMesh()),
     createLinkCandidate('collision_link', 0.6, 'collision', createMesh()),
@@ -86,8 +88,8 @@ test('resolveHoverInteractionResolution promotes the preferred front-end layer o
 
   const result = resolveHoverInteractionResolution(candidates, ['collision', 'visual']);
 
-  assert.equal(result.primaryInteraction?.id, 'collision_link');
-  assert.equal(result.primaryInteraction?.subType, 'collision');
+  assert.equal(result.primaryInteraction?.id, 'visual_link');
+  assert.equal(result.primaryInteraction?.subType, 'visual');
 });
 
 test('resolveHoverInteractionResolution deprioritizes floor-like support planes beneath foreground geometry', () => {
@@ -103,9 +105,7 @@ test('resolveHoverInteractionResolution deprioritizes floor-like support planes 
 });
 
 test('resolveHoverInteractionResolution keeps floor-like support planes hoverable when no foreground target overlaps', () => {
-  const candidates = [
-    createLinkCandidate('floor_link', 0.6, 'collision', createSupportPlane()),
-  ];
+  const candidates = [createLinkCandidate('floor_link', 0.6, 'collision', createSupportPlane())];
 
   const result = resolveHoverInteractionResolution(candidates, ['collision', 'visual']);
 
@@ -151,7 +151,11 @@ test('resolveHoverInteractionResolution lets a screen-space helper beat higher-p
     },
   ];
 
-  const result = resolveHoverInteractionResolution(candidates, ['collision', 'joint-axis', 'visual']);
+  const result = resolveHoverInteractionResolution(candidates, [
+    'collision',
+    'joint-axis',
+    'visual',
+  ]);
 
   assert.equal(result.primaryInteraction?.id, 'hip_joint');
   assert.equal(result.primaryInteraction?.helperKind, 'joint-axis');

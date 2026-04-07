@@ -23,11 +23,13 @@ const CLOSED_LOOP_ROUNDTRIP_FIXTURES = [
     name: 'agility_cassie',
     path: 'test/mujoco_menagerie-main/agility_cassie/cassie.xml',
     expectedClosedLoopCount: 4,
+    expectUnsupportedFloatingRoot: true,
   },
   {
     name: 'robotiq_2f85',
     path: 'test/mujoco_menagerie-main/robotiq_2f85/2f85.xml',
     expectedClosedLoopCount: 2,
+    expectUnsupportedFloatingRoot: false,
   },
 ] as const;
 
@@ -223,8 +225,38 @@ test('generateSdfModelConfig points Gazebo-style packages at model.sdf', () => {
   assert.match(config, /<sdf version="1\.7">model\.sdf<\/sdf>/);
 });
 
+test('generateSDF emits a single albedo_map for textured visuals', () => {
+  const robot: RobotState = {
+    name: 'textured_box',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.5, y: 0.4, z: 0.3 },
+          authoredMaterials: [{ texture: 'textures/front.png' }],
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+        },
+      },
+    },
+    joints: {},
+  };
+
+  const xml = generateSDF(robot, { packageName: 'textured_box_pkg' });
+
+  assert.match(xml, /<albedo_map>model:\/\/textured_box_pkg\/textures\/front\.png<\/albedo_map>/);
+});
+
 for (const fixture of CLOSED_LOOP_ROUNDTRIP_FIXTURES) {
-  test(`generateSDF preserves closed-loop constraints for ${fixture.name}`, () => {
+  test(`generateSDF handles closed-loop fixture ${fixture.name} according to SDF joint support`, () => {
     const xml = fs.readFileSync(fixture.path, 'utf8');
     const robot = parseMJCF(xml);
 
@@ -236,6 +268,14 @@ for (const fixture of CLOSED_LOOP_ROUNDTRIP_FIXTURES) {
     );
 
     if (!robot) {
+      return;
+    }
+
+    if (fixture.expectUnsupportedFloatingRoot) {
+      assert.throws(
+        () => generateSDF(robot, { packageName: fixture.name }),
+        /\[SDF export\] Joint ".*" uses unsupported floating type\./,
+      );
       return;
     }
 
@@ -255,3 +295,44 @@ for (const fixture of CLOSED_LOOP_ROUNDTRIP_FIXTURES) {
     );
   });
 }
+
+test('generateSDF fails fast for unsupported floating joints instead of silently exporting them', () => {
+  const robot: RobotState = {
+    name: 'floating_root_demo',
+    rootLinkId: 'base_link',
+    links: {
+      world: {
+        ...DEFAULT_LINK,
+        id: 'world',
+        name: 'world',
+      },
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+    },
+    joints: {
+      floating_base_joint: {
+        ...DEFAULT_JOINT,
+        id: 'floating_base_joint',
+        name: 'floating_base_joint',
+        type: JointType.FLOATING,
+        parentLinkId: 'world',
+        childLinkId: 'base_link',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0.5 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: undefined,
+        limit: undefined,
+      },
+    },
+    selection: { type: null, id: null },
+  };
+
+  assert.throws(
+    () => generateSDF(robot, { packageName: 'floating_root_demo' }),
+    /\[SDF export\] Joint "floating_base_joint" uses unsupported floating type\./,
+  );
+});

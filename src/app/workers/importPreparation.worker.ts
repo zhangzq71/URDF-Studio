@@ -45,7 +45,7 @@ workerScope.addEventListener(
 
       if (message.type === 'hydrate-deferred-import-assets') {
         const assetFiles = await hydrateDeferredImportAssets(
-          message.zipFile,
+          message.archiveFile,
           message.assetFiles,
           (progress) => {
             const progressResponse: ImportPreparationWorkerResponse = {

@@ -22,7 +22,7 @@ interface TreeEditorFileBrowserContentProps {
   onCommitFolderRename: () => void;
   onDeleteAll: () => void;
   onDeleteFromLibrary?: (target: LibraryDeleteTarget) => void;
-  onFileActivate?: (file: RobotFile) => void;
+  onLoadRobot?: (file: RobotFile) => void;
   onFileContextMenu: (event: ReactMouseEvent, file: RobotFile) => void;
   onFolderRenameDraftChange: (value: string) => void;
   onFolderContextMenu: (event: ReactMouseEvent, folderPath: string) => void;
@@ -49,7 +49,7 @@ export function TreeEditorFileBrowserContent({
   onCommitFolderRename,
   onDeleteAll,
   onDeleteFromLibrary,
-  onFileActivate,
+  onLoadRobot,
   onFileContextMenu,
   onFolderRenameDraftChange,
   onFolderContextMenu,
@@ -129,7 +129,7 @@ export function TreeEditorFileBrowserContent({
                   editingFolderPath={editingFolderPath}
                   folderRenameDraft={folderRenameDraft}
                   folderRenameInputRef={folderRenameInputRef}
-                  onLoadRobot={onFileActivate}
+                  onLoadRobot={onLoadRobot}
                   onAddAsComponent={isProMode ? onAddComponent : undefined}
                   onCancelFolderRename={onCancelFolderRename}
                   onCommitFolderRename={onCommitFolderRename}

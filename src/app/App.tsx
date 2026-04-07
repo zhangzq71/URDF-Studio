@@ -27,7 +27,10 @@ import {
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
-import { buildStandaloneImportAssetWarning } from './utils/importPackageAssetReferences';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from './utils/importPackageAssetReferences';
 import {
   useRobotStore,
   useUIStore,
@@ -38,11 +41,17 @@ import {
 import type { InspectionReport, RobotFile, RobotState } from '@/types';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
-import { isLibraryRobotExportableFormat } from '@/shared/utils';
+import { isAssetLibraryOnlyFormat, isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog/ExportDialog';
 import type { ExportProgressState } from '@/features/file-io/types';
 import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
+import { consumeHandoffImportFromUrl } from './handoff/bootstrap';
+import {
+  deletePendingHandoffImport,
+  pruneExpiredPendingHandoffImports,
+  readPendingHandoffImport,
+} from './handoff/storage';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
@@ -402,6 +411,7 @@ function AppContent() {
   >(null);
   const loadRequestIdRef = useRef(0);
   const aiConversationSessionIdRef = useRef(0);
+  const handoffBootstrapStartedRef = useRef(false);
   const [shouldRenderAIInspectionModal, setShouldRenderAIInspectionModal] = useState(false);
   const [shouldRenderAIConversationModal, setShouldRenderAIConversationModal] = useState(false);
   const [aiConversationLaunchContext, setAIConversationLaunchContext] =
@@ -546,10 +556,19 @@ function AppContent() {
 
   const commitResolvedFileSelection = useCallback(
     (file: RobotFile) => {
+      const assetLibraryOnlyFile = isAssetLibraryOnlyFormat(file.format);
+      const originalFileFormat =
+        file.format === 'urdf' ||
+        file.format === 'mjcf' ||
+        file.format === 'usd' ||
+        file.format === 'xacro' ||
+        file.format === 'sdf'
+          ? file.format
+          : null;
       setViewerReloadKey((value) => value + 1);
       setSelectedFile(file);
-      setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+      setOriginalUrdfContent(assetLibraryOnlyFile ? '' : file.content);
+      setOriginalFileFormat(originalFileFormat);
       setSelection({ type: null, id: null });
       const currentAppMode = useUIStore.getState().appMode;
       const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
@@ -589,16 +608,26 @@ function AppContent() {
         return;
       }
 
+      const importedAssetPaths = collectStandaloneImportSupportAssetPaths(
+        liveAssetsState.assets,
+        liveAssetsState.availableFiles,
+      );
       const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
         file,
-        Object.keys(liveAssetsState.assets),
+        importedAssetPaths,
+        {
+          allFileContents: liveAssetsState.allFileContents,
+          sourcePath: file.name,
+        },
       );
       if (standaloneImportAssetWarning) {
         const assetLabel =
           standaloneImportAssetWarning.missingAssetPaths.length > 3
             ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
             : standaloneImportAssetWarning.missingAssetPaths.join(', ');
-        const message = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
+        const message = t.importPackageAssetBundleHint
+          .replace('{packages}', assetLabel)
+          .replace('{assets}', assetLabel);
         setDocumentLoadState({
           status: 'error',
           fileName: file.name,
@@ -833,6 +862,37 @@ function AppContent() {
     onImport: handleImport,
   });
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    void pruneExpiredPendingHandoffImports().catch((error) => {
+      console.error('Failed to prune expired handoff imports:', error);
+    });
+
+    if (handoffBootstrapStartedRef.current) {
+      return;
+    }
+
+    handoffBootstrapStartedRef.current = true;
+
+    void consumeHandoffImportFromUrl({
+      currentUrl: window.location.href,
+      sessionStorage: window.sessionStorage,
+      loadRecord: readPendingHandoffImport,
+      deleteRecord: deletePendingHandoffImport,
+      importArchive: (files) => handleImport(files),
+      replaceUrl: (nextUrl) => {
+        const currentUrl = window.location.href;
+        if (nextUrl !== currentUrl) {
+          window.history.replaceState(window.history.state, '', nextUrl);
+        }
+      },
+      logger: console,
+    });
+  }, [handleImport]);
+
   const ensureAIEntryAvailable = useCallback(() => {
     const liveAssetsState = useAssetsStore.getState();
     const currentSelectedFile = liveAssetsState.selectedFile;
@@ -1028,7 +1088,9 @@ function AppContent() {
       <AppLayout
         importInputRef={importInputRef}
         importFolderInputRef={importFolderInputRef}
-        onFileDrop={(files) => handleImport(files as any)}
+        onFileDrop={(files) => {
+          void handleImport(files);
+        }}
         onOpenExport={handleOpenExportDialog}
         onOpenLibraryExport={handleOpenLibraryExportDialog}
         onExportProject={handleExportProject}

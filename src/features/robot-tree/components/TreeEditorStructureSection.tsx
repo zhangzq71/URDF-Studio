@@ -34,6 +34,7 @@ interface TreeEditorStructureSectionProps {
     linkId: string,
     subType: 'visual' | 'collision',
     objectIndex?: number,
+    suppressPulse?: boolean,
   ) => void;
   onToggleComponentVisibility: (componentId: string) => void;
   onToggleGeometryDetails: () => void;

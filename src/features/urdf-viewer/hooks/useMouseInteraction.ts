@@ -4,7 +4,12 @@ import * as THREE from 'three';
 import { throttle } from '@/shared/utils';
 import type { InteractionSelection } from '@/types';
 import { THROTTLE_INTERVAL } from '../constants';
-import type { ToolMode, ViewerInteractiveLayer, ViewerSceneMode } from '../types';
+import type {
+  ToolMode,
+  ViewerInteractiveLayer,
+  ViewerPaintFaceHit,
+  ViewerSceneMode,
+} from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import {
@@ -87,6 +92,7 @@ export interface UseMouseInteractionOptions {
     objectIndex: number,
     objectType: 'visual' | 'collision',
   ) => void;
+  onPaintFace?: (hit: ViewerPaintFaceHit) => void;
   onJointChange?: (name: string, angle: number) => void;
   onJointChangeCommit?: (name: string, angle: number) => void;
   throttleJointChangeDuringDrag?: boolean;
@@ -131,6 +137,7 @@ export function useMouseInteraction({
   onHover,
   onSelect,
   onMeshSelect,
+  onPaintFace,
   onJointChange,
   onJointChangeCommit,
   throttleJointChangeDuringDrag = false,
@@ -291,6 +298,7 @@ export function useMouseInteraction({
         'rotate',
         'universal',
         'measure',
+        'paint',
       ].includes(toolMode || 'select');
       if (!isStandardSelectionMode) return false;
       if (!shouldBlockOrbitForGeometryHit(toolMode || 'select')) {
@@ -657,6 +665,7 @@ export function useMouseInteraction({
         'rotate',
         'universal',
         'measure',
+        'paint',
       ].includes(toolMode || 'select');
 
       if (!isStandardSelectionMode) return;
@@ -704,6 +713,10 @@ export function useMouseInteraction({
       let resolvedHit: ResolvedHoverInteractionCandidate | null = null;
 
       if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
+        if (toolMode === 'paint') {
+          disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+          return;
+        }
         resolvedHit = getProjectedHelperInteraction();
       } else {
         const intersections = findPickIntersections(
@@ -732,6 +745,47 @@ export function useMouseInteraction({
           helperInteraction ? resolvedCandidates.concat(helperInteraction) : resolvedCandidates,
           interactionLayerPriority,
         ));
+
+        if (toolMode === 'paint') {
+          const paintIntersection = intersections.find((intersection) => {
+            if (intersection.faceIndex === undefined || intersection.faceIndex === null) {
+              return false;
+            }
+
+            if (!(intersection.object instanceof THREE.Mesh)) {
+              return false;
+            }
+
+            const selectionHit = resolveInteractionSelectionHit(robot, intersection.object);
+            return selectionHit?.type === 'link' && selectionHit.subType === 'visual';
+          });
+
+          if (!paintIntersection) {
+            disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+            return;
+          }
+
+          const paintSelectionHit = resolveInteractionSelectionHit(robot, paintIntersection.object);
+          if (!paintSelectionHit?.linkId) {
+            disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+            return;
+          }
+          if (!(paintIntersection.object instanceof THREE.Mesh)) {
+            disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
+            return;
+          }
+
+          onPaintFace?.({
+            linkId: paintSelectionHit.linkId,
+            objectIndex: paintSelectionHit.objectIndex ?? 0,
+            mesh: paintIntersection.object,
+            faceIndex: paintIntersection.faceIndex as number,
+          });
+          clearHoveredState();
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
       }
 
       if (!resolvedHit) {
@@ -946,6 +1000,7 @@ export function useMouseInteraction({
     onHover,
     onSelect,
     onMeshSelect,
+    onPaintFace,
     highlightGeometry,
     toolMode,
     mode,

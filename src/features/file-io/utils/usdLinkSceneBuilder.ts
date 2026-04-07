@@ -1,7 +1,11 @@
 import * as THREE from 'three';
 
 import type { RobotState, UrdfJoint, UrdfLink, UrdfVisual } from '../../../types/index.ts';
-import { getVisualGeometryEntries, resolveVisualMaterialOverride } from '@/core/robot';
+import {
+  getVisualGeometryEntries,
+  hasBoxFaceMaterialPalette,
+  resolveVisualMaterialOverride,
+} from '@/core/robot';
 import {
   buildColladaRootNormalizationHints,
   type ColladaRootNormalizationHints,
@@ -24,6 +28,8 @@ export type BuildUsdLinkSceneRootOptions = {
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null;
   onLinkVisit?: (link: UrdfLink) => void | Promise<void>;
 };
+
+type DeferredSceneMutation = Promise<void>;
 
 const resolveLinkMaterialEntry = (
   robot: RobotState,
@@ -146,6 +152,7 @@ const buildLinkSceneNode = async (
   childIdsByParent: Map<string, string[]>,
   jointsByChild: Map<string, UrdfJoint>,
   registry: UsdAssetRegistry,
+  pendingSceneMutations: DeferredSceneMutation[],
   meshCompression?: UsdMeshCompressionOptions,
   colladaRootNormalizationHints?: ColladaRootNormalizationHints | null,
   onLinkVisit?: (link: UrdfLink) => void | Promise<void>,
@@ -168,8 +175,9 @@ const buildLinkSceneNode = async (
   if (visuals.length > 0) {
     const visualsScope = new THREE.Group();
     visualsScope.name = 'visuals';
+    group.add(visualsScope);
 
-    for (const [index, visualEntry] of visuals.entries()) {
+    const visualNodePromises = visuals.map(async (visualEntry, index) => {
       const visual = visualEntry.geometry;
       const materialState = resolveLinkMaterialEntry(robot, link, visual, {
         isPrimaryVisual: visualEntry.bodyIndex === null,
@@ -182,25 +190,40 @@ const buildLinkSceneNode = async (
         meshCompression,
         colladaRootNormalizationHints,
       });
-      if (!visualNode) continue;
+      if (!visualNode) {
+        return null;
+      }
+
       visualNode.name = `visual_${index}`;
-      if (materialState.color || materialState.texture) {
+      if (!hasBoxFaceMaterialPalette(visual) && (materialState.color || materialState.texture)) {
         applyUsdMaterialMetadata(visualNode, materialState);
       }
-      visualsScope.add(visualNode);
-    }
 
-    if (visualsScope.children.length > 0) {
-      group.add(visualsScope);
-    }
+      return visualNode;
+    });
+
+    pendingSceneMutations.push(
+      Promise.all(visualNodePromises).then((visualNodes) => {
+        visualNodes.forEach((visualNode) => {
+          if (visualNode) {
+            visualsScope.add(visualNode);
+          }
+        });
+
+        if (visualsScope.children.length === 0) {
+          group.remove(visualsScope);
+        }
+      }),
+    );
   }
 
   const collisions = getCollisionVisuals(link);
   if (collisions.length > 0) {
     const collidersScope = new THREE.Group();
     collidersScope.name = 'collisions';
+    group.add(collidersScope);
 
-    for (const [index, collision] of collisions.entries()) {
+    const collisionNodePromises = collisions.map(async (collision, index) => {
       const collisionNode = await buildUsdVisualSceneNode({
         visual: collision,
         role: 'collision',
@@ -208,40 +231,63 @@ const buildLinkSceneNode = async (
         meshCompression,
         colladaRootNormalizationHints,
       });
-      if (!collisionNode) continue;
+      if (!collisionNode) {
+        return null;
+      }
+
       collisionNode.name = `collision_${index}`;
       collisionNode.userData.usdPurpose = 'guide';
       collisionNode.userData.usdCollision = true;
       if (getGeometryType(collision.type) === GEOMETRY_TYPES.MESH) {
         collisionNode.userData.usdMeshCollision = true;
       }
-      collidersScope.add(collisionNode);
-    }
 
-    if (collidersScope.children.length > 0) {
-      group.add(collidersScope);
-    }
+      return collisionNode;
+    });
+
+    pendingSceneMutations.push(
+      Promise.all(collisionNodePromises).then((collisionNodes) => {
+        collisionNodes.forEach((collisionNode) => {
+          if (collisionNode) {
+            collidersScope.add(collisionNode);
+          }
+        });
+
+        if (collidersScope.children.length === 0) {
+          group.remove(collidersScope);
+        }
+      }),
+    );
   }
 
-  for (const childLinkId of childIdsByParent.get(linkId) || []) {
-    const childNode = await buildLinkSceneNode(
-      robot,
-      childLinkId,
-      childIdsByParent,
-      jointsByChild,
-      registry,
-      meshCompression,
-      colladaRootNormalizationHints,
-      onLinkVisit,
+  const childLinkIds = childIdsByParent.get(linkId) || [];
+  if (childLinkIds.length > 0) {
+    const childNodes = await Promise.all(
+      childLinkIds.map((childLinkId) =>
+        buildLinkSceneNode(
+          robot,
+          childLinkId,
+          childIdsByParent,
+          jointsByChild,
+          registry,
+          pendingSceneMutations,
+          meshCompression,
+          colladaRootNormalizationHints,
+          onLinkVisit,
+        ),
+      ),
     );
 
-    const joint = jointsByChild.get(childLinkId);
-    if (joint) {
-      const jointMatrix = createJointLocalMatrix(joint);
-      jointMatrix.decompose(childNode.position, childNode.quaternion, childNode.scale);
-    }
+    childLinkIds.forEach((childLinkId, index) => {
+      const childNode = childNodes[index];
+      const joint = jointsByChild.get(childLinkId);
+      if (joint) {
+        const jointMatrix = createJointLocalMatrix(joint);
+        jointMatrix.decompose(childNode.position, childNode.quaternion, childNode.scale);
+      }
 
-    group.add(childNode);
+      group.add(childNode);
+    });
   }
 
   return group;
@@ -256,14 +302,26 @@ export const buildUsdLinkSceneRoot = async ({
 }: BuildUsdLinkSceneRootOptions): Promise<THREE.Group> => {
   const resolvedHints =
     colladaRootNormalizationHints ?? buildColladaRootNormalizationHints(robot.links);
-  return buildLinkSceneNode(
+  const pendingSceneMutations: DeferredSceneMutation[] = [];
+  const root = await buildLinkSceneNode(
     robot,
     robot.rootLinkId,
     buildChildIdsByParent(robot),
     buildJointsByChild(robot),
     registry,
+    pendingSceneMutations,
     meshCompression,
     resolvedHints,
     onLinkVisit,
   );
+
+  const mutationResults = await Promise.allSettled(pendingSceneMutations);
+  const rejectedMutation = mutationResults.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  if (rejectedMutation) {
+    throw rejectedMutation.reason;
+  }
+
+  return root;
 };

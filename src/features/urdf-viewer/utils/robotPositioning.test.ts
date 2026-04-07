@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {
   alignRobotToGroundBeforeFirstMount,
   beginInitialGroundAlignment,
+  copyRobotRootTransform,
   hasInitialGroundAlignment,
   setInitialGroundAlignment,
   setPreserveAuthoredRootTransform,
@@ -64,4 +65,24 @@ test('aligns the robot to the ground before the first visible mount', () => {
 
   geometry.dispose();
   material.dispose();
+});
+
+test('copyRobotRootTransform preserves the previous runtime root transform state', () => {
+  const previousRobot = new THREE.Group();
+  previousRobot.position.set(1.25, -2.5, 3.75);
+  previousRobot.quaternion.setFromEuler(new THREE.Euler(0.1, -0.2, 0.3));
+  previousRobot.scale.set(1.1, 0.9, 1.2);
+  setInitialGroundAlignment(previousRobot, true);
+  setPreserveAuthoredRootTransform(previousRobot, true);
+
+  const nextRobot = new THREE.Group();
+
+  const copied = copyRobotRootTransform(previousRobot, nextRobot);
+
+  assert.equal(copied, true);
+  assert.deepEqual(nextRobot.position.toArray(), previousRobot.position.toArray());
+  assert.deepEqual(nextRobot.quaternion.toArray(), previousRobot.quaternion.toArray());
+  assert.deepEqual(nextRobot.scale.toArray(), previousRobot.scale.toArray());
+  assert.equal(hasInitialGroundAlignment(nextRobot), true);
+  assert.equal(shouldPreserveAuthoredRootTransform(nextRobot), true);
 });

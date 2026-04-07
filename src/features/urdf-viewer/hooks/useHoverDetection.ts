@@ -593,6 +593,7 @@ export function useHoverDetection({
       'rotate',
       'universal',
       'measure',
+      'paint',
     ].includes(toolMode || 'select');
     const fallbackInteractionSubType = resolveTopLayerInteractionSubType({
       showVisual,

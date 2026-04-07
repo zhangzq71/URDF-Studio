@@ -106,7 +106,12 @@ export const en: TranslationKeys = {
     'Preview mode is read-only. Return to the current editing model to change parameters.',
   name: 'Name',
   visualGeometry: 'Visual Geometry',
+  material: 'Material',
   collisionGeometry: 'Collision Geometry',
+  collisionBodiesList: 'Collision Bodies',
+  collisionBodyItem: 'Collision {index}',
+  collisionBodyPrimary: 'Primary',
+  collisionBodyEmpty: 'No collision bodies yet. Add one to start editing this link.',
   parentJoint: 'Parent Joint',
   childJoint: 'Child Joint',
   noLinkedJoints: 'This link has no related joints to edit in the current mode.',
@@ -129,6 +134,7 @@ export const en: TranslationKeys = {
   meshScale: 'Mesh Scale',
   visible: 'Visible',
   hidden: 'Hidden',
+  slot: 'Slot',
   materialSource: 'Material Source',
   materialSourceInline: 'Inline',
   materialSourceNamed: 'Named',
@@ -153,6 +159,16 @@ export const en: TranslationKeys = {
   eulerRadians: 'Euler (rad)',
   quaternion: 'Quaternion',
   color: 'Color',
+  opacity: 'Opacity',
+  roughness: 'Roughness',
+  metalness: 'Metalness',
+  emissiveColor: 'Emissive',
+  emissiveIntensity: 'Emissive Intensity',
+  tone: 'Tone',
+  presets: 'Presets',
+  recentColors: 'Recent',
+  lighter: 'Lighter',
+  darker: 'Darker',
   texture: 'Texture',
   textureLibrary: 'Texture Library',
   uploadTexture: 'Upload Image',
@@ -161,7 +177,7 @@ export const en: TranslationKeys = {
     'This visual uses multiple authored materials. Base texture editing is read-only here.',
   textureNotFound: 'No image textures in the asset library yet',
   meshLibrary: 'Mesh Library',
-  upload: 'Upload (.stl, .obj, .dae)',
+  upload: 'Upload (.stl, .obj, .dae, .gltf, .glb)',
   selected: 'Selected',
   applyMesh: 'Apply',
   meshHint: 'Click to preview, double-click to apply',
@@ -389,6 +405,7 @@ export const en: TranslationKeys = {
   viewMode: 'View (Pan/Orbit)',
   faceMode: 'Select Face',
   measureMode: 'Measure',
+  paintMode: 'Paint',
   closeToolbar: 'Close Toolbar',
 
   // Toolbox Descriptions
@@ -433,9 +450,10 @@ export const en: TranslationKeys = {
   copy: 'Copy',
   copied: 'Copied!',
   fileBrowser: 'Asset Library',
-  dropOrImport: 'Drop or import\nfolder/ZIP',
+  dropOrImport: 'Drop or import\nfiles',
   dropFilesToImport: 'Drop files to import',
-  dropFilesToImportHint: 'Supports URDF, MJCF, USD, Xacro, ZIP, folders, and related assets',
+  dropFilesToImportHint:
+    'Supports URDF, MJCF, USD, Xacro, ZIP/RAR/7Z/TAR archives, folders, 3D meshes, and images',
   simpleMode: 'Simple',
   proMode: 'Pro',
   structureTree: 'Structure Tree',
@@ -462,8 +480,9 @@ export const en: TranslationKeys = {
   webglRuntimeErrorMessage:
     'The 3D viewport stopped rendering because an unexpected runtime error occurred. Refresh the page and check the browser console if the problem persists.',
   emptyAssemblyHint:
-    'Click files in the asset library above to add them, or right-click for more actions',
-  clickToAddComponent: 'Click a file to add it immediately, or right-click for more actions',
+    'Click robot or mesh files in the asset library above to add them. Image files open in preview; right-click for more actions',
+  clickToAddComponent:
+    'Click robot and mesh files to add them immediately. Images open in preview; right-click for more actions',
   removeFromLibrary: 'Remove from Library',
   deleteAllLibraryFiles: 'Delete All',
   deleteAllLibraryFilesConfirmTitle: 'Delete all library files',
@@ -495,7 +514,7 @@ export const en: TranslationKeys = {
   theme: 'Theme',
   about: 'About',
   more: 'More',
-  importUspZipFile: 'Import USP / ZIP / File',
+  importUspZipFile: 'Import File',
   switchLanguage: 'Switch Language',
   toggleTheme: 'Toggle Theme',
   light: 'Light',
@@ -535,13 +554,14 @@ export const en: TranslationKeys = {
   privacyNoticeLocalProcessing:
     'All data is processed locally in your browser.\nIt will not be uploaded to any cloud server. Your data is safe.',
   importPackageAssetBundleHint:
-    'This robot references package assets ({packages}). Import the full folder or ZIP so meshes and textures are available instead of placeholders.',
+    'This robot references package assets ({packages}). Import the full folder or archive so meshes and textures are available instead of placeholders.',
   importUspSuccess: 'USP imported successfully',
   addedFilesToAssetLibrary: 'Added {count} file(s) to asset library',
   libraryImportSuccessful: 'Library imported successfully!',
   libraryImportPartialWithErrors:
     'Library import finished with {failed}/{total} invalid motor spec file(s).',
   noDefinitionFilesFound: 'No URDF/MJCF/USD file found.',
+  noSupportedImportFilesFound: 'No supported robot, mesh, or image files were found to import.',
   importFailedCheckFiles: 'Failed to import. Please check if the file(s) are valid.',
   jointName: 'Joint Name',
   motorType: 'Motor Type',
@@ -670,6 +690,26 @@ export const en: TranslationKeys = {
   undo: 'Undo',
   redo: 'Redo',
   clearAll: 'Clear All',
+  paintTool: 'Paint',
+  paintColor: 'Paint Color',
+  paintToolHint:
+    'Paint always edits mesh faces through the same face or face-island material workflow.',
+  paintSelectionScope: 'Selection Scope',
+  paintSelectionFace: 'Face',
+  paintSelectionIsland: 'Island',
+  paintOperation: 'Edit Mode',
+  paintOperationPaint: 'Paint',
+  paintOperationErase: 'Erase',
+  paintUnsupportedRobotOnly:
+    'Paint mode currently only works in the RobotModel mesh viewer. USD and offscreen stages are not supported.',
+  paintStatusReady: 'Ready to paint the clicked mesh face.',
+  paintStatusApplied: 'Paint applied to the selected mesh face.',
+  paintStatusRemoved: 'Paint removed from the selected mesh faces.',
+  paintErrorVisualMeshOnly: 'Paint only supports visual mesh geometry.',
+  paintErrorMultiMaterial:
+    'Paint does not yet support editing built-in multi-material targets that were not authored by the paint tool.',
+  paintErrorFaceUnavailable: 'Could not resolve the clicked mesh face.',
+  paintErrorSelectionUnavailable: 'Could not resolve a valid face selection from the clicked mesh.',
 
   // Performance
   performance: 'Performance',
@@ -706,7 +746,13 @@ export const en: TranslationKeys = {
   exportDefaultKp: 'Default Kp / Kv',
   exportIncludeMeshes: 'Include Mesh Files in ZIP',
   exportSdfTextureOverrideNotice:
-    'Texture overrides from the property panel are not exported to SDF in this version.',
+    'SDF export only keeps one material/texture per visual; six-face box textures are flattened to a single texture during export.',
+  exportUrdfBoxFaceTextureFallbackWarning:
+    'URDF does not natively support six different textures on a single box visual, so {count} box visuals were automatically flattened to one material/texture during export.',
+  exportSdfBoxFaceTextureFallbackWarning:
+    'SDF does not natively support six different textures on a single box visual, so {count} box visuals were automatically flattened to one material/texture during export.',
+  exportXacroBoxFaceTextureFallbackWarning:
+    'Xacro ultimately exports with URDF semantics, so {count} box visuals with six different face textures were automatically flattened to one material/texture during export.',
   exportRelativePaths: 'Use Relative Mesh Paths',
   exportRelativePathsDesc: 'Replace package:// with relative paths (./meshes/...)',
   exportIncludeExtended: 'Include Extended URDF',

@@ -149,3 +149,40 @@ test('buildUsdLinkSceneRoot builds visual and collision scopes with joint-author
   assert.ok(childCollisionMesh instanceof THREE.Object3D);
   assert.equal(childCollisionMesh.userData.usdPurpose, 'guide');
 });
+
+test('buildUsdLinkSceneRoot preserves per-face box material metadata without collapsing it to one visual material', async () => {
+  const robot = createTwoLinkRobot();
+  robot.links.base_link.visual.authoredMaterials = [
+    { texture: 'textures/right.png' },
+    { texture: 'textures/left.png' },
+    { texture: 'textures/up.png' },
+    { texture: 'textures/down.png' },
+    { texture: 'textures/front.png' },
+    { texture: 'textures/back.png' },
+  ];
+  robot.materials = {};
+
+  const { registry } = createUsdAssetRegistry({});
+  const root = await buildUsdLinkSceneRoot({
+    robot,
+    registry,
+  });
+
+  const visuals = root.getObjectByName('visuals');
+  assert.ok(visuals instanceof THREE.Group);
+
+  const baseVisual = visuals.children[0] as THREE.Group;
+  assert.equal(baseVisual.name, 'visual_0');
+  assert.equal(baseVisual.userData.usdMaterial, undefined);
+  assert.equal(baseVisual.children.length, 6);
+  assert.equal(
+    (baseVisual.getObjectByName('box_front') as THREE.Mesh | undefined)?.userData?.usdMaterial
+      ?.texture,
+    'textures/front.png',
+  );
+  assert.equal(
+    (baseVisual.getObjectByName('box_back') as THREE.Mesh | undefined)?.userData?.usdMaterial
+      ?.texture,
+    'textures/back.png',
+  );
+});

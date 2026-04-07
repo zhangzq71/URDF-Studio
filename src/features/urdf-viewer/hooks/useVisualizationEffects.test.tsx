@@ -148,11 +148,14 @@ function VisualizationEffectsProbe({
   robot,
   selection,
   hoveredSelection,
+  showCollision = false,
+  showVisual = true,
   showCenterOfMass = false,
   showInertia = false,
   showIkHandles = false,
   showMjcfSites = false,
   robotLinks,
+  linkMeshMapRef,
   onHighlightGeometry,
 }: {
   robot: THREE.Object3D;
@@ -172,11 +175,14 @@ function VisualizationEffectsProbe({
     helperKind?: 'center-of-mass' | 'inertia' | 'origin-axes' | 'joint-axis' | 'ik-handle';
     highlightObjectId?: number;
   };
+  showCollision?: boolean;
+  showVisual?: boolean;
   showCenterOfMass?: boolean;
   showInertia?: boolean;
   showIkHandles?: boolean;
   showMjcfSites?: boolean;
   robotLinks?: Record<string, any>;
+  linkMeshMapRef?: React.RefObject<Map<string, THREE.Mesh[]>>;
   onHighlightGeometry?: (
     linkName: string | null,
     revert: boolean,
@@ -189,8 +195,8 @@ function VisualizationEffectsProbe({
   const { syncHoverHighlight } = useVisualizationEffects({
     robot,
     robotVersion: 1,
-    showCollision: false,
-    showVisual: true,
+    showCollision,
+    showVisual,
     showCollisionAlwaysOnTop: true,
     showInertia,
     showIkHandles,
@@ -211,6 +217,7 @@ function VisualizationEffectsProbe({
     selection,
     highlightGeometry: onHighlightGeometry ?? (() => {}),
     highlightedMeshesRef,
+    linkMeshMapRef,
   });
 
   useEffect(() => {
@@ -231,11 +238,14 @@ function VisualizationEffectsProbe({
 function Harness({
   robot,
   selection,
+  showCollision = false,
+  showVisual = true,
   showCenterOfMass = false,
   showInertia = false,
   showIkHandles = false,
   showMjcfSites = false,
   robotLinks,
+  linkMeshMapRef,
   hoveredSelection,
   onHighlightGeometry,
   snapshotRenderActive = false,
@@ -255,11 +265,14 @@ function Harness({
         robot,
         selection,
         hoveredSelection,
+        showCollision,
+        showVisual,
         showCenterOfMass,
         showInertia,
         showIkHandles,
         showMjcfSites,
         robotLinks,
+        linkMeshMapRef,
         onHighlightGeometry,
       }),
     ),
@@ -393,6 +406,66 @@ test('geometry hover keeps per-object tendon highlights when the hovered target 
   assert.ok(applyCalls.length >= 2);
   assert.equal(applyCalls.at(-2)?.meshToHighlight, firstTendonSegment);
   assert.equal(applyCalls.at(-1)?.meshToHighlight, secondTendonSegment);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('visibility sync rebuilds collision pick targets when collisions are enabled after initial visual-only load', async () => {
+  const { dom, root } = createComponentRoot();
+  const robot = new THREE.Group();
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'base_link';
+
+  const visualGroup = new THREE.Group() as THREE.Group & { isURDFVisual?: boolean };
+  visualGroup.isURDFVisual = true;
+  const visualMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x999999 }),
+  );
+  visualMesh.userData.parentLinkName = 'base_link';
+  visualGroup.add(visualMesh);
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.userData.isCollisionGroup = true;
+  collisionGroup.userData.parentLinkName = 'base_link';
+  collisionGroup.visible = false;
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xff0000 }),
+  );
+  collisionGroup.add(collisionMesh);
+
+  link.add(visualGroup);
+  link.add(collisionGroup);
+  robot.add(link);
+
+  const linkMeshMapRef = {
+    current: new Map<string, THREE.Mesh[]>([['base_link:visual', [visualMesh]]]),
+  } as React.RefObject<Map<string, THREE.Mesh[]>>;
+
+  await renderHarness(root, robot, {
+    linkMeshMapRef,
+    showCollision: false,
+    showCenterOfMass: false,
+    showInertia: false,
+  });
+
+  assert.equal(linkMeshMapRef.current.has('base_link:collision'), false);
+
+  await renderHarness(root, robot, {
+    linkMeshMapRef,
+    showCollision: true,
+    showCenterOfMass: false,
+    showInertia: false,
+  });
+
+  assert.deepEqual(linkMeshMapRef.current.get('base_link:collision'), [collisionMesh]);
+  assert.equal(collisionMesh.userData.parentLinkName, 'base_link');
+  assert.equal(collisionMesh.userData.isCollisionMesh, true);
 
   await act(async () => {
     root.unmount();

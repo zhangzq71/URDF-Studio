@@ -11,6 +11,8 @@ import {
 
 export type PickTargetMode = 'all' | 'visual' | 'collision';
 
+const GEOMETRY_DISTANCE_TIE_EPSILON = 1e-3;
+
 function matchesMode(key: string, mode: PickTargetMode): boolean {
   if (mode === 'all') return true;
   return key.endsWith(`:${mode}`);
@@ -169,11 +171,30 @@ function getInteractionLayerScore(
   return layerPriorityScore + helperBias + overlayBias + renderOrderScore;
 }
 
+function isSelectableHelperHit(hit: THREE.Intersection): boolean {
+  return isSelectableHelperObject(hit.object);
+}
+
 function sortByInteractionPriority(
   hits: THREE.Intersection[],
   interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
 ): THREE.Intersection[] {
   return hits.sort((left, right) => {
+    const leftIsHelper = isSelectableHelperHit(left);
+    const rightIsHelper = isSelectableHelperHit(right);
+
+    if (leftIsHelper !== rightIsHelper) {
+      return leftIsHelper ? -1 : 1;
+    }
+
+    if (
+      !leftIsHelper &&
+      !rightIsHelper &&
+      Math.abs(left.distance - right.distance) > GEOMETRY_DISTANCE_TIE_EPSILON
+    ) {
+      return left.distance - right.distance;
+    }
+
     const leftScore = getInteractionLayerScore(left, interactionLayerPriority);
     const rightScore = getInteractionLayerScore(right, interactionLayerPriority);
 

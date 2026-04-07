@@ -14,7 +14,11 @@ import {
 } from '@/types';
 import { parseMJCF } from '@/core/parsers/mjcf/mjcfParser';
 
-import { resolveLinkIkHandleDescriptor, solveLinkIkPositionTarget } from './linkIk';
+import {
+  resolveLinkIkHandleDescriptor,
+  resolveLinkIkHandleWorldPosition,
+  solveLinkIkPositionTarget,
+} from './linkIk';
 
 function installDomGlobals(): void {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { contentType: 'text/html' });
@@ -379,6 +383,86 @@ test('resolveLinkIkHandleDescriptor exposes the franka fr3 MJCF attachment site 
   assert.ok(Math.abs(descriptor.anchorLocal.x) < 1e-9);
   assert.ok(Math.abs(descriptor.anchorLocal.y) < 1e-9);
   assert.ok(Math.abs(descriptor.anchorLocal.z - 0.107) < 1e-9);
+});
+
+test('solveLinkIkPositionTarget steps off the ARX L5 gripper singularity for axis-aligned drags', () => {
+  installDomGlobals();
+  const xml = fs.readFileSync('test/mujoco_menagerie-main/arx_l5/arx_l5.xml', 'utf8');
+  const robot = parseMJCF(xml);
+
+  assert.ok(robot);
+
+  const descriptor = resolveLinkIkHandleDescriptor(robot, 'link8');
+  assert.ok(descriptor);
+
+  const start = resolveLinkIkHandleWorldPosition(robot, descriptor);
+  const deltas = [
+    { x: 0.01, y: 0, z: 0 },
+    { x: 0, y: 0.01, z: 0 },
+    { x: 0, y: 0, z: 0.01 },
+  ];
+
+  deltas.forEach((delta) => {
+    const target = {
+      x: start.x + delta.x,
+      y: start.y + delta.y,
+      z: start.z + delta.z,
+    };
+    const requestedDistance = Math.hypot(delta.x, delta.y, delta.z);
+    const result = solveLinkIkPositionTarget(robot, {
+      linkId: 'link8',
+      targetWorldPosition: target,
+      maxIterations: 64,
+      positionTolerance: 1e-4,
+      stallTolerance: 1e-8,
+    });
+
+    assert.ok(
+      result.residual + 1e-6 < requestedDistance,
+      `expected residual improvement for ${JSON.stringify(delta)} but got ${result.residual}`,
+    );
+    assert.ok(
+      Object.values(result.angles).some((angle) => Math.abs(angle) > 1e-6),
+      `expected non-zero joint motion for ${JSON.stringify(delta)}`,
+    );
+  });
+});
+
+test('solveLinkIkPositionTarget keeps preview-budget ARX L5 X-axis drags responsive', () => {
+  installDomGlobals();
+  const xml = fs.readFileSync('test/mujoco_menagerie-main/arx_l5/arx_l5.xml', 'utf8');
+  const robot = parseMJCF(xml);
+
+  assert.ok(robot);
+
+  const descriptor = resolveLinkIkHandleDescriptor(robot, 'link8');
+  assert.ok(descriptor);
+
+  const start = resolveLinkIkHandleWorldPosition(robot, descriptor);
+  const delta = { x: 0.01, y: 0, z: 0 };
+  const target = {
+    x: start.x + delta.x,
+    y: start.y + delta.y,
+    z: start.z + delta.z,
+  };
+  const requestedDistance = Math.hypot(delta.x, delta.y, delta.z);
+  const result = solveLinkIkPositionTarget(robot, {
+    linkId: 'link8',
+    targetWorldPosition: target,
+    coordinatePairMaxDistance: 2,
+    maxIterations: 6,
+    positionTolerance: 2e-3,
+    stallTolerance: 1e-4,
+  });
+
+  assert.ok(
+    result.residual + 1e-6 < requestedDistance,
+    `expected preview residual improvement for ${JSON.stringify(delta)} but got ${result.residual}`,
+  );
+  assert.ok(
+    Object.values(result.angles).some((angle) => Math.abs(angle) > 1e-6),
+    `expected preview-budget non-zero joint motion for ${JSON.stringify(delta)}`,
+  );
 });
 
 test('solveLinkIkPositionTarget converges on a reachable prismatic target', () => {

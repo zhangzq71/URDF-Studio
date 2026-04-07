@@ -12,7 +12,23 @@ export type UsdProgressTracker<TPhase extends string = string> = {
   onProgress?: (progress: UsdProgressEvent<TPhase>) => void;
 };
 
+export const isUsdExportRunningInWorkerScope = (): boolean => {
+  if (typeof WorkerGlobalScope === 'undefined') {
+    return false;
+  }
+
+  return globalThis instanceof WorkerGlobalScope;
+};
+
 export const yieldToMainThread = async (): Promise<void> => {
+  // USD export already runs inside a dedicated worker in the app path.
+  // Yielding there via setTimeout(0) turns large mesh serialization into
+  // repeated sleeps and leaves CPU underutilized, so keep cooperative yields
+  // only for main-thread callers.
+  if (isUsdExportRunningInWorkerScope()) {
+    return;
+  }
+
   await new Promise<void>((resolve) => {
     if (typeof globalThis.requestAnimationFrame === 'function') {
       globalThis.requestAnimationFrame(() => resolve());

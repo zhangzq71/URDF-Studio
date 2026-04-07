@@ -1,5 +1,6 @@
 import { JointsPanel } from '@/shared/components/Panel/JointsPanel';
 import { MeasurePanel } from './MeasurePanel';
+import { PaintPanel } from './PaintPanel';
 import { ViewerOptionsPanel } from './ViewerOptionsPanel';
 import { ViewerToolbar } from './ViewerToolbar';
 import { translations, type Language } from '@/shared/i18n';
@@ -18,6 +19,7 @@ interface URDFViewerPanelsProps {
   showJointPanel?: boolean;
   setShowJointPanel?: (show: boolean) => void;
   preferEdgeDockedOptionsPanel?: boolean;
+  paintModeSupported?: boolean;
 }
 
 export const URDFViewerPanels = ({
@@ -32,6 +34,7 @@ export const URDFViewerPanels = ({
   showJointPanel = true,
   setShowJointPanel,
   preferEdgeDockedOptionsPanel = false,
+  paintModeSupported = true,
 }: URDFViewerPanelsProps) => {
   const t = translations[lang];
   const { optionsDefaultPosition, jointsDefaultPosition, jointsPanelMaxHeight } =
@@ -147,6 +150,20 @@ export const URDFViewerPanels = ({
         showMeasureDecomposition={controller.showMeasureDecomposition}
         setShowMeasureDecomposition={controller.setShowMeasureDecomposition}
         lang={lang}
+      />
+
+      <PaintPanel
+        lang={lang}
+        toolMode={controller.toolMode}
+        paintColor={controller.paintColor}
+        onPaintColorChange={controller.setPaintColor}
+        paintSelectionScope={controller.paintSelectionScope}
+        onPaintSelectionScopeChange={controller.setPaintSelectionScope}
+        paintOperation={controller.paintOperation}
+        onPaintOperationChange={controller.setPaintOperation}
+        paintStatus={controller.paintStatus}
+        supported={paintModeSupported}
+        onClose={controller.handleClosePaintTool}
       />
     </>
   );

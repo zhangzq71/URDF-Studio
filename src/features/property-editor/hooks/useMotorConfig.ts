@@ -11,6 +11,7 @@ interface JointHardware {
   armature?: number;
   motorId?: string;
   motorDirection?: number;
+  hardwareInterface?: 'effort' | 'position' | 'velocity';
 }
 
 interface JointLimit {
@@ -61,7 +62,7 @@ export function useMotorConfig({
   motorLibrary,
   data,
   selectionId,
-  onUpdate
+  onUpdate,
 }: {
   motorLibrary: Record<string, MotorSpec[]>;
   data: JointDataForMotor | null;
@@ -96,9 +97,12 @@ export function useMotorConfig({
       return;
     }
 
-    const nextBrand = persistedMotorSource === 'Library'
-      ? (persistedMotorBrand || defaultBrand)
-      : ((!motorBrand || !motorLibrary[motorBrand]) ? defaultBrand : motorBrand);
+    const nextBrand =
+      persistedMotorSource === 'Library'
+        ? persistedMotorBrand || defaultBrand
+        : !motorBrand || !motorLibrary[motorBrand]
+          ? defaultBrand
+          : motorBrand;
 
     if (displayMotorSource !== persistedMotorSource) {
       setDisplayMotorSource(persistedMotorSource);
@@ -121,14 +125,12 @@ export function useMotorConfig({
   // Derived values
   const currentMotorType = displayMotorType || NONE_MOTOR_TYPE;
 
-  const currentLibMotor = displayMotorSource === 'Library' && motorBrand
-    ? motorLibrary[motorBrand]?.find(m => m.name === currentMotorType)
-    : null;
+  const currentLibMotor =
+    displayMotorSource === 'Library' && motorBrand
+      ? motorLibrary[motorBrand]?.find((m) => m.name === currentMotorType)
+      : null;
 
-  const commitJointUpdates = (updates: {
-    hardware?: JointHardware;
-    limit?: JointLimit;
-  }) => {
+  const commitJointUpdates = (updates: { hardware?: JointHardware; limit?: JointLimit }) => {
     if (!selectionId) {
       return;
     }
@@ -147,9 +149,18 @@ export function useMotorConfig({
     if (nextSource === 'None') {
       setDisplayMotorSource('None');
       setDisplayMotorType(NONE_MOTOR_TYPE);
-      newHardware.brand = '';
-      newHardware.motorType = NONE_MOTOR_TYPE;
-      newHardware.armature = 0;
+      commitJointUpdates({
+        hardware: {
+          brand: '',
+          motorType: NONE_MOTOR_TYPE,
+          armature: 0,
+          motorId: '',
+          motorDirection: 1,
+          hardwareInterface: undefined,
+        },
+        limit: newLimit,
+      });
+      return;
     } else if (nextSource === 'Library') {
       const nextBrand = motorLibrary[motorBrand] ? motorBrand : defaultBrand;
       const motor = nextBrand ? motorLibrary[nextBrand]?.[0] : undefined;
@@ -168,9 +179,10 @@ export function useMotorConfig({
         newLimit.effort = motor.effort;
       }
     } else if (nextSource === 'Custom') {
-      const nextMotorType = persistedMotorType === NONE_MOTOR_TYPE || persistedMotorSource === 'Library'
-        ? 'my_motor'
-        : persistedMotorType;
+      const nextMotorType =
+        persistedMotorType === NONE_MOTOR_TYPE || persistedMotorSource === 'Library'
+          ? 'my_motor'
+          : persistedMotorType;
       setDisplayMotorSource('Custom');
       setDisplayMotorType(nextMotorType);
       newHardware.brand = '';
@@ -189,20 +201,30 @@ export function useMotorConfig({
       setDisplayMotorSource('Library');
       setDisplayMotorType(motor.name);
       commitJointUpdates({
-        hardware: { ...data?.hardware, brand: newBrand, motorType: motor.name, armature: motor.armature },
-        limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort }
+        hardware: {
+          ...data?.hardware,
+          brand: newBrand,
+          motorType: motor.name,
+          armature: motor.armature,
+        },
+        limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort },
       });
     }
   };
 
   const handleLibraryMotorChange = (motorName: string) => {
-    const motor = motorLibrary[motorBrand]?.find(m => m.name === motorName);
+    const motor = motorLibrary[motorBrand]?.find((m) => m.name === motorName);
     if (motor) {
       setDisplayMotorSource('Library');
       setDisplayMotorType(motor.name);
       commitJointUpdates({
-        hardware: { ...data?.hardware, brand: motorBrand, motorType: motor.name, armature: motor.armature },
-        limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort }
+        hardware: {
+          ...data?.hardware,
+          brand: motorBrand,
+          motorType: motor.name,
+          armature: motor.armature,
+        },
+        limit: { ...data?.limit, velocity: motor.velocity, effort: motor.effort },
       });
     }
   };
@@ -214,6 +236,6 @@ export function useMotorConfig({
     currentLibMotor,
     handleSourceChange,
     handleBrandChange,
-    handleLibraryMotorChange
+    handleLibraryMotorChange,
   };
 }

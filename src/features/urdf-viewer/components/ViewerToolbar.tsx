@@ -1,6 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { Move, MousePointer2, View as ViewIcon, Scan, Ruler, X } from 'lucide-react';
+import { Move, MousePointer2, View as ViewIcon, Scan, Ruler, Palette, X } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import { IconButton } from '@/shared/components/ui';
 import type { ViewerToolbarProps, ToolMode } from '../types';
@@ -84,6 +84,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
     { id: 'view', icon: ViewIcon, label: t.viewMode },
     { id: 'select', icon: MousePointer2, label: t.selectMode },
     { id: 'universal', icon: Move, label: t.transformMode },
+    { id: 'paint', icon: Palette, label: t.paintMode },
     { id: 'face', icon: Scan, label: t.faceMode },
     { id: 'measure', icon: Ruler, label: t.measureMode },
   ];

@@ -36,14 +36,17 @@ test('usdExport worker transfer serialization preserves extra mesh blobs in requ
 
   assert.equal(serialized.payload.exportName, 'worker_bot');
   assert.equal(serialized.payload.extraMeshFiles.length, 2);
-  assert.equal(serialized.transferables.length, 2);
+  assert.equal(serialized.transferables.length, 0);
+  assert.ok(serialized.payload.extraMeshFiles.every((file) => file.blob instanceof Blob));
 
   const hydrated = hydrateUsdExportRequestFromWorker(serialized.payload);
   assert.equal(hydrated.exportName, 'worker_bot');
   assert.equal(hydrated.assets['meshes/base.glb'], 'blob:mesh-base');
   assert.equal(await hydrated.extraMeshFiles?.get('meshes/base.glb')?.text(), 'mesh-bytes');
   assert.deepEqual(
-    Array.from(new Uint8Array(await hydrated.extraMeshFiles?.get('textures/base.png')!.arrayBuffer())),
+    Array.from(
+      new Uint8Array(await hydrated.extraMeshFiles?.get('textures/base.png')!.arrayBuffer()),
+    ),
     [1, 2, 3],
   );
   assert.deepEqual(hydrated.meshCompression, {
@@ -59,21 +62,30 @@ test('usdExport worker transfer serialization preserves archive blobs in result 
     archiveFileName: 'worker_bot_usd.zip',
     rootLayerPath: 'worker_bot/usd/worker_bot.usd',
     archiveFiles: new Map<string, Blob>([
-      ['worker_bot/usd/worker_bot.usd', new Blob(['PXR-USDCROOT'], { type: 'application/octet-stream' })],
+      [
+        'worker_bot/usd/worker_bot.usd',
+        new Blob(['PXR-USDCROOT'], { type: 'application/octet-stream' }),
+      ],
       ['worker_bot/assets/base.png', new Blob([new Uint8Array([9, 8, 7])], { type: 'image/png' })],
     ]),
   });
 
   assert.equal(serialized.payload.archiveFiles.length, 2);
-  assert.equal(serialized.transferables.length, 2);
+  assert.equal(serialized.transferables.length, 0);
+  assert.ok(serialized.payload.archiveFiles.every((file) => file.blob instanceof Blob));
 
   const hydrated = hydrateUsdExportResultFromWorker(serialized.payload);
   assert.equal(hydrated.downloadFileName, 'worker_bot.usd');
   assert.equal(hydrated.archiveFileName, 'worker_bot_usd.zip');
   assert.equal(hydrated.rootLayerPath, 'worker_bot/usd/worker_bot.usd');
-  assert.equal(await hydrated.archiveFiles.get('worker_bot/usd/worker_bot.usd')?.text(), 'PXR-USDCROOT');
+  assert.equal(
+    await hydrated.archiveFiles.get('worker_bot/usd/worker_bot.usd')?.text(),
+    'PXR-USDCROOT',
+  );
   assert.deepEqual(
-    Array.from(new Uint8Array(await hydrated.archiveFiles.get('worker_bot/assets/base.png')!.arrayBuffer())),
+    Array.from(
+      new Uint8Array(await hydrated.archiveFiles.get('worker_bot/assets/base.png')!.arrayBuffer()),
+    ),
     [9, 8, 7],
   );
 });

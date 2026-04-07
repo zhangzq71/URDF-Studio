@@ -18,6 +18,9 @@ import type {
   MeasureAnchorMode,
   MeasureState,
   ToolMode,
+  ViewerPaintOperation,
+  ViewerPaintSelectionScope,
+  ViewerPaintStatus,
   URDFViewerProps,
   ViewerHelperKind,
   ViewerJointMotionStateValue,
@@ -216,6 +219,11 @@ export const useURDFViewerController = ({
   const [measureState, setMeasureState] = useState<MeasureState>(createEmptyMeasureState);
   const [measureAnchorMode, setMeasureAnchorMode] = useState<MeasureAnchorMode>('frame');
   const [showMeasureDecomposition, setShowMeasureDecomposition] = useState(false);
+  const [paintColor, setPaintColor] = useState('#ff6c0a');
+  const [paintSelectionScope, setPaintSelectionScope] =
+    useState<ViewerPaintSelectionScope>('island');
+  const [paintOperation, setPaintOperation] = useState<ViewerPaintOperation>('paint');
+  const [paintStatus, setPaintStatus] = useState<ViewerPaintStatus | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const optionsPanelRef = useRef<HTMLDivElement>(null);
   const jointPanelRef = useRef<HTMLDivElement>(null);
@@ -735,6 +743,7 @@ export const useURDFViewerController = ({
           'view',
           'face',
           'measure',
+          'paint',
         ];
         const resolvedMode = allowedModes.includes(normalizedMode as ToolMode)
           ? (normalizedMode as ToolMode)
@@ -749,6 +758,9 @@ export const useURDFViewerController = ({
           });
           if (resolvedMode !== 'measure') {
             setMeasureState((prev) => (!prev.hoverTarget ? prev : { ...prev, hoverTarget: null }));
+          }
+          if (resolvedMode !== 'paint') {
+            setPaintStatus(null);
           }
         }
 
@@ -1375,6 +1387,9 @@ export const useURDFViewerController = ({
       if (nextMode !== 'measure') {
         setMeasureState((prev) => (!prev.hoverTarget ? prev : { ...prev, hoverTarget: null }));
       }
+      if (nextMode !== 'paint') {
+        setPaintStatus(null);
+      }
     },
     [normalizedToolModeScopeKey],
   );
@@ -1388,6 +1403,15 @@ export const useURDFViewerController = ({
     });
     onHover?.(null, null);
   }, [normalizedToolModeScopeKey, onHover]);
+
+  const handleClosePaintTool = useCallback(() => {
+    setPaintStatus(null);
+    setToolModeState({
+      scopeKey: normalizedToolModeScopeKey,
+      explicit: true,
+      mode: 'select',
+    });
+  }, [normalizedToolModeScopeKey]);
 
   const handlePointerMissed = useCallback(() => {
     if (justSelectedRef.current) return;
@@ -1484,6 +1508,14 @@ export const useURDFViewerController = ({
     setMeasureAnchorMode,
     showMeasureDecomposition,
     setShowMeasureDecomposition,
+    paintColor,
+    setPaintColor,
+    paintSelectionScope,
+    setPaintSelectionScope,
+    paintOperation,
+    setPaintOperation,
+    paintStatus,
+    setPaintStatus,
     containerRef,
     optionsPanelRef,
     jointPanelRef,
@@ -1527,6 +1559,7 @@ export const useURDFViewerController = ({
     groundPlaneOffsetReadOnly,
     handleToolModeChange,
     handleCloseMeasureTool,
+    handleClosePaintTool,
     handlePointerMissed,
   };
 };

@@ -77,7 +77,7 @@ export function TreeEditorFileBrowserPanel({
       onFolderRenameDraftChange={onFolderRenameDraftChange}
       onCommitFolderRename={onCommitFolderRename}
       onCancelFolderRename={onCancelFolderRename}
-      onFileActivate={isProMode ? onAddComponent : onLoadRobot}
+      onLoadRobot={onLoadRobot}
       onFileContextMenu={onFileContextMenu}
       onFolderContextMenu={onFolderContextMenu}
       onToggleOpen={onToggleOpen}

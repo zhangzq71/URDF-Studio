@@ -33,7 +33,8 @@ export type ToolMode =
   | 'universal'
   | 'view'
   | 'face'
-  | 'measure';
+  | 'measure'
+  | 'paint';
 export type ViewerSceneMode = 'editor';
 export type ViewerHelperKind = InteractionHelperKind;
 export type ViewerInteractiveLayer =
@@ -96,6 +97,22 @@ export type MeasureTargetResolver = (
   fallbackSelection?: MeasureSelectionLike,
   anchorMode?: MeasureAnchorMode,
 ) => MeasureTarget | null;
+
+export type ViewerPaintStatusTone = 'info' | 'success' | 'error';
+export type ViewerPaintSelectionScope = 'face' | 'island';
+export type ViewerPaintOperation = 'paint' | 'erase';
+
+export interface ViewerPaintStatus {
+  tone: ViewerPaintStatusTone;
+  message: string;
+}
+
+export interface ViewerPaintFaceHit {
+  linkId: string;
+  objectIndex: number;
+  mesh: THREE.Mesh;
+  faceIndex: number;
+}
 
 export interface ViewerRuntimeStageBridge {
   onRobotResolved?: (robot: any | null) => void;
@@ -223,6 +240,10 @@ export interface RobotModelProps {
     objectIndex: number,
     objectType: 'visual' | 'collision',
   ) => void;
+  paintColor?: string;
+  paintSelectionScope?: ViewerPaintSelectionScope;
+  paintOperation?: ViewerPaintOperation;
+  onPaintStatusChange?: (status: ViewerPaintStatus | null) => void;
   onJointChange?: (name: string, angle: number) => void;
   onJointChangeCommit?: (name: string, angle: number) => void;
   initialJointAngles?: Record<string, number>;

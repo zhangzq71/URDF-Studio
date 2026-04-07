@@ -1,17 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { JSDOM } from 'jsdom';
 
 import {
   buildStandaloneImportAssetWarning,
   buildStandalonePackageAssetImportWarning,
+  collectStandaloneImportSupportAssetPaths,
   extractStandaloneImportAssetReferences,
   extractPackageAssetBundleRoots,
   inferCommonPackageAssetBundleRoot,
 } from './importPackageAssetReferences.ts';
+import { prepareImportPayload } from './importPreparation.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
+globalThis.XMLSerializer = dom.window.XMLSerializer as typeof XMLSerializer;
 
 test('extractPackageAssetBundleRoots keeps ROS package roots with intermediate model folders', () => {
   const content = `
@@ -353,6 +357,38 @@ test('buildStandaloneImportAssetWarning tolerates renamed top-level package fold
     },
     ['autokit (1)/meshes/base_link.STL'],
   );
+
+  assert.equal(warning, null);
+});
+
+test('collectStandaloneImportSupportAssetPaths keeps xuebao archive warnings silent when deferred mesh assets are still pending hydration', async () => {
+  const zipFile = new File([fs.readFileSync('test/xuebao.zip')], 'xuebao.zip', {
+    type: 'application/zip',
+  });
+
+  const prepared = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  const preferredFile = prepared.preferredFileName
+    ? (prepared.robotFiles.find((file) => file.name === prepared.preferredFileName) ?? null)
+    : null;
+
+  assert.ok(preferredFile, 'expected xuebao preferred file');
+
+  const importedAssetPaths = collectStandaloneImportSupportAssetPaths(
+    Object.fromEntries(prepared.assetFiles.map((file) => [file.name, `blob:${file.name}`])),
+    prepared.robotFiles,
+  );
+
+  const warning = buildStandaloneImportAssetWarning(preferredFile, importedAssetPaths, {
+    allFileContents: Object.fromEntries(
+      prepared.textFiles.map((file) => [file.path, file.content]),
+    ),
+    sourcePath: preferredFile.name,
+  });
 
   assert.equal(warning, null);
 });

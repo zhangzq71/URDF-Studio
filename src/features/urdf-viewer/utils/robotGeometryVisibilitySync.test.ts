@@ -174,6 +174,78 @@ test('syncRobotGeometryVisibility respects non-topmost collision rendering mode'
   assert.equal(collisionBaseMaterial.depthTest, true);
 });
 
+test('syncRobotGeometryVisibility treats MJCF collision groups as collider roots', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.userData.isCollisionGroup = true;
+  collisionGroup.visible = false;
+
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionMesh.userData.isCollisionMesh = true;
+  collisionGroup.add(collisionMesh);
+
+  link.add(collisionGroup);
+  robot.add(link);
+
+  const changed = syncRobotGeometryVisibility({
+    robot,
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: false,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(collisionGroup.visible, true);
+  assert.equal(collisionMesh.visible, true);
+  assert.equal(collisionMesh.material, collisionBaseMaterial);
+});
+
+test('syncRobotGeometryVisibility keeps MJCF collision overlays visible for folded semantic links', () => {
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  collisionGroup.userData.isCollisionGroup = true;
+  collisionGroup.visible = false;
+
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionMesh.userData.isCollisionMesh = true;
+  collisionGroup.add(collisionMesh);
+
+  link.add(collisionGroup);
+  robot.add(link);
+
+  const changed = syncRobotGeometryVisibility({
+    robot,
+    robotLinks: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visible: false,
+      },
+    },
+    sourceFormat: 'mjcf',
+    showCollision: true,
+    showVisual: false,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(collisionGroup.visible, true);
+  assert.equal(collisionMesh.visible, true);
+  assert.equal(collisionMesh.material, collisionBaseMaterial);
+});
+
 test('syncRobotGeometryVisibility hides MJCF world visuals and collisions even without semantic robot link data', () => {
   const robot = new THREE.Group();
   const worldLink = new URDFLink();

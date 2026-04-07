@@ -15,7 +15,7 @@ export interface HoverInteractionResolution {
 
 const SUPPORT_SURFACE_HOVER_PENALTY = 10_000_000;
 const SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON = 1e-3;
-const SCREEN_SPACE_PROJECTED_HELPER_BIAS = 100_000_000;
+const GEOMETRY_DISTANCE_TIE_EPSILON = 1e-3;
 
 function resolveCandidateLayer(
   candidate: ResolvedHoverInteractionCandidate,
@@ -112,7 +112,6 @@ function getInteractionLayerPriorityScore(
 function getInteractionScore(
   candidate: ResolvedHoverInteractionCandidate,
   interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
-  supportSurfacePenalty = 0,
 ): number {
   const interactionLayer = resolveCandidateLayer(candidate);
   const candidateObject = getCandidateObject(candidate);
@@ -122,18 +121,8 @@ function getInteractionScore(
   );
   const helperBias = layerPriorityScore === 0 && candidate.targetKind === 'helper' ? 100_000 : 0;
   const overlayBias = hasOverlayPresentation(candidateObject) ? 10_000 : 0;
-  const screenSpaceHelperBias = candidate.screenSpaceProjected
-    ? SCREEN_SPACE_PROJECTED_HELPER_BIAS
-    : 0;
 
-  return (
-    layerPriorityScore +
-    helperBias +
-    overlayBias +
-    screenSpaceHelperBias +
-    getEffectiveRenderOrder(candidateObject) -
-    supportSurfacePenalty
-  );
+  return layerPriorityScore + helperBias + overlayBias + getEffectiveRenderOrder(candidateObject);
 }
 
 function isSupportSurfaceGeometryCandidate(candidate: ResolvedHoverInteractionCandidate): boolean {
@@ -158,28 +147,57 @@ function shouldDeprioritizeSupportSurfaceCandidate(
   );
 }
 
+function isHelperCandidate(candidate: ResolvedHoverInteractionCandidate): boolean {
+  return candidate.targetKind === 'helper';
+}
+
+function getCandidateSortDistance(
+  candidate: ResolvedHoverInteractionCandidate,
+  candidates: readonly ResolvedHoverInteractionCandidate[],
+): number {
+  if (shouldDeprioritizeSupportSurfaceCandidate(candidate, candidates)) {
+    return candidate.distance + SUPPORT_SURFACE_HOVER_PENALTY;
+  }
+
+  return candidate.distance;
+}
+
 export function resolveHoverInteractionResolution(
   candidates: ResolvedHoverInteractionCandidate[],
   interactionLayerPriority?: readonly ViewerInteractiveLayer[],
 ): HoverInteractionResolution {
   const sortedCandidates = [...candidates].sort((left, right) => {
-    const leftScore = getInteractionScore(
-      left,
-      interactionLayerPriority,
-      shouldDeprioritizeSupportSurfaceCandidate(left, candidates)
-        ? SUPPORT_SURFACE_HOVER_PENALTY
-        : 0,
-    );
-    const rightScore = getInteractionScore(
-      right,
-      interactionLayerPriority,
-      shouldDeprioritizeSupportSurfaceCandidate(right, candidates)
-        ? SUPPORT_SURFACE_HOVER_PENALTY
-        : 0,
-    );
+    const leftIsHelper = isHelperCandidate(left);
+    const rightIsHelper = isHelperCandidate(right);
+
+    if (left.screenSpaceProjected !== right.screenSpaceProjected) {
+      return left.screenSpaceProjected ? -1 : 1;
+    }
+
+    if (leftIsHelper !== rightIsHelper) {
+      return leftIsHelper ? -1 : 1;
+    }
+
+    const leftSortDistance = getCandidateSortDistance(left, candidates);
+    const rightSortDistance = getCandidateSortDistance(right, candidates);
+
+    if (
+      !leftIsHelper &&
+      !rightIsHelper &&
+      Math.abs(leftSortDistance - rightSortDistance) > GEOMETRY_DISTANCE_TIE_EPSILON
+    ) {
+      return leftSortDistance - rightSortDistance;
+    }
+
+    const leftScore = getInteractionScore(left, interactionLayerPriority);
+    const rightScore = getInteractionScore(right, interactionLayerPriority);
 
     if (leftScore !== rightScore) {
       return rightScore - leftScore;
+    }
+
+    if (leftSortDistance !== rightSortDistance) {
+      return leftSortDistance - rightSortDistance;
     }
 
     if (left.distance !== right.distance) {

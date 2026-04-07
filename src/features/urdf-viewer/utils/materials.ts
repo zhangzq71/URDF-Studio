@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { disposeMaterial } from './dispose';
 export { disposeMaterial } from './dispose';
 import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
+import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
 
 // Re-export shared material factory so existing consumers keep working
 export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
@@ -345,18 +346,69 @@ export const enhanceSingleMaterial = (
   envMap?: THREE.Texture | null,
 ): THREE.Material => {
   const usesVertexColors = Boolean((material as any).vertexColors);
+  const parsedUrdfColor = material.userData.urdfColorApplied
+    ? parseThreeColorWithOpacity(material.userData.urdfColor)
+    : null;
 
   // Extract color from existing material
   // Priority: URDF color > existing material color > default gray
   let color: THREE.Color;
-  if (material.userData.urdfColorApplied && material.userData.urdfColor) {
+  if (parsedUrdfColor) {
     // Preserve URDF-defined color (from applyURDFMaterials)
-    color = (material.userData.urdfColor as THREE.Color).clone();
+    color = parsedUrdfColor.color.clone();
   } else if ((material as any).color) {
     color = (material as any).color.clone();
   } else {
     color = new THREE.Color(0x888888);
   }
+
+  const resolveUnitIntervalValue = (value: unknown): number | undefined => {
+    if (!Number.isFinite(value)) {
+      return undefined;
+    }
+
+    return Math.min(1, Math.max(0, Number(value)));
+  };
+
+  const resolveNonNegativeValue = (value: unknown): number | undefined => {
+    if (!Number.isFinite(value)) {
+      return undefined;
+    }
+
+    return Math.max(0, Number(value));
+  };
+
+  const parsedUrdfEmissive = material.userData?.urdfEmissiveApplied
+    ? parseThreeColorWithOpacity(material.userData.urdfEmissive)
+    : null;
+  const existingEmissive =
+    parsedUrdfEmissive?.color ??
+    ((material.userData?.originalEmissive as THREE.Color | undefined)?.isColor
+      ? (material.userData.originalEmissive as THREE.Color).clone()
+      : undefined) ??
+    (((material as THREE.MeshStandardMaterial).emissive as THREE.Color | undefined)?.isColor
+      ? ((material as THREE.MeshStandardMaterial).emissive as THREE.Color).clone()
+      : undefined);
+  const existingEmissiveIntensity =
+    resolveNonNegativeValue(
+      material.userData?.urdfEmissiveIntensityApplied
+        ? material.userData.urdfEmissiveIntensity
+        : undefined,
+    ) ??
+    resolveNonNegativeValue((material as THREE.MeshStandardMaterial).emissiveIntensity) ??
+    resolveNonNegativeValue(material.userData?.originalEmissiveIntensity);
+  const existingRoughness =
+    resolveUnitIntervalValue(
+      material.userData?.urdfRoughnessApplied ? material.userData.urdfRoughness : undefined,
+    ) ??
+    resolveUnitIntervalValue((material as THREE.MeshStandardMaterial).roughness) ??
+    resolveUnitIntervalValue(material.userData?.originalRoughness);
+  const existingMetalness =
+    resolveUnitIntervalValue(
+      material.userData?.urdfMetalnessApplied ? material.userData.urdfMetalness : undefined,
+    ) ??
+    resolveUnitIntervalValue((material as THREE.MeshStandardMaterial).metalness) ??
+    resolveUnitIntervalValue(material.userData?.originalMetalness);
 
   // Extract existing properties
   const existingMap = (material as any).map || null;
@@ -381,6 +433,10 @@ export const enhanceSingleMaterial = (
     transparent: existingTransparent,
     side: existingSide,
     map: existingMap,
+    roughness: existingRoughness,
+    metalness: existingMetalness,
+    emissive: existingEmissive,
+    emissiveIntensity: existingEmissiveIntensity,
     name: material.name,
     preserveExactColor,
   });
@@ -417,6 +473,26 @@ export const enhanceSingleMaterial = (
   if (material.userData.urdfColorApplied) {
     newMat.userData.urdfColorApplied = true;
     newMat.userData.urdfColor = color.clone();
+  }
+  if (parsedUrdfEmissive?.color) {
+    newMat.userData.urdfEmissiveApplied = true;
+    newMat.userData.urdfEmissive = parsedUrdfEmissive.color.clone();
+  }
+  if (material.userData?.urdfRoughnessApplied) {
+    newMat.userData.urdfRoughnessApplied = true;
+    newMat.userData.urdfRoughness = material.userData.urdfRoughness;
+  }
+  if (material.userData?.urdfMetalnessApplied) {
+    newMat.userData.urdfMetalnessApplied = true;
+    newMat.userData.urdfMetalness = material.userData.urdfMetalness;
+  }
+  if (material.userData?.urdfOpacityApplied) {
+    newMat.userData.urdfOpacityApplied = true;
+    newMat.userData.urdfOpacity = material.userData.urdfOpacity;
+  }
+  if (material.userData?.urdfEmissiveIntensityApplied) {
+    newMat.userData.urdfEmissiveIntensityApplied = true;
+    newMat.userData.urdfEmissiveIntensity = material.userData.urdfEmissiveIntensity;
   }
 
   newMat.needsUpdate = true;
@@ -460,6 +536,12 @@ export const toggleEnhancedLighting = (
             stdMat.roughness = stdMat.userData.originalRoughness ?? 0.7;
             stdMat.metalness = stdMat.userData.originalMetalness ?? 0.1;
             stdMat.envMapIntensity = stdMat.userData.originalEnvMapIntensity ?? 0.8;
+            if ((stdMat.userData.originalEmissive as THREE.Color | undefined)?.isColor) {
+              stdMat.emissive.copy(stdMat.userData.originalEmissive as THREE.Color);
+            } else {
+              stdMat.emissive.set(0x000000);
+            }
+            stdMat.emissiveIntensity = stdMat.userData.originalEmissiveIntensity ?? 0;
           }
 
           stdMat.needsUpdate = true;

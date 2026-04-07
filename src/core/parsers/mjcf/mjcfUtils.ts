@@ -44,6 +44,12 @@ export interface MJCFMaterial {
 export interface MJCFTexture {
   name: string;
   file?: string;
+  fileback?: string;
+  filedown?: string;
+  filefront?: string;
+  fileleft?: string;
+  fileright?: string;
+  fileup?: string;
   type?: string;
   builtin?: string;
 }
@@ -935,22 +941,48 @@ export function parseTextureAssets(
   }
 
   let textureIndex = 0;
+  const normalizeTextureFilePath = (filePath: string | null | undefined): string | undefined => {
+    const normalizedPath = String(filePath || '').trim();
+    if (!normalizedPath) {
+      return undefined;
+    }
+
+    if (!settings?.texturedir || normalizedPath.startsWith('/') || normalizedPath.includes(':')) {
+      return normalizedPath;
+    }
+
+    const prefix = settings.texturedir.endsWith('/')
+      ? settings.texturedir
+      : `${settings.texturedir}/`;
+    return `${prefix}${normalizedPath}`;
+  };
   const assetSections = mujocoEl.querySelectorAll(':scope > asset');
   assetSections.forEach((assetEl) => {
     const textures = assetEl.querySelectorAll(':scope > texture');
     textures.forEach((textureEl) => {
       const textureAttrs = resolveElementAttributes(defaults, 'texture', textureEl);
-      let file = textureEl.getAttribute('file') || textureAttrs.file;
+      const file = normalizeTextureFilePath(textureEl.getAttribute('file') || textureAttrs.file);
+      const fileback = normalizeTextureFilePath(
+        textureEl.getAttribute('fileback') || textureAttrs.fileback,
+      );
+      const filedown = normalizeTextureFilePath(
+        textureEl.getAttribute('filedown') || textureAttrs.filedown,
+      );
+      const filefront = normalizeTextureFilePath(
+        textureEl.getAttribute('filefront') || textureAttrs.filefront,
+      );
+      const fileleft = normalizeTextureFilePath(
+        textureEl.getAttribute('fileleft') || textureAttrs.fileleft,
+      );
+      const fileright = normalizeTextureFilePath(
+        textureEl.getAttribute('fileright') || textureAttrs.fileright,
+      );
+      const fileup = normalizeTextureFilePath(
+        textureEl.getAttribute('fileup') || textureAttrs.fileup,
+      );
       const builtin = textureEl.getAttribute('builtin') || textureAttrs.builtin || undefined;
       const type = textureEl.getAttribute('type') || textureAttrs.type || undefined;
       const explicitName = textureEl.getAttribute('name') || textureAttrs.name || undefined;
-
-      if (file && settings?.texturedir && !file.startsWith('/') && !file.includes(':')) {
-        const prefix = settings.texturedir.endsWith('/')
-          ? settings.texturedir
-          : `${settings.texturedir}/`;
-        file = `${prefix}${file}`;
-      }
 
       const name =
         explicitName || (file ? deriveAssetName(file, 'texture', textureIndex) : undefined);
@@ -962,6 +994,12 @@ export function parseTextureAssets(
       textureMap.set(name, {
         name,
         file: file || undefined,
+        ...(fileback ? { fileback } : {}),
+        ...(filedown ? { filedown } : {}),
+        ...(filefront ? { filefront } : {}),
+        ...(fileleft ? { fileleft } : {}),
+        ...(fileright ? { fileright } : {}),
+        ...(fileup ? { fileup } : {}),
         type,
         builtin,
       });

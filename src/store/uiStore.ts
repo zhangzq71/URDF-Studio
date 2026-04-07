@@ -186,7 +186,13 @@ const defaultPanelLayout: PanelLayoutState = {
 };
 
 const normalizeDetailLinkTab = (value: unknown): DetailLinkTab =>
-  value === 'collision' || value === 'physics' ? value : value === 'joint' ? 'physics' : 'visual';
+  value === 'collision' || value === 'physics'
+    ? value
+    : value === 'material' || value === 'joint'
+      ? value === 'joint'
+        ? 'physics'
+        : 'visual'
+      : 'visual';
 
 // Detect system language
 const getSystemLang = (): Language => {

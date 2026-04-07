@@ -125,6 +125,152 @@ export const resolveImportedAssetPath = (
 
 type RobotWithLinks = RobotData | RobotState;
 
+const SOURCE_LAYOUT_DIRECTORIES = new Set([
+  'urdf',
+  'xacro',
+  'sdf',
+  'mjcf',
+  'usd',
+  'xml',
+  'robots',
+  'models',
+]);
+
+function inferSourcePackageSegment(sourceFilePath?: string | null): string {
+  const normalizedSourcePath = normalizeRelativePath(
+    String(sourceFilePath || '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, ''),
+  );
+  if (!normalizedSourcePath) {
+    return '';
+  }
+
+  const directorySegments = normalizedSourcePath.split('/').slice(0, -1);
+  if (directorySegments.length === 0) {
+    return '';
+  }
+
+  for (let index = directorySegments.length - 1; index >= 0; index -= 1) {
+    const segment = directorySegments[index];
+    if (!SOURCE_LAYOUT_DIRECTORIES.has(segment.toLowerCase())) {
+      return segment;
+    }
+  }
+
+  return directorySegments[directorySegments.length - 1] || '';
+}
+
+function isExplicitRelativeAssetPath(path: string): boolean {
+  return /^(?:\.\.?(?:[\\/]|$)|[\\/])/.test(path);
+}
+
+function normalizeAssetPathForComparison(path: string): string {
+  return normalizeRelativePath(
+    stripExternalPrefix(path.replace(/\\/g, '/'))
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, '')
+      .replace(/^\.\//, ''),
+  );
+}
+
+function isLikelyCanonicalImportedAssetPath(
+  assetPath: string,
+  sourceFilePath?: string | null,
+): boolean {
+  if (!sourceFilePath) {
+    return false;
+  }
+
+  const normalizedAssetPath = normalizeAssetPathForComparison(assetPath);
+  if (!normalizedAssetPath) {
+    return false;
+  }
+
+  const sourceDirectory = getSourceFileDirectory(sourceFilePath);
+  if (sourceDirectory && normalizedAssetPath.startsWith(sourceDirectory)) {
+    return true;
+  }
+
+  const firstAssetSegment = normalizedAssetPath.split('/')[0] || '';
+  if (!firstAssetSegment) {
+    return false;
+  }
+
+  const normalizedSourcePath = normalizeRelativePath(
+    String(sourceFilePath || '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, ''),
+  );
+  const firstSourceSegment = normalizedSourcePath.split('/')[0] || '';
+  if (firstSourceSegment && firstAssetSegment === firstSourceSegment) {
+    return true;
+  }
+
+  const sourcePackageSegment = inferSourcePackageSegment(sourceFilePath);
+  return Boolean(sourcePackageSegment && firstAssetSegment === sourcePackageSegment);
+}
+
+function rewriteTexturePathForSource(texturePath: string, sourceFilePath?: string | null): string {
+  const rawTexturePath = String(texturePath || '').trim();
+  if (!rawTexturePath) {
+    return texturePath;
+  }
+
+  if (
+    !isExplicitRelativeAssetPath(rawTexturePath) &&
+    isLikelyCanonicalImportedAssetPath(rawTexturePath, sourceFilePath)
+  ) {
+    // SDF/gazebo script materials may already resolve textures to package-rooted paths.
+    return normalizeAssetPathForComparison(rawTexturePath) || texturePath;
+  }
+
+  const resolvedPath = resolveImportedAssetPath(texturePath, sourceFilePath);
+  return resolvedPath || texturePath;
+}
+
+function rewriteGeometryTextureRefsForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
+  geometry: T,
+  sourceFilePath?: string | null,
+): T {
+  const authoredMaterials = geometry?.authoredMaterials;
+  if (!geometry || !Array.isArray(authoredMaterials) || authoredMaterials.length === 0) {
+    return geometry;
+  }
+
+  let materialsChanged = false;
+  const nextAuthoredMaterials = authoredMaterials.map((material) => {
+    const texturePath = material.texture?.trim();
+    if (!texturePath) {
+      return material;
+    }
+
+    const resolvedTexturePath = rewriteTexturePathForSource(texturePath, sourceFilePath);
+    if (resolvedTexturePath === texturePath) {
+      return material;
+    }
+
+    materialsChanged = true;
+    return {
+      ...material,
+      texture: resolvedTexturePath,
+    };
+  });
+
+  if (!materialsChanged) {
+    return geometry;
+  }
+
+  return {
+    ...geometry,
+    authoredMaterials: nextAuthoredMaterials,
+  };
+}
+
 function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
   geometry: T,
   sourceFilePath?: string | null,
@@ -144,8 +290,17 @@ function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['c
   };
 }
 
+function rewriteGeometryAssetPathsForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
+  geometry: T,
+  sourceFilePath?: string | null,
+): T {
+  const nextGeometry = rewriteMeshGeometryForSource(geometry, sourceFilePath);
+  return rewriteGeometryTextureRefsForSource(nextGeometry, sourceFilePath);
+}
+
 /**
- * Rewrite mesh paths in parsed robot data to stable library-relative paths.
+ * Rewrite imported mesh and texture asset paths in parsed robot data to stable
+ * library-relative paths.
  */
 export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
   robot: T,
@@ -154,17 +309,18 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
   if (!sourceFilePath) return robot;
 
   let linksChanged = false;
+  let materialsChanged = false;
   const nextLinks: Record<string, UrdfLink> = {};
 
   Object.entries(robot.links).forEach(([linkId, link]) => {
-    const nextVisual = rewriteMeshGeometryForSource(link.visual, sourceFilePath);
+    const nextVisual = rewriteGeometryAssetPathsForSource(link.visual, sourceFilePath);
     let nextVisualBodies = link.visualBodies;
-    const nextCollision = rewriteMeshGeometryForSource(link.collision, sourceFilePath);
+    const nextCollision = rewriteGeometryAssetPathsForSource(link.collision, sourceFilePath);
     let nextCollisionBodies = link.collisionBodies;
 
     if (link.visualBodies?.length) {
       const rewrittenBodies = link.visualBodies.map((body) =>
-        rewriteMeshGeometryForSource(body, sourceFilePath),
+        rewriteGeometryAssetPathsForSource(body, sourceFilePath),
       );
 
       const bodiesChanged = rewrittenBodies.some(
@@ -177,7 +333,7 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
 
     if (link.collisionBodies?.length) {
       const rewrittenBodies = link.collisionBodies.map((body) =>
-        rewriteMeshGeometryForSource(body, sourceFilePath),
+        rewriteGeometryAssetPathsForSource(body, sourceFilePath),
       );
 
       const bodiesChanged = rewrittenBodies.some(
@@ -209,11 +365,37 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
     nextLinks[linkId] = link;
   });
 
-  if (!linksChanged) return robot;
+  const nextMaterials = robot.materials
+    ? Object.fromEntries(
+        Object.entries(robot.materials).map(([key, material]) => {
+          const texturePath = material.texture?.trim();
+          if (!texturePath) {
+            return [key, material];
+          }
+
+          const resolvedTexturePath = rewriteTexturePathForSource(texturePath, sourceFilePath);
+          if (resolvedTexturePath !== texturePath) {
+            materialsChanged = true;
+            return [
+              key,
+              {
+                ...material,
+                texture: resolvedTexturePath,
+              },
+            ];
+          }
+
+          return [key, material];
+        }),
+      )
+    : robot.materials;
+
+  if (!linksChanged && !materialsChanged) return robot;
 
   return {
     ...robot,
     links: nextLinks,
+    materials: nextMaterials,
   };
 };
 
@@ -246,6 +428,7 @@ export const normalizeMeshPathForExport = (meshPath: string): string => {
   } else {
     const segments = normalized.split('/');
     const packageAssetRoots = new Set([
+      'assets',
       'dae',
       'obj',
       'stl',

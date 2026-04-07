@@ -35,6 +35,8 @@ test('adapts usd-viewer robot scene snapshot into URDF Studio RobotData', () => 
             axisLocal: [0, 0, -1],
             lowerLimitDeg: -90,
             upperLimitDeg: 90,
+            driveDamping: 0.15,
+            driveMaxForce: 8,
             localPivotInLink: [1, 2, 3],
             originXyz: [4, 5, 6],
             originQuatWxyz: [Math.cos(jointYawRadians / 2), 0, 0, Math.sin(jointYawRadians / 2)],
@@ -148,6 +150,8 @@ test('adapts usd-viewer robot scene snapshot into URDF Studio RobotData', () => 
   assert.deepEqual(joint.axis, { x: 0, y: 0, z: -1 });
   assert.equal(joint.limit.lower, -Math.PI / 2);
   assert.equal(joint.limit.upper, Math.PI / 2);
+  assert.equal(joint.limit.effort, 8);
+  assert.equal(joint.dynamics.damping, 0.15);
   assert.deepEqual(joint.origin.xyz, { x: 4, y: 5, z: 6 });
   assert.ok(Math.abs(joint.origin.rpy.y - jointYawRadians) < 1e-6);
   assert.equal(result.childLinkPathByJointId[joint.id], '/Robot/link1');

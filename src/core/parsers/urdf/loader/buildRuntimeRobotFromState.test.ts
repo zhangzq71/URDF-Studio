@@ -149,6 +149,183 @@ test('buildRuntimeRobotFromState applies mesh scale and visual color overrides o
   assert.deepEqual(toFixedColorArray(material.color), toFixedColorArray(parsedColor.color));
 });
 
+test('buildRuntimeRobotFromState applies authored texture overrides onto loaded mesh materials', async () => {
+  const originalTextureLoad = THREE.TextureLoader.prototype.load;
+  const appliedTexture = new THREE.Texture();
+  const requestedTexturePaths: string[] = [];
+
+  THREE.TextureLoader.prototype.load = function mockTextureLoad(
+    url: string,
+    onLoad?: (texture: THREE.Texture<HTMLImageElement>) => void,
+  ) {
+    requestedTexturePaths.push(url);
+    const texture = appliedTexture as THREE.Texture<HTMLImageElement>;
+    onLoad?.(texture);
+    return texture;
+  };
+
+  try {
+    const manager = new THREE.LoadingManager();
+    const robotState = {
+      name: 'textured_mesh_robot',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.MESH,
+            meshPath: 'meshes/base_link.obj',
+            authoredMaterials: [{ texture: 'textures/coat.png' }],
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.NONE,
+            dimensions: { x: 0, y: 0, z: 0 },
+          },
+        },
+      },
+      joints: {},
+    };
+
+    let robot: Awaited<ReturnType<typeof buildRuntimeRobotFromState>> | null = null;
+    const ready = new Promise<void>((resolve) => {
+      manager.onLoad = () => resolve();
+    });
+    const completionKey = '__build_runtime_robot_from_state_texture_override_test__';
+    manager.itemStart(completionKey);
+
+    try {
+      robot = await buildRuntimeRobotFromState({
+        robotName: robotState.name,
+        links: robotState.links,
+        joints: robotState.joints,
+        manager,
+        loadMeshCb: (_path, _manager, done) => {
+          const embeddedTexture = new THREE.Texture();
+          const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshPhongMaterial({
+              color: new THREE.Color('#444444'),
+              map: embeddedTexture,
+            }),
+          );
+          done(mesh);
+        },
+      });
+    } finally {
+      manager.itemEnd(completionKey);
+    }
+
+    await ready;
+
+    const baseLink = robot?.links.base_link;
+    assert.ok(baseLink, 'expected textured base link');
+
+    const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as
+      | THREE.Object3D
+      | undefined;
+    assert.ok(visualGroup, 'expected visual group');
+    assert.equal(visualGroup.children.length, 1);
+
+    const mesh = visualGroup.children[0] as THREE.Mesh;
+    assert.ok(mesh.isMesh, 'expected loaded mesh');
+    assert.deepEqual(requestedTexturePaths, ['textures/coat.png']);
+    assert.equal(mesh.material instanceof THREE.MeshStandardMaterial, true);
+    if (!(mesh.material instanceof THREE.MeshStandardMaterial)) {
+      assert.fail('expected texture override to rebuild the mesh material');
+    }
+
+    assert.equal(mesh.material.map, appliedTexture);
+    assert.notEqual(mesh.material.color.getHexString(), '444444');
+    assert.equal(mesh.material.userData.urdfTextureApplied, true);
+    assert.equal(mesh.material.userData.urdfTexturePath, 'textures/coat.png');
+  } finally {
+    THREE.TextureLoader.prototype.load = originalTextureLoad;
+  }
+});
+
+test('buildRuntimeRobotFromState preserves embedded multi-material mesh slots for named palettes', async () => {
+  const manager = new THREE.LoadingManager();
+  const robotState = {
+    name: 'multi_material_mesh_robot',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          meshPath: 'meshes/base_link.dae',
+          authoredMaterials: [
+            { name: 'body', color: '#bebebe' },
+            { name: 'trim', color: '#111111' },
+          ],
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+      },
+    },
+    joints: {},
+  };
+
+  let robot: Awaited<ReturnType<typeof buildRuntimeRobotFromState>> | null = null;
+  const ready = new Promise<void>((resolve) => {
+    manager.onLoad = () => resolve();
+  });
+  const completionKey = '__build_runtime_robot_from_state_multi_material_test__';
+  manager.itemStart(completionKey);
+
+  try {
+    robot = await buildRuntimeRobotFromState({
+      robotName: robotState.name,
+      links: robotState.links,
+      joints: robotState.joints,
+      manager,
+      loadMeshCb: (_path, _manager, done) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), [
+          new THREE.MeshPhongMaterial({ name: 'body', color: new THREE.Color('#ff0000') }),
+          new THREE.MeshPhongMaterial({ name: 'trim', color: new THREE.Color('#00ff00') }),
+        ]);
+        done(mesh);
+      },
+    });
+  } finally {
+    manager.itemEnd(completionKey);
+  }
+
+  await ready;
+
+  const baseLink = robot?.links.base_link;
+  assert.ok(baseLink, 'expected multi-material base link');
+
+  const visualGroup = baseLink.children.find((child: any) => child.isURDFVisual) as
+    | THREE.Object3D
+    | undefined;
+  assert.ok(visualGroup, 'expected visual group');
+  assert.equal(visualGroup.children.length, 1);
+
+  const mesh = visualGroup.children[0] as THREE.Mesh;
+  assert.ok(Array.isArray(mesh.material), 'expected mesh to keep material slots');
+  if (!Array.isArray(mesh.material)) {
+    assert.fail('expected named multi-material mesh to preserve array material');
+  }
+
+  assert.deepEqual(
+    mesh.material.map((material) => material.name),
+    ['body', 'trim'],
+  );
+  assert.equal((mesh.material[0] as THREE.MeshPhongMaterial).color.getHexString(), 'ff0000');
+  assert.equal((mesh.material[1] as THREE.MeshPhongMaterial).color.getHexString(), '00ff00');
+});
+
 test('buildRuntimeRobotFromState keeps placeholder meshes for missing visual assets', async () => {
   const robotState = {
     name: 'missing_visual_mesh',

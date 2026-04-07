@@ -356,3 +356,43 @@ test('resolveInteractionSelectionHit preserves visual subtype for tagged meshes 
   assert.equal(resolved?.objectIndex, 1);
   assert.equal(resolved?.highlightTarget, secondVisualMesh);
 });
+
+test('resolveInteractionSelectionHit prefers semantic visualObjectIndex metadata for folded MJCF synthetic links', () => {
+  const link = createUrdfLink('base_link');
+  const robot = createRobotWithLinks(link);
+  robot.add(link);
+
+  const primaryVisual = createUrdfVisual('base_visual');
+  primaryVisual.userData.parentLinkName = 'base_link';
+  primaryVisual.userData.visualObjectIndex = 0;
+  const primaryMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+  primaryMesh.userData.parentLinkName = 'base_link';
+  primaryMesh.userData.isVisualMesh = true;
+  primaryMesh.userData.visualObjectIndex = 0;
+  primaryVisual.add(primaryMesh);
+
+  const attachmentVisual = createUrdfVisual('attachment_visual');
+  attachmentVisual.userData.parentLinkName = 'base_link_geom_1';
+  attachmentVisual.userData.runtimeParentLinkName = 'base_link';
+  attachmentVisual.userData.visualObjectIndex = 0;
+  const attachmentMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial(),
+  );
+  attachmentMesh.userData.parentLinkName = 'base_link_geom_1';
+  attachmentMesh.userData.runtimeParentLinkName = 'base_link';
+  attachmentMesh.userData.isVisualMesh = true;
+  attachmentMesh.userData.visualObjectIndex = 0;
+  attachmentVisual.add(attachmentMesh);
+
+  link.add(primaryVisual, attachmentVisual);
+
+  const resolved = resolveInteractionSelectionHit(robot, attachmentMesh);
+
+  assert.ok(resolved);
+  assert.equal(resolved?.type, 'link');
+  assert.equal(resolved?.id, 'base_link_geom_1');
+  assert.equal(resolved?.subType, 'visual');
+  assert.equal(resolved?.objectIndex, 0);
+  assert.equal(resolved?.highlightTarget, attachmentMesh);
+});

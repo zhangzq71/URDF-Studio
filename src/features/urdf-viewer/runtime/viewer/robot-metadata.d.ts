@@ -9,6 +9,8 @@ export type RenderRobotJointCatalogEntry = {
   axisLocal: [number, number, number];
   lowerLimitDeg: number;
   upperLimitDeg: number;
+  driveDamping?: number | null;
+  driveMaxForce?: number | null;
   localPivotInLink: [number, number, number] | null;
   originXyz: [number, number, number] | null;
   originQuatWxyz: [number, number, number, number] | null;

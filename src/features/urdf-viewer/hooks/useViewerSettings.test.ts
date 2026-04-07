@@ -147,6 +147,19 @@ test('origin axes overlay preference still restores explicit user opt-in', () =>
   dom.window.close();
 });
 
+test('collision overlay defaults to depth-occluded rendering when no preference is saved', () => {
+  const dom = installDom();
+  resetUiStore();
+  dom.window.localStorage.removeItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY);
+  dom.window.localStorage.removeItem('urdf_viewer_collision_always_on_top');
+
+  const settings = renderSettings();
+
+  assert.equal(settings.showCollisionAlwaysOnTop, false);
+
+  dom.window.close();
+});
+
 test('viewer visibility toggles and sizing parameters restore from saved preferences', async () => {
   const { dom, root, getSettings } = await mountSettings(
     {

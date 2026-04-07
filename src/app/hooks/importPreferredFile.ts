@@ -3,7 +3,11 @@ import { type RobotImportResult, resolveRobotFileData } from '@/core/parsers';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
 import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
-import { buildStandaloneImportAssetWarning } from '@/app/utils/importPackageAssetReferences.ts';
+import { isAssetLibraryOnlyFormat } from '@/shared/utils/robotFileSupport';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from '@/app/utils/importPackageAssetReferences.ts';
 
 const PACKAGE_REFERENCE_PATTERN = /package:\/\/([^/\s"'<>]+)/g;
 
@@ -64,7 +68,7 @@ export function isUrdfSelfContainedInImportBundle(
 
   const standaloneAssetWarning = buildStandaloneImportAssetWarning(
     file,
-    filePool.filter((candidate) => candidate.format === 'mesh').map((candidate) => candidate.name),
+    collectStandaloneImportSupportAssetPaths({}, filePool),
   );
   if (standaloneAssetWarning) {
     return false;
@@ -603,7 +607,7 @@ export function pickPreferredImportFile(
   resolveRobotImport: RobotImportResolver = createMemoizedRobotImportResolver(filePool),
 ): RobotFile | null {
   const cachedResolveRobotImport = memoizeRobotImportResolver(resolveRobotImport);
-  const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+  const robotDefinitionFiles = files.filter((file) => !isAssetLibraryOnlyFormat(file.format));
   const preferredUrdf = pickPreferredUrdfImportFile(
     robotDefinitionFiles,
     filePool,

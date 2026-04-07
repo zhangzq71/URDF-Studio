@@ -10,6 +10,7 @@ import {
   getObjectWorldCenter,
 } from './measurements.ts';
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
+import { getSyntheticGeomParentName, resolveRuntimeGeometryRoot } from './runtimeGeometrySelection';
 
 export interface MeasureSelectionLike {
   type: 'link' | 'joint' | 'tendon' | null;
@@ -66,16 +67,6 @@ function findRobotJointObject(
   });
 
   return found;
-}
-
-function getSyntheticGeomParentName(candidate: string | null | undefined): string | null {
-  const trimmed = String(candidate || '').trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const match = trimmed.match(/^(.*)_geom_\d+$/);
-  return match?.[1]?.trim() || null;
 }
 
 function getEffectiveMeasureSelection(
@@ -305,6 +296,23 @@ export function resolveRobotMeasureTargetFromSelection(
   const objectIndex = effectiveSelection.objectIndex ?? 0;
   const resolvedLinkData =
     linkData ?? resolveRobotLinkData(robotLinks, effectiveSelection.id, linkObject);
+
+  if (resolvedAnchorMode === 'geometry') {
+    const targetGeometryRoot = resolveRuntimeGeometryRoot(
+      linkObject,
+      effectiveSelection.id,
+      objectType,
+      objectIndex,
+    );
+    if (targetGeometryRoot) {
+      return createMeasureTarget({
+        linkName: effectiveSelection.id,
+        objectType,
+        objectIndex,
+        point: getObjectWorldCenter(targetGeometryRoot),
+      });
+    }
+  }
 
   if (effectiveSelection.helperKind === 'ik-handle') {
     const ikHandlePoint = getLinkIkHandleWorldPoint(linkObject);

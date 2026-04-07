@@ -1,0 +1,406 @@
+import * as THREE from 'three';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+
+import { postProcessColladaScene } from '@/core/loaders';
+import {
+  createSceneFromSerializedColladaData,
+  parseColladaSceneData,
+} from '@/core/loaders/colladaWorkerSceneData';
+import { getSourceFileDirectory, resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
+import { DEFAULT_VISUAL_COLOR, GeometryType, type RobotData, type UrdfVisual } from '@/types';
+
+import { disposeTransientObject3D } from './mjcfLoadLifecycle';
+
+type RobotMaterialEntry = NonNullable<RobotData['materials']>[string];
+type TextAssetContentLookup = ReadonlyMap<string, string>;
+const MAX_REPRESENTATIVE_MESH_COLOR_CACHE_SIZE = 128;
+const representativeMeshColorCache = new Map<string, string | null>();
+
+function normalizeLookupPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/').trim().replace(/^\/+/, '').split('?')[0];
+}
+
+function buildTextContentSignature(content: string): string {
+  let hash = 2166136261;
+
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return `${content.length}:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function normalizeMaterialValue(value?: string | null): string | undefined {
+  const trimmed = String(value || '').trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function createTextAssetContentLookup(
+  allFileContents: Record<string, string>,
+): TextAssetContentLookup {
+  const lookup = new Map<string, string>();
+
+  for (const [path, content] of Object.entries(allFileContents)) {
+    if (typeof content !== 'string' || content.length === 0) {
+      continue;
+    }
+
+    const normalizedPath = normalizeLookupPath(path);
+    if (!normalizedPath) {
+      continue;
+    }
+
+    lookup.set(normalizedPath, content);
+  }
+
+  return lookup;
+}
+
+function findTextAssetContent(
+  assetPath: string,
+  textAssetContentLookup: TextAssetContentLookup,
+): string | null {
+  const normalizedAssetPath = normalizeLookupPath(assetPath);
+  if (!normalizedAssetPath) {
+    return null;
+  }
+
+  return textAssetContentLookup.get(normalizedAssetPath) ?? null;
+}
+
+function extractMaterialColorHex(material: THREE.Material | undefined): string | undefined {
+  if (!material) {
+    return undefined;
+  }
+
+  const color = (material as THREE.Material & { color?: THREE.Color }).color;
+  if (!(color instanceof THREE.Color)) {
+    return undefined;
+  }
+
+  return `#${color.getHexString()}`;
+}
+
+function addColorWeight(
+  colorWeights: Map<string, number>,
+  color: string | undefined,
+  weight: number,
+): void {
+  if (!color || !Number.isFinite(weight) || weight <= 0) {
+    return;
+  }
+
+  colorWeights.set(color, (colorWeights.get(color) ?? 0) + weight);
+}
+
+function getRepresentativeMeshColor(object: THREE.Object3D): string | null {
+  const colorWeights = new Map<string, number>();
+
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+
+    const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : mesh.material
+        ? [mesh.material]
+        : [];
+
+    if (materials.length === 0) {
+      return;
+    }
+
+    const indexCount = geometry?.index?.count ?? 0;
+    const vertexCount = geometry?.attributes?.position?.count ?? 0;
+    const defaultWeight = Math.max(indexCount, vertexCount, 1);
+
+    if (materials.length === 1) {
+      addColorWeight(colorWeights, extractMaterialColorHex(materials[0]), defaultWeight);
+      return;
+    }
+
+    const groupWeights = new Array<number>(materials.length).fill(0);
+    if (geometry?.groups?.length) {
+      geometry.groups.forEach((group) => {
+        if (group.materialIndex >= 0 && group.materialIndex < groupWeights.length) {
+          groupWeights[group.materialIndex] += Math.max(group.count, 1);
+        }
+      });
+    }
+
+    const fallbackWeight = defaultWeight / materials.length;
+    materials.forEach((material, index) => {
+      addColorWeight(
+        colorWeights,
+        extractMaterialColorHex(material),
+        groupWeights[index] > 0 ? groupWeights[index] : fallbackWeight,
+      );
+    });
+  });
+
+  let representativeColor: string | null = null;
+  let bestWeight = -1;
+
+  colorWeights.forEach((weight, color) => {
+    if (weight > bestWeight) {
+      bestWeight = weight;
+      representativeColor = color;
+    }
+  });
+
+  return representativeColor;
+}
+
+function parseObjMaterialLibraries(content: string): string[] {
+  const materialLibraries: string[] = [];
+  const matches = content.matchAll(/^[ \t]*mtllib[ \t]+(.+)$/gim);
+  for (const match of matches) {
+    const rawValue = String(match[1] || '').trim();
+    if (!rawValue) {
+      continue;
+    }
+
+    materialLibraries.push(rawValue);
+  }
+
+  return materialLibraries;
+}
+
+function buildRepresentativeMeshColorCacheKey(
+  normalizedMeshPath: string,
+  meshContent: string,
+  textAssetContentLookup: TextAssetContentLookup,
+): string {
+  const extension = normalizedMeshPath.split('.').pop()?.toLowerCase() ?? 'unknown';
+  const keyParts = [extension, normalizedMeshPath, buildTextContentSignature(meshContent)];
+
+  if (extension === 'obj') {
+    parseObjMaterialLibraries(meshContent).forEach((materialLibrary) => {
+      const resolvedMaterialPath = normalizeLookupPath(
+        resolveImportedAssetPath(materialLibrary, normalizedMeshPath),
+      );
+      const materialContent = findTextAssetContent(resolvedMaterialPath, textAssetContentLookup);
+      keyParts.push(`${resolvedMaterialPath}:${buildTextContentSignature(materialContent ?? '')}`);
+    });
+  }
+
+  return keyParts.join('|');
+}
+
+function readRepresentativeMeshColorCache(cacheKey: string): string | null | undefined {
+  const cachedColor = representativeMeshColorCache.get(cacheKey);
+  if (cachedColor === undefined) {
+    return undefined;
+  }
+
+  representativeMeshColorCache.delete(cacheKey);
+  representativeMeshColorCache.set(cacheKey, cachedColor);
+  return cachedColor;
+}
+
+function writeRepresentativeMeshColorCache(cacheKey: string, color: string | null): void {
+  if (representativeMeshColorCache.has(cacheKey)) {
+    representativeMeshColorCache.delete(cacheKey);
+  }
+
+  representativeMeshColorCache.set(cacheKey, color);
+
+  while (representativeMeshColorCache.size > MAX_REPRESENTATIVE_MESH_COLOR_CACHE_SIZE) {
+    const oldestKey = representativeMeshColorCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    representativeMeshColorCache.delete(oldestKey);
+  }
+}
+
+function createObjSceneFromTextContent(
+  meshPath: string,
+  meshContent: string,
+  textAssetContentLookup: TextAssetContentLookup,
+): THREE.Object3D {
+  const loader = new OBJLoader();
+
+  for (const materialLibrary of parseObjMaterialLibraries(meshContent)) {
+    const resolvedMaterialPath = resolveImportedAssetPath(materialLibrary, meshPath);
+    const materialContent = findTextAssetContent(resolvedMaterialPath, textAssetContentLookup);
+    if (!materialContent) {
+      continue;
+    }
+
+    const materials = new MTLLoader().parse(
+      materialContent,
+      getSourceFileDirectory(resolvedMaterialPath),
+    );
+    materials.preload();
+    loader.setMaterials(materials);
+    break;
+  }
+
+  return loader.parse(meshContent);
+}
+
+function deriveRepresentativeMeshColor(
+  meshPath: string,
+  textAssetContentLookup: TextAssetContentLookup,
+  colorCache: Map<string, string | null>,
+): string | null {
+  const normalizedMeshPath = normalizeLookupPath(meshPath);
+  const cachedColor = colorCache.get(normalizedMeshPath);
+  if (cachedColor !== undefined) {
+    return cachedColor;
+  }
+
+  const meshContent = findTextAssetContent(normalizedMeshPath, textAssetContentLookup);
+  if (!meshContent) {
+    colorCache.set(normalizedMeshPath, null);
+    return null;
+  }
+
+  const cacheKey = buildRepresentativeMeshColorCacheKey(
+    normalizedMeshPath,
+    meshContent,
+    textAssetContentLookup,
+  );
+  const cachedRepresentativeColor = readRepresentativeMeshColorCache(cacheKey);
+  if (cachedRepresentativeColor !== undefined) {
+    colorCache.set(normalizedMeshPath, cachedRepresentativeColor);
+    return cachedRepresentativeColor;
+  }
+
+  const extension = normalizedMeshPath.split('.').pop()?.toLowerCase();
+  let root: THREE.Object3D | null = null;
+
+  try {
+    switch (extension) {
+      case 'dae':
+        root = createSceneFromSerializedColladaData(
+          parseColladaSceneData(meshContent, normalizedMeshPath),
+        );
+        postProcessColladaScene(root);
+        break;
+      case 'obj':
+        root = createObjSceneFromTextContent(
+          normalizedMeshPath,
+          meshContent,
+          textAssetContentLookup,
+        );
+        break;
+      default:
+        colorCache.set(normalizedMeshPath, null);
+        return null;
+    }
+
+    const representativeColor = getRepresentativeMeshColor(root);
+    writeRepresentativeMeshColorCache(cacheKey, representativeColor);
+    colorCache.set(normalizedMeshPath, representativeColor);
+    return representativeColor;
+  } catch (error) {
+    console.warn(
+      `[MJCFImport] Failed to derive representative mesh color from "${normalizedMeshPath}".`,
+      error,
+    );
+    writeRepresentativeMeshColorCache(cacheKey, null);
+    colorCache.set(normalizedMeshPath, null);
+    return null;
+  } finally {
+    disposeTransientObject3D(root);
+  }
+}
+
+function geometryHasExplicitMaterialOverride(
+  geometry: Pick<UrdfVisual, 'authoredMaterials'>,
+): boolean {
+  return (
+    geometry.authoredMaterials?.some((material) =>
+      Boolean(normalizeMaterialValue(material.color || material.texture)),
+    ) ?? false
+  );
+}
+
+function shouldBackfillGeometryColor(
+  geometry: UrdfVisual,
+  existingMaterial: RobotMaterialEntry | undefined,
+): boolean {
+  return (
+    geometry.type === GeometryType.MESH &&
+    Boolean(geometry.meshPath) &&
+    normalizeMaterialValue(geometry.color) === DEFAULT_VISUAL_COLOR &&
+    !geometryHasExplicitMaterialOverride(geometry) &&
+    !normalizeMaterialValue(existingMaterial?.color) &&
+    !normalizeMaterialValue(existingMaterial?.texture)
+  );
+}
+
+export function syncMjcfMeshTextMaterialColors(
+  robotData: RobotData,
+  allFileContents: Record<string, string> = {},
+): RobotData {
+  if (Object.keys(allFileContents).length === 0) {
+    return robotData;
+  }
+
+  const colorCache = new Map<string, string | null>();
+  const textAssetContentLookup = createTextAssetContentLookup(allFileContents);
+  let linksChanged = false;
+  let materialsChanged = false;
+  const nextMaterials: NonNullable<RobotData['materials']> = { ...(robotData.materials ?? {}) };
+
+  const nextLinks = Object.fromEntries(
+    Object.entries(robotData.links).map(([linkId, link]) => {
+      const existingMaterial = robotData.materials?.[link.id] ?? robotData.materials?.[link.name];
+      if (!shouldBackfillGeometryColor(link.visual, existingMaterial)) {
+        return [linkId, link];
+      }
+
+      const representativeColor = deriveRepresentativeMeshColor(
+        link.visual.meshPath!,
+        textAssetContentLookup,
+        colorCache,
+      );
+      if (!representativeColor) {
+        return [linkId, link];
+      }
+
+      linksChanged = true;
+
+      if (
+        !normalizeMaterialValue(existingMaterial?.color) &&
+        !normalizeMaterialValue(existingMaterial?.texture)
+      ) {
+        nextMaterials[link.id] = {
+          ...(existingMaterial ?? {}),
+          color: representativeColor,
+        };
+        materialsChanged = true;
+      }
+
+      return [
+        linkId,
+        {
+          ...link,
+          visual: {
+            ...link.visual,
+            color: representativeColor,
+          },
+        },
+      ];
+    }),
+  ) as RobotData['links'];
+
+  if (!linksChanged && !materialsChanged) {
+    return robotData;
+  }
+
+  return {
+    ...robotData,
+    links: nextLinks,
+    ...(Object.keys(nextMaterials).length > 0 ? { materials: nextMaterials } : {}),
+  };
+}

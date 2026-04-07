@@ -34,6 +34,7 @@ export interface TreeNodeProps {
     linkId: string,
     subType: 'visual' | 'collision',
     objectIndex?: number,
+    suppressPulse?: boolean,
   ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
@@ -343,6 +344,24 @@ export const TreeNode = memo(
       selectedObjectIndex,
       hasSelectedExtraCollision,
     ]);
+
+    useEffect(() => {
+      if (
+        effectiveAttentionSelection.type !== 'link' ||
+        effectiveAttentionSelection.id !== linkId
+      ) {
+        return;
+      }
+
+      if (
+        effectiveAttentionSelection.subType === 'visual' ||
+        effectiveAttentionSelection.subType === 'collision'
+      ) {
+        setIsGeometryExpanded(false);
+      }
+
+      scrollElementIntoView(linkRowRef.current);
+    }, [effectiveAttentionSelection, linkId]);
 
     useEffect(() => {
       if (!isExpanded || robotSelection.type !== 'joint' || !robotSelection.id) return;

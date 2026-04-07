@@ -73,6 +73,9 @@ test('buildResolveRobotImportWorkerOptions keeps only mjcf sources for mjcf impo
           content: 'solid demo',
         },
       ],
+      allFileContents: {
+        'robots/demo/meshes/base.obj': 'o Mesh',
+      },
     },
   );
 
@@ -80,6 +83,9 @@ test('buildResolveRobotImportWorkerOptions keeps only mjcf sources for mjcf impo
     result.availableFiles?.map((file) => ({ name: file.name, format: file.format })),
     [{ name: 'robots/demo/mjcf/demo.xml', format: 'mjcf' }],
   );
+  assert.deepEqual(result.allFileContents, {
+    'robots/demo/meshes/base.obj': 'o Mesh',
+  });
 });
 
 test('buildResolveRobotImportWorkerDispatch moves mjcf context into a reusable worker snapshot', () => {
@@ -105,6 +111,9 @@ test('buildResolveRobotImportWorkerDispatch moves mjcf context into a reusable w
     },
     {
       availableFiles: [...availableFiles],
+      allFileContents: {
+        'robots/demo/meshes/base.obj': 'o Mesh',
+      },
     },
   );
 
@@ -117,6 +126,9 @@ test('buildResolveRobotImportWorkerDispatch moves mjcf context into a reusable w
     })),
     [{ name: 'robots/demo/mjcf/demo.xml', format: 'mjcf' }],
   );
+  assert.deepEqual(result.contextSnapshot?.allFileContents, {
+    'robots/demo/meshes/base.obj': 'o Mesh',
+  });
 });
 
 test('buildResolveRobotImportWorkerDispatch forwards exact URDF source context only when inline content is missing', () => {

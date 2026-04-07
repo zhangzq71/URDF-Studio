@@ -25,6 +25,7 @@ interface UseTreeNodeActionsParams {
     linkId: string,
     subType: 'visual' | 'collision',
     objectIndex?: number,
+    suppressPulse?: boolean,
   ) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -61,7 +62,7 @@ export function useTreeNodeActions({
   const handleSelectVisual = () => {
     setIsGeometryExpanded(true);
     if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'visual', 0);
+      onSelectGeometry(linkId, 'visual', 0, true);
       return;
     }
     onSelect('link', linkId, 'visual');
@@ -70,7 +71,7 @@ export function useTreeNodeActions({
   const handleSelectPrimaryCollision = () => {
     setIsGeometryExpanded(true);
     if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'collision', 0);
+      onSelectGeometry(linkId, 'collision', 0, true);
       return;
     }
     onSelect('link', linkId, 'collision');
@@ -79,7 +80,7 @@ export function useTreeNodeActions({
   const handleSelectCollisionBody = (objectIndex: number) => {
     setIsGeometryExpanded(true);
     if (onSelectGeometry) {
-      onSelectGeometry(linkId, 'collision', objectIndex);
+      onSelectGeometry(linkId, 'collision', objectIndex, true);
       return;
     }
     onSelect('link', linkId, 'collision');
