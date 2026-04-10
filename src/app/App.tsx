@@ -39,6 +39,36 @@ import {
   useAssemblyStore,
 } from '@/store';
 import type { InspectionReport, RobotFile, RobotState } from '@/types';
+import type { HeaderAction } from './components/header/types';
+
+/** Render slots: allows external repos to inject extra modals and overlays */
+export interface AppExtensionSlots {
+  /** Rendered after core built-in modals, before toast */
+  renderModals?: () => React.ReactNode;
+  /** Rendered after toast (highest z-index layer) */
+  renderTopOverlays?: () => React.ReactNode;
+}
+
+/** Config extension: allows external repos to inject header actions etc. */
+export interface AppExtensionConfig {
+  headerQuickAction?: HeaderAction;
+  headerSecondaryAction?: HeaderAction;
+}
+
+/** Core internal actions exposed to external consumers */
+export interface AppExposedActions {
+  importFiles: (files: FileList | File[]) => void;
+  openLibraryExport: (file: RobotFile) => void;
+}
+
+interface AppContentProps {
+  extensions?: {
+    slots?: AppExtensionSlots;
+    config?: AppExtensionConfig;
+  };
+  /** Core calls this on mount to expose internal handlers to the external host */
+  onExposeActions?: (actions: AppExposedActions) => void;
+}
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { translations, type Language } from '@/shared/i18n';
 import { isAssetLibraryOnlyFormat, isLibraryRobotExportableFormat } from '@/shared/utils';
@@ -400,7 +430,7 @@ function resolveCurrentAIRobotSnapshot(): RobotState {
   });
 }
 
-function AppContent() {
+export function AppContent({ extensions, onExposeActions }: AppContentProps = {}) {
   useUnsavedChangesPrompt();
 
   // Refs for file inputs
@@ -1036,6 +1066,17 @@ function AppContent() {
     [setIsExportDialogOpen],
   );
 
+  // Expose internal actions to external consumers (ref keeps the reference fresh)
+  const exposedActionsRef = useRef<AppExposedActions | null>(null);
+  exposedActionsRef.current = {
+    importFiles: handleImport,
+    openLibraryExport: handleOpenLibraryExportDialog,
+  };
+
+  useEffect(() => {
+    onExposeActions?.(exposedActionsRef.current!);
+  }, [onExposeActions]);
+
   const handleConfirmDisconnectedWorkspaceUrdfExport = useCallback(async () => {
     if (!disconnectedWorkspaceUrdfDialog) {
       return;
@@ -1104,6 +1145,8 @@ function AppContent() {
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
         viewerReloadKey={viewerReloadKey}
+        headerQuickAction={extensions?.config?.headerQuickAction}
+        headerSecondaryAction={extensions?.config?.headerSecondaryAction}
       />
 
       {/* Modals */}
@@ -1223,6 +1266,9 @@ function AppContent() {
         />
       )}
 
+      {/* Extension slot: external modal layer */}
+      {extensions?.slots?.renderModals?.()}
+
       {/* Toast */}
       {toast.show && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] animate-in fade-in slide-in-from-top-4 duration-300">
@@ -1258,6 +1304,9 @@ function AppContent() {
           </div>
         </div>
       )}
+
+      {/* Extension slot: top overlay layer (highest z-index) */}
+      {extensions?.slots?.renderTopOverlays?.()}
     </>
   );
 }
