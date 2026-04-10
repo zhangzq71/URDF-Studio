@@ -67,6 +67,7 @@ import { buildPropertyEditorSelectionContext } from './utils/propertyEditorSelec
 import { resolveDocumentLoadingOverlayTargetFileName } from './utils/documentLoadProgress';
 import { clearIkDragHelperSelection } from './utils/ikDragSession';
 import { resolveIkToolSelectionState } from './utils/ikToolSelectionState';
+import { resolveAssemblyRootComponentSelectionAvailability } from './utils/assemblyRootComponentSelection';
 
 interface ProModeRoundtripSession {
   baselineSnapshot: string;
@@ -571,6 +572,10 @@ export function AppLayout({
     handleViewerMeshSelectWithAssemblyClear,
   } = useWorkspaceViewerSelectionBridge({
     assemblyState,
+    canSelectAssemblyRootComponent: resolveAssemblyRootComponentSelectionAvailability({
+      shouldRenderAssembly,
+      sourceSceneAssemblyComponentId,
+    }),
     clearAssemblySelection,
     handleSelect,
     handleSelectGeometry,
@@ -579,7 +584,6 @@ export function AppLayout({
     handleViewerSelect,
     selectComponent,
     setWorkspaceTransformPending,
-    shouldRenderAssembly,
   });
 
   const setPendingCollisionTransform = useCollisionTransformStore(
@@ -973,8 +977,9 @@ export function AppLayout({
           isReadOnly={isPreviewingWorkspaceSource}
         />
 
-        {/* Viewer Container */}
-        <div className="flex-1 relative min-w-0">
+        {/* Viewer Container — z-0 stacking context keeps floating panels below sidebars (z-20);
+            overflow-hidden prevents panels from being dragged outside the 3D view area. */}
+        <div className="flex-1 relative z-0 min-w-0 overflow-hidden">
           <UnifiedViewer
             robot={viewerRobot}
             editorRobot={robot}

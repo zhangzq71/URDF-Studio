@@ -254,6 +254,7 @@ interface CollapsibleSectionProps {
   iconClassName?: string;
   contentClassName?: string;
   contentInnerClassName?: string;
+  expandedMaxHeightClassName?: string;
 }
 
 export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
@@ -270,6 +271,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   iconClassName = '',
   contentClassName = '',
   contentInnerClassName = '',
+  expandedMaxHeightClassName = 'max-h-[300px]',
 }) => {
   const isControlled = isCollapsed !== undefined;
   const [internalCollapsed, setInternalCollapsed] = useState(() => {
@@ -314,7 +316,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
       </button>
       <div
         className={`overflow-hidden transition-all duration-200 ${
-          collapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
+          collapsed ? 'max-h-0 opacity-0' : `${expandedMaxHeightClassName} opacity-100`
         } ${contentClassName}`}
       >
         <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>{children}</div>

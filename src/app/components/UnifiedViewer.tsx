@@ -543,6 +543,7 @@ export const UnifiedViewer = React.memo(
 
     return (
       <WorkspaceCanvas
+        className="relative w-full h-full overflow-hidden"
         theme={theme}
         lang={lang}
         robotName={activePreview ? activePreview.fileName : robot.name || 'robot'}

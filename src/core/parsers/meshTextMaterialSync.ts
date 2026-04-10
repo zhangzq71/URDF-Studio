@@ -42,6 +42,17 @@ function shouldBackfillMeshMaterials(
   );
 }
 
+function shouldExtractAuthoredMaterialsForExplicitMeshColor(
+  geometry: UrdfVisual | null | undefined,
+): geometry is UrdfVisual & { meshPath: string } {
+  if (geometry?.type !== GeometryType.MESH) return false;
+  if (typeof geometry.meshPath !== 'string' || !geometry.meshPath.trim()) return false;
+  if (hasAuthoredMaterialOverride(geometry)) return false;
+  if (isImplicitMeshFallbackColor(geometry.color)) return false;
+  const ext = geometry.meshPath.split('.').pop()?.toLowerCase();
+  return ext === 'dae' || ext === 'obj';
+}
+
 function syncGeometryMeshMaterials(
   geometry: UrdfVisual,
   options: {
@@ -50,33 +61,43 @@ function syncGeometryMeshMaterials(
   },
   existingMaterial?: RobotMaterialEntry,
 ): UrdfVisual {
-  if (!shouldBackfillMeshMaterials(geometry, existingMaterial)) {
-    return geometry;
-  }
+  // Pass 1: backfill when color is implicit fallback (existing path, unchanged).
+  if (shouldBackfillMeshMaterials(geometry, existingMaterial)) {
+    const authoredMaterials = resolveMeshTextAuthoredMaterials(geometry.meshPath, options);
+    if (authoredMaterials.length === 0) {
+      return geometry;
+    }
 
-  const authoredMaterials = resolveMeshTextAuthoredMaterials(geometry.meshPath, options);
-  if (authoredMaterials.length === 0) {
-    return geometry;
-  }
+    if (authoredMaterials.length > 1) {
+      return {
+        ...geometry,
+        color: '',
+        authoredMaterials,
+      };
+    }
 
-  if (authoredMaterials.length > 1) {
+    const [primaryMaterial] = authoredMaterials;
+    const nextColor =
+      normalizeMaterialValue(primaryMaterial?.color) ??
+      (normalizeMaterialValue(primaryMaterial?.texture) ? '#ffffff' : undefined);
+
     return {
       ...geometry,
-      color: '',
+      ...(nextColor ? { color: nextColor } : { color: '' }),
       authoredMaterials,
     };
   }
 
-  const [primaryMaterial] = authoredMaterials;
-  const nextColor =
-    normalizeMaterialValue(primaryMaterial?.color) ??
-    (normalizeMaterialValue(primaryMaterial?.texture) ? '#ffffff' : undefined);
+  // Pass 2: URDF has explicit rgba, but mesh may still carry authored materials.
+  // Keep geometry.color as-is (URDF override); populate authoredMaterials for palette.
+  if (shouldExtractAuthoredMaterialsForExplicitMeshColor(geometry)) {
+    const authoredMaterials = resolveMeshTextAuthoredMaterials(geometry.meshPath, options);
+    if (authoredMaterials.length > 0) {
+      return { ...geometry, authoredMaterials };
+    }
+  }
 
-  return {
-    ...geometry,
-    ...(nextColor ? { color: nextColor } : { color: '' }),
-    authoredMaterials,
-  };
+  return geometry;
 }
 
 export function syncRobotMeshTextMaterialMetadata(

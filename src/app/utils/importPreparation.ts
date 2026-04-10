@@ -45,6 +45,7 @@ import {
   createVisibleImportedAssetFile,
   isAuxiliaryTextImportPath,
   isImportableDefinitionPath,
+  shouldAlwaysLoadAuxiliaryImportPath,
   shouldLoadAuxiliaryImportText,
   shouldMirrorTextMeshAssetContent,
 } from './import-preparation/pathClassification.ts';
@@ -581,9 +582,17 @@ async function collectImportPayloadFromArchiveSession(
     options.preResolvePreferredImport !== false,
   );
 
-  if (shouldLoadAuxiliaryImportText(payload.robotFiles) && auxiliaryTextEntries.length > 0) {
+  const auxiliaryTextEntriesToLoad = auxiliaryTextEntries.filter((entry) => {
+    const lowerPath = entry.path.toLowerCase();
+    return (
+      shouldLoadAuxiliaryImportText(payload.robotFiles) ||
+      shouldAlwaysLoadAuxiliaryImportPath(lowerPath)
+    );
+  });
+
+  if (auxiliaryTextEntriesToLoad.length > 0) {
     const extractedAuxiliaryTextEntries = await archiveSession.extractEntries(
-      auxiliaryTextEntries.map((entry) => entry.path),
+      auxiliaryTextEntriesToLoad.map((entry) => entry.path),
     );
     await processWithConcurrency(
       extractedAuxiliaryTextEntries,
@@ -820,9 +829,17 @@ async function collectImportPayloadFromLooseFiles(
     reportExtractionProgress();
   });
 
-  if (shouldLoadAuxiliaryImportText(payload.robotFiles) && auxiliaryTextFiles.length > 0) {
+  const auxiliaryTextFilesToLoad = auxiliaryTextFiles.filter(({ path }) => {
+    const lowerPath = path.toLowerCase();
+    return (
+      shouldLoadAuxiliaryImportText(payload.robotFiles) ||
+      shouldAlwaysLoadAuxiliaryImportPath(lowerPath)
+    );
+  });
+
+  if (auxiliaryTextFilesToLoad.length > 0) {
     await processWithConcurrency(
-      auxiliaryTextFiles,
+      auxiliaryTextFilesToLoad,
       resolveImportPreparationConcurrency(),
       async ({ path, file }) => {
         appendPreparedImportTextFileIfMissing(payload.textFiles, {

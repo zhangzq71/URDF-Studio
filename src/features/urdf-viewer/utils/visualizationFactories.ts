@@ -347,7 +347,9 @@ export function createJointAxisVisualization(
 export function createOriginAxes(size: number): THREE.Group {
   const originAxes = new THREE.Group();
   originAxes.name = '__origin_axes__';
-  originAxes.userData = createSelectableHelperUserData();
+  originAxes.userData = createSelectableHelperUserData({
+    viewerHelperKind: 'origin-axes',
+  });
 
   const thickness = size * 0.04;
   const headSize = size * 0.2;

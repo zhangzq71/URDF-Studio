@@ -50,7 +50,7 @@ function createOriginHelperMesh(): THREE.Mesh {
   return helperMesh;
 }
 
-test('resolveScreenSpaceUsdHelperHit resolves projected origin axes when exact raycast misses', () => {
+test('resolveScreenSpaceUsdHelperHit does not use padded fallback for origin-axes helpers', () => {
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
   camera.position.set(0, 0, 10);
   camera.lookAt(0, 0, 0);
@@ -73,12 +73,7 @@ test('resolveScreenSpaceUsdHelperHit resolves projected origin axes when exact r
     interactionLayerPriority: ['origin-axes', 'collision', 'visual'],
   });
 
-  assert.deepEqual(resolved, {
-    type: 'link',
-    id: 'base_link',
-    helperKind: 'origin-axes',
-    layer: 'origin-axes',
-  });
+  assert.equal(resolved, null);
 });
 
 test('resolveScreenSpaceUsdHelperHit ignores pointers outside the helper footprint', () => {

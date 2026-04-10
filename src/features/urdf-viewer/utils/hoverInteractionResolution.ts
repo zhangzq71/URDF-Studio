@@ -194,6 +194,14 @@ function shouldYieldHelperToGeometry(
     return true;
   }
 
+  // Visualization-only helpers (joint-axis, origin-axes) are rendering overlays
+  // that should not steal hover from actual link geometry.  They remain
+  // interactable through the separate screen-space helper fallback when no
+  // geometry candidate is present.
+  if (helperCandidate.helperKind === 'joint-axis' || helperCandidate.helperKind === 'origin-axes') {
+    return true;
+  }
+
   if (hasOverlayPresentation(getCandidateObject(helperCandidate))) {
     return false;
   }

@@ -209,6 +209,7 @@ export const CollapsibleSection = ({
       triggerClassName={PROPERTY_EDITOR_SECTION_TRIGGER_CLASS}
       iconClassName="opacity-60"
       contentInnerClassName="border-t border-border-black bg-panel-bg px-1.5 py-1"
+      expandedMaxHeightClassName="max-h-[1200px]"
     >
       {children}
     </SharedCollapsibleSection>

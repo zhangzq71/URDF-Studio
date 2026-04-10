@@ -423,16 +423,86 @@ function buildLinkWorldMatrices(robot: RobotState): Map<string, THREE.Matrix4> {
   return matrices;
 }
 
-function generateJointXml(joint: UrdfJoint): string {
+function linkHasSdfExportablePayload(link: UrdfLink): boolean {
+  const inertial = link.inertial;
+  const hasExportableInertial = Boolean(
+    inertial &&
+    (((Number.isFinite(inertial.mass) ? inertial.mass : 0) || 0) > 1e-9 ||
+      Object.values(inertial.inertia || {}).some((value) => Math.abs(Number(value) || 0) > 1e-9)),
+  );
+
+  return (
+    getVisualGeometryEntries(link).some((entry) => entry.geometry.type !== GeometryType.NONE) ||
+    getCollisionGeometryEntries(link).some((entry) => entry.geometry.type !== GeometryType.NONE) ||
+    hasExportableInertial
+  );
+}
+
+function resolveSyntheticRootOmissions(robot: RobotState): {
+  omittedJointIds: Set<string>;
+  omittedLinkIds: Set<string>;
+} {
+  const omittedJointIds = new Set<string>();
+  const omittedLinkIds = new Set<string>();
+  const rootLinkId = robot.rootLinkId;
+  if (!rootLinkId) {
+    return { omittedJointIds, omittedLinkIds };
+  }
+
+  const rootLink = robot.links[rootLinkId];
+  if (!rootLink) {
+    return { omittedJointIds, omittedLinkIds };
+  }
+
+  const childJoints = Object.values(robot.joints).filter(
+    (joint) => joint.parentLinkId === rootLinkId,
+  );
+  const canOmitRootAnchor =
+    childJoints.length > 0 &&
+    childJoints.every(
+      (joint) => joint.type === JointType.FLOATING || joint.type === JointType.FIXED,
+    ) &&
+    !Object.values(robot.joints).some((joint) => joint.childLinkId === rootLinkId) &&
+    !linkHasSdfExportablePayload(rootLink);
+
+  if (!canOmitRootAnchor) {
+    return { omittedJointIds, omittedLinkIds };
+  }
+
+  omittedLinkIds.add(rootLinkId);
+  childJoints.forEach((joint) => {
+    omittedJointIds.add(joint.id);
+  });
+
+  return { omittedJointIds, omittedLinkIds };
+}
+
+function createUniqueModelChildName(baseName: string, usedNames: Set<string>): string {
+  const normalizedBase = baseName.trim() || 'joint';
+  const preferredName = usedNames.has(normalizedBase) ? `${normalizedBase}_joint` : normalizedBase;
+  if (!usedNames.has(preferredName)) {
+    usedNames.add(preferredName);
+    return preferredName;
+  }
+
+  let suffix = 1;
+  while (usedNames.has(`${preferredName}_${suffix}`)) {
+    suffix += 1;
+  }
+  const uniqueName = `${preferredName}_${suffix}`;
+  usedNames.add(uniqueName);
+  return uniqueName;
+}
+
+function generateJointXml(joint: UrdfJoint, jointNameOverride?: string): string {
   if (joint.type === JointType.FLOATING) {
     throw new Error(
       `[SDF export] Joint "${joint.name || joint.id}" uses unsupported floating type.`,
     );
   }
 
-  const lines = [
-    `    <joint name="${escapeXml(joint.name || joint.id)}" type="${escapeXml(joint.type)}">`,
-  ];
+  const jointName = jointNameOverride || joint.name || joint.id;
+  const lines = [`    <joint name="${escapeXml(jointName)}" type="${escapeXml(joint.type)}">`];
   if (joint.parentLinkId) {
     lines.push(`      <parent>${escapeXml(joint.parentLinkId)}</parent>`);
   }
@@ -487,14 +557,14 @@ function generateJointXml(joint: UrdfJoint): string {
   return lines.join('\n');
 }
 
-function generateClosedLoopJointXml(constraint: RobotClosedLoopConstraint): string | null {
+function generateClosedLoopJointXmlWithName(
+  constraint: RobotClosedLoopConstraint,
+  jointName: string,
+): string | null {
   if (constraint.type !== 'connect') {
     return null;
   }
 
-  const jointName = escapeXml(
-    constraint.id || `${constraint.linkAId}_${constraint.linkBId}_closed_loop`,
-  );
   const childLinkId = escapeXml(constraint.linkBId);
   const anchorLocalB: Pose = {
     xyz: { ...constraint.anchorLocalB },
@@ -502,7 +572,7 @@ function generateClosedLoopJointXml(constraint: RobotClosedLoopConstraint): stri
   };
 
   return [
-    `    <joint name="${jointName}" type="ball">`,
+    `    <joint name="${escapeXml(jointName)}" type="ball">`,
     `      <parent>${escapeXml(constraint.linkAId)}</parent>`,
     `      <child>${childLinkId}</child>`,
     `      <pose relative_to="${childLinkId}">${formatPose(anchorLocalB)}</pose>`,
@@ -515,6 +585,8 @@ export function generateSDF(robot: RobotState, options: GenerateSDFOptions = {})
   const modelName = (robot.name || packageName).trim() || 'robot';
   const version = options.version || '1.7';
   const linkMatrices = buildLinkWorldMatrices(robot);
+  const { omittedJointIds, omittedLinkIds } = resolveSyntheticRootOmissions(robot);
+  const usedModelChildNames = new Set<string>();
 
   const lines = [
     '<?xml version="1.0"?>',
@@ -523,6 +595,11 @@ export function generateSDF(robot: RobotState, options: GenerateSDFOptions = {})
   ];
 
   Object.values(robot.links).forEach((link) => {
+    if (omittedLinkIds.has(link.id)) {
+      return;
+    }
+
+    usedModelChildNames.add(link.name || link.id);
     const linkPose = matrixToPose(
       linkMatrices.get(link.id || link.name) ?? new THREE.Matrix4().identity(),
     );
@@ -550,10 +627,19 @@ export function generateSDF(robot: RobotState, options: GenerateSDFOptions = {})
   });
 
   Object.values(robot.joints).forEach((joint) => {
-    lines.push(generateJointXml(joint));
+    if (omittedJointIds.has(joint.id)) {
+      return;
+    }
+
+    const jointName = createUniqueModelChildName(joint.name || joint.id, usedModelChildNames);
+    lines.push(generateJointXml(joint, jointName));
   });
   (robot.closedLoopConstraints || []).forEach((constraint) => {
-    const closedLoopXml = generateClosedLoopJointXml(constraint);
+    const closedLoopName = createUniqueModelChildName(
+      constraint.id || `${constraint.linkAId}_${constraint.linkBId}_closed_loop`,
+      usedModelChildNames,
+    );
+    const closedLoopXml = generateClosedLoopJointXmlWithName(constraint, closedLoopName);
     if (closedLoopXml) {
       lines.push(closedLoopXml);
     }

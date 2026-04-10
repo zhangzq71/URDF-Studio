@@ -948,6 +948,115 @@ test('generated MJCF preserves missing URDF inertial without crashing', () => {
   assert.doesNotMatch(generated, /<inertial\b/);
 });
 
+test('generated MJCF enables balanceinertia when a link inertia is invalid for MuJoCo', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'invalid-inertia-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.5, y: 0.3, z: 0.15 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 33.86,
+          origin: { xyz: { x: -0.05, y: -0.007, z: -0.00984 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: {
+            ixx: 0.21092,
+            ixy: -0.000622,
+            ixz: 0.12531,
+            iyy: 0.7639,
+            iyz: -0.00139,
+            izz: 0.9483,
+          },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+  });
+
+  assert.match(
+    generated,
+    /<compiler(?=[^>]*meshdir="meshes\/")(?=[^>]*balanceinertia="true")[^>]*>/,
+  );
+  assert.match(
+    generated,
+    /<inertial pos="-0\.05 -0\.007 -0\.00984" mass="33\.86" fullinertia="0\.21092 0\.7639 0\.9483 -0\.000622 0\.12531 -0\.00139"\/>/,
+  );
+});
+
+test('generated MJCF keeps imported MJCF mesh geoms bound to mesh asset names instead of file paths', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'imported-mjcf-mesh-ref',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          meshPath: '/tmp/demo/assets/base_0.obj',
+          assetRef: 'base_0',
+          mjcfMesh: {
+            file: 'assets/base_0.obj',
+          },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+  });
+
+  assert.match(generated, /<mesh name="base_0" file="assets\/base_0\.obj" \/>/);
+  assert.match(generated, /<geom[^>]*type="mesh" mesh="base_0" \/>/);
+  assert.doesNotMatch(generated, /mesh="\/tmp\/demo\/assets\/base_0\.obj"/);
+});
+
 test('generated MJCF writes visual materials from robot state and binds them on geoms', () => {
   installDomParser();
 

@@ -107,7 +107,14 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       if (!hasEnabledFlag(defaultControls)) return;
 
       if (!defaultControlsSuppressedRef.current) {
-        defaultControlsEnabledBeforeSuppressRef.current = defaultControls.enabled;
+        // Only capture the pre-drag enabled state when orbit is currently
+        // enabled.  If an external system (e.g. useMouseInteraction
+        // handlePointerDownCapture) has already set enabled = false, capturing
+        // that transient false would corrupt the snapshot and permanently
+        // break orbit on restoration.
+        if (defaultControls.enabled) {
+          defaultControlsEnabledBeforeSuppressRef.current = true;
+        }
         defaultControlsSuppressedRef.current = true;
       }
 
@@ -343,8 +350,14 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         if (defaultControlsSuppressedRef.current) {
           defaultControls.enabled = defaultControlsEnabledBeforeSuppressRef.current;
           defaultControlsSuppressedRef.current = false;
-        } else {
-          defaultControlsEnabledBeforeSuppressRef.current = defaultControls.enabled;
+        } else if (defaultControls.enabled) {
+          // Only update the pre-drag snapshot when orbit is enabled.
+          // If orbit is disabled here but we are not the ones who suppressed
+          // it, the disabled state is transient (e.g. useMouseInteraction
+          // blocking orbit during a pointerdown).  Capturing false would
+          // corrupt the snapshot and permanently break orbit on the next
+          // suppress/restore cycle.
+          defaultControlsEnabledBeforeSuppressRef.current = true;
         }
         return;
       }

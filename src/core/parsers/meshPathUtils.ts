@@ -26,6 +26,56 @@ const normalizeRelativePath = (path: string): string => {
   return stack.join('/');
 };
 
+const MESH_EXPORT_ROOT_SEGMENTS = new Set([
+  'assets',
+  'dae',
+  'obj',
+  'stl',
+  'gltf',
+  'glb',
+  'mesh',
+  'meshes',
+  'texture',
+  'textures',
+  'material',
+  'materials',
+]);
+
+const TEXTURE_EXPORT_ROOT_SEGMENTS = new Set([
+  'assets',
+  'texture',
+  'textures',
+  'material',
+  'materials',
+  'image',
+  'images',
+]);
+
+function slicePathFromKnownRoot(
+  normalizedPath: string,
+  rootSegments: ReadonlySet<string>,
+  dropRootSegments: ReadonlySet<string> = new Set(),
+): string | null {
+  const segments = normalizedPath.split('/');
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]?.toLowerCase();
+    if (!segment || !rootSegments.has(segment)) {
+      continue;
+    }
+
+    const sliced = dropRootSegments.has(segment)
+      ? segments.slice(index + 1)
+      : segments.slice(index);
+    const result = normalizeRelativePath(sliced.join('/'));
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+}
+
 const stripPackagePrefix = (path: string): string => {
   const scheme = path.startsWith('package://')
     ? 'package://'
@@ -453,25 +503,34 @@ export const normalizeMeshPathForExport = (meshPath: string): string => {
   } else if (lower.startsWith('mesh/')) {
     normalized = normalized.slice('mesh/'.length);
   } else {
-    const segments = normalized.split('/');
-    const packageAssetRoots = new Set([
-      'assets',
-      'dae',
-      'obj',
-      'stl',
-      'gltf',
-      'glb',
-      'texture',
-      'textures',
-      'material',
-      'materials',
-    ]);
+    const assetRootSlice = slicePathFromKnownRoot(
+      normalized,
+      MESH_EXPORT_ROOT_SEGMENTS,
+      new Set(['mesh', 'meshes']),
+    );
+    if (assetRootSlice) {
+      normalized = assetRootSlice;
+    } else {
+      const segments = normalized.split('/');
+      const packageAssetRoots = new Set([
+        'assets',
+        'dae',
+        'obj',
+        'stl',
+        'gltf',
+        'glb',
+        'texture',
+        'textures',
+        'material',
+        'materials',
+      ]);
 
-    // Imported ROS packages are often rewritten to "pkg_name/dae/part.dae".
-    // Strip the package root here because the URDF export already prepends
-    // "package://<export-name>/meshes/" on top of the stored mesh path.
-    if (segments.length >= 3 && packageAssetRoots.has(segments[1].toLowerCase())) {
-      normalized = segments.slice(1).join('/');
+      // Imported ROS packages are often rewritten to "pkg_name/dae/part.dae".
+      // Strip the package root here because the URDF export already prepends
+      // "package://<export-name>/meshes/" on top of the stored mesh path.
+      if (segments.length >= 3 && packageAssetRoots.has(segments[1].toLowerCase())) {
+        normalized = segments.slice(1).join('/');
+      }
     }
   }
 
@@ -516,6 +575,15 @@ export const normalizeTexturePathForExport = (texturePath: string): string => {
 
   if (lower.startsWith('texture/')) {
     return normalized.slice('texture/'.length);
+  }
+
+  const textureRootSlice = slicePathFromKnownRoot(
+    normalized,
+    TEXTURE_EXPORT_ROOT_SEGMENTS,
+    new Set(['texture', 'textures']),
+  );
+  if (textureRootSlice) {
+    return textureRootSlice;
   }
 
   const segments = normalized.split('/');

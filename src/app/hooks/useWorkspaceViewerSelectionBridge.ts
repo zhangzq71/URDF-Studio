@@ -6,6 +6,7 @@ import type { AssemblyState, InteractionSelection } from '@/types';
 
 interface UseWorkspaceViewerSelectionBridgeOptions {
   assemblyState: AssemblyState | null;
+  canSelectAssemblyRootComponent: boolean;
   clearAssemblySelection: () => void;
   handleSelect: (
     type: Exclude<InteractionSelection['type'], null>,
@@ -32,11 +33,11 @@ interface UseWorkspaceViewerSelectionBridgeOptions {
   ) => void;
   selectComponent: (componentId: string) => void;
   setWorkspaceTransformPending: Dispatch<SetStateAction<boolean>>;
-  shouldRenderAssembly: boolean;
 }
 
 export function useWorkspaceViewerSelectionBridge({
   assemblyState,
+  canSelectAssemblyRootComponent,
   clearAssemblySelection,
   handleSelect,
   handleSelectGeometry,
@@ -45,7 +46,6 @@ export function useWorkspaceViewerSelectionBridge({
   handleViewerSelect,
   selectComponent,
   setWorkspaceTransformPending,
-  shouldRenderAssembly,
 }: UseWorkspaceViewerSelectionBridgeOptions) {
   const handleWorkspaceTransformPendingChange = useCallback(
     (pending: boolean) => {
@@ -65,7 +65,7 @@ export function useWorkspaceViewerSelectionBridge({
       },
       applySelection: () => void,
     ) => {
-      if (nextSelection.type === 'tendon' || !shouldRenderAssembly || !assemblyState) {
+      if (nextSelection.type === 'tendon' || !canSelectAssemblyRootComponent || !assemblyState) {
         return false;
       }
 
@@ -86,7 +86,7 @@ export function useWorkspaceViewerSelectionBridge({
 
       return true;
     },
-    [assemblyState, selectComponent, shouldRenderAssembly],
+    [assemblyState, canSelectAssemblyRootComponent, selectComponent],
   );
 
   const handleViewerSelectWithBridgePreview = useCallback(

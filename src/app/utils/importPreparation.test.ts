@@ -1550,6 +1550,68 @@ test('prepareImportPayload keeps xacro gazebo sidecars as auxiliary text files',
   );
 });
 
+test('prepareImportPayload keeps SRDF sidecars for URDF zip bundles', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'demo/robot.urdf',
+    `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link" />
+</robot>`,
+  );
+  zip.file(
+    'demo/config/robot.srdf',
+    `<robot name="demo">
+  <group name="arm" />
+</robot>`,
+  );
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'bundle.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'demo/robot.urdf');
+  assert.deepEqual(
+    result.textFiles.map((file) => file.path),
+    ['demo/config/robot.srdf'],
+  );
+});
+
+test('prepareImportPayload keeps SRDF sidecars for loose URDF folder imports', async () => {
+  const files = [
+    createLooseFile(
+      'robot.urdf',
+      `<?xml version="1.0"?>
+<robot name="demo">
+  <link name="base_link" />
+</robot>`,
+      'demo/robot.urdf',
+    ),
+    createLooseFile(
+      'robot.srdf',
+      `<robot name="demo">
+  <group name="arm" />
+</robot>`,
+      'demo/config/robot.srdf',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+  });
+
+  assert.equal(result.preferredFileName, 'demo/robot.urdf');
+  assert.deepEqual(
+    result.textFiles.map((file) => file.path),
+    ['demo/config/robot.srdf'],
+  );
+});
+
 test('prepareImportPayload keeps gazebo material sidecars for usd-only bundles in the asset library', async () => {
   const zip = new JSZip();
   zip.file(

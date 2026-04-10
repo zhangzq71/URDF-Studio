@@ -23,7 +23,7 @@ const CLOSED_LOOP_ROUNDTRIP_FIXTURES = [
     name: 'agility_cassie',
     path: 'test/mujoco_menagerie-main/agility_cassie/cassie.xml',
     expectedClosedLoopCount: 4,
-    expectUnsupportedFloatingRoot: true,
+    expectUnsupportedFloatingRoot: false,
   },
   {
     name: 'robotiq_2f85',
@@ -335,4 +335,162 @@ test('generateSDF fails fast for unsupported floating joints instead of silently
     () => generateSDF(robot, { packageName: 'floating_root_demo' }),
     /\[SDF export\] Joint "floating_base_joint" uses unsupported floating type\./,
   );
+});
+
+test('generateSDF omits a synthetic empty world root when the root joint is floating', () => {
+  const robot: RobotState = {
+    name: 'floating_root_promoted',
+    rootLinkId: 'world',
+    links: {
+      world: {
+        ...DEFAULT_LINK,
+        id: 'world',
+        name: 'world',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        inertial: {
+          mass: 0,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+        },
+      },
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.4, y: 0.2, z: 0.1 },
+          color: '#336699',
+        },
+      },
+    },
+    joints: {
+      floating_base_joint: {
+        ...DEFAULT_JOINT,
+        id: 'floating_base_joint',
+        name: 'floating_base_joint',
+        type: JointType.FLOATING,
+        parentLinkId: 'world',
+        childLinkId: 'base_link',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0.5 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: undefined,
+        limit: undefined,
+      },
+    },
+    selection: { type: null, id: null },
+  };
+
+  const sdf = generateSDF(robot, { packageName: 'floating_root_promoted' });
+  assert.doesNotMatch(sdf, /<link name="world">/);
+  assert.doesNotMatch(sdf, /floating_base_joint/);
+  assert.match(sdf, /<link name="base_link">[\s\S]*<pose>0 0 0\.5 0 0 0<\/pose>/);
+});
+
+test('generateSDF omits a synthetic empty world root when the root joint is fixed', () => {
+  const robot: RobotState = {
+    name: 'fixed_root_promoted',
+    rootLinkId: 'world',
+    links: {
+      world: {
+        ...DEFAULT_LINK,
+        id: 'world',
+        name: 'world',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        inertial: {
+          mass: 0,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
+        },
+      },
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+        },
+      },
+    },
+    joints: {
+      world_to_base: {
+        ...DEFAULT_JOINT,
+        id: 'world_to_base',
+        name: 'world_to_base',
+        type: JointType.FIXED,
+        parentLinkId: 'world',
+        childLinkId: 'base_link',
+        origin: {
+          xyz: { x: 0.1, y: -0.2, z: 0.3 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+    selection: { type: null, id: null },
+  };
+
+  const sdf = generateSDF(robot, { packageName: 'fixed_root_promoted' });
+  assert.doesNotMatch(sdf, /<link name="world">/);
+  assert.doesNotMatch(sdf, /world_to_base/);
+  assert.match(sdf, /<link name="base_link">[\s\S]*<pose>0\.1 -0\.2 0\.3 0 0 0<\/pose>/);
+});
+
+test('generateSDF renames joints that collide with link names', () => {
+  const robot: RobotState = {
+    name: 'name_collision_demo',
+    rootLinkId: 'root_link',
+    links: {
+      root_link: {
+        ...DEFAULT_LINK,
+        id: 'root_link',
+        name: 'root_link',
+      },
+      elbow: {
+        ...DEFAULT_LINK,
+        id: 'elbow',
+        name: 'elbow',
+      },
+    },
+    joints: {
+      elbow_joint: {
+        ...DEFAULT_JOINT,
+        id: 'elbow_joint',
+        name: 'elbow',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'root_link',
+        childLinkId: 'elbow',
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -1, upper: 1, effort: 1, velocity: 1 },
+      },
+    },
+    selection: { type: null, id: null },
+  };
+
+  const sdf = generateSDF(robot, { packageName: 'name_collision_demo' });
+  assert.match(sdf, /<link name="elbow">/);
+  assert.match(sdf, /<joint name="elbow_joint" type="revolute">/);
+  assert.doesNotMatch(sdf, /<joint name="elbow" type="revolute">/);
 });

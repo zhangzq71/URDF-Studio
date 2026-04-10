@@ -164,7 +164,7 @@ const DetailGeometryTabButton = ({
     type="button"
     onClick={onClick}
     title={label}
-    className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 overflow-hidden rounded-t-lg border-x border-t px-1 py-1 text-[10px] font-semibold transition-all ${
+    className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 overflow-hidden rounded-t-lg border-x border-t px-1 py-1 text-[10px] font-semibold transition-colors ${
       isActive
         ? 'z-10 -mb-px border-border-black bg-panel-bg pb-1.5 text-system-blue dark:bg-segmented-active'
         : 'border-transparent bg-transparent text-text-tertiary hover:bg-element-hover hover:text-text-secondary'
@@ -186,7 +186,7 @@ const DetailGeometryTabPanel = ({
 }) => (
   <div
     style={{ display: activeTab === tab ? undefined : 'none' }}
-    className="mb-2.5 animate-in rounded-b-lg border-x border-b border-border-black bg-panel-bg p-1.5 shadow-sm fade-in slide-in-from-bottom-1 duration-200"
+    className="mb-2.5 rounded-b-lg border-x border-b border-border-black bg-panel-bg p-1.5 shadow-sm"
   >
     {children}
   </div>

@@ -98,6 +98,108 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return collapsed.join('/');
   };
 
+  const computeSymmetricEigenvalues3x3 = (
+    matrix: [[number, number, number], [number, number, number], [number, number, number]],
+  ): [number, number, number] => {
+    const working = matrix.map((row) => [...row]) as [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ];
+
+    for (let iteration = 0; iteration < 24; iteration += 1) {
+      let pivotRow = 0;
+      let pivotCol = 1;
+      let pivotValue = Math.abs(working[pivotRow][pivotCol]);
+
+      for (const [row, col] of [
+        [0, 1],
+        [0, 2],
+        [1, 2],
+      ] as const) {
+        const candidate = Math.abs(working[row][col]);
+        if (candidate > pivotValue) {
+          pivotRow = row;
+          pivotCol = col;
+          pivotValue = candidate;
+        }
+      }
+
+      if (pivotValue <= 1e-12) {
+        break;
+      }
+
+      const app = working[pivotRow][pivotRow];
+      const aqq = working[pivotCol][pivotCol];
+      const apq = working[pivotRow][pivotCol];
+      const tau = (aqq - app) / (2 * apq);
+      const tangent = Math.sign(tau || 1) / (Math.abs(tau) + Math.sqrt(1 + tau * tau));
+      const cosine = 1 / Math.sqrt(1 + tangent * tangent);
+      const sine = tangent * cosine;
+
+      for (let row = 0; row < 3; row += 1) {
+        if (row === pivotRow || row === pivotCol) {
+          continue;
+        }
+
+        const arp = working[row][pivotRow];
+        const arq = working[row][pivotCol];
+        working[row][pivotRow] = arp * cosine - arq * sine;
+        working[pivotRow][row] = working[row][pivotRow];
+        working[row][pivotCol] = arp * sine + arq * cosine;
+        working[pivotCol][row] = working[row][pivotCol];
+      }
+
+      working[pivotRow][pivotRow] =
+        app * cosine * cosine - 2 * apq * cosine * sine + aqq * sine * sine;
+      working[pivotCol][pivotCol] =
+        app * sine * sine + 2 * apq * cosine * sine + aqq * cosine * cosine;
+      working[pivotRow][pivotCol] = 0;
+      working[pivotCol][pivotRow] = 0;
+    }
+
+    return [working[0][0], working[1][1], working[2][2]].sort((left, right) => left - right) as [
+      number,
+      number,
+      number,
+    ];
+  };
+
+  const hasInvalidMujocoInertia = (link: UrdfLink): boolean => {
+    const inertial = link.inertial;
+    if (!inertial || !Number.isFinite(inertial.mass) || inertial.mass <= 0) {
+      return false;
+    }
+
+    const inertia = inertial.inertia;
+    if (!inertia) {
+      return false;
+    }
+
+    const components = [
+      inertia.ixx,
+      inertia.ixy,
+      inertia.ixz,
+      inertia.iyy,
+      inertia.iyz,
+      inertia.izz,
+    ];
+    if (components.some((value) => !Number.isFinite(value))) {
+      return true;
+    }
+
+    const principalMoments = computeSymmetricEigenvalues3x3([
+      [inertia.ixx, inertia.ixy, inertia.ixz],
+      [inertia.ixy, inertia.iyy, inertia.iyz],
+      [inertia.ixz, inertia.iyz, inertia.izz],
+    ]);
+    if (principalMoments.some((value) => !Number.isFinite(value) || value <= 0)) {
+      return true;
+    }
+
+    return principalMoments[0] + principalMoments[1] < principalMoments[2];
+  };
+
   // Helper to convert hex color to rgba string
   const hexToRgba = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(
@@ -322,6 +424,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     meshPath?: string,
     dimensions?: { x: number; y: number; z: number },
     mjcfMesh?: UrdfLink['visual']['mjcfMesh'],
+    assetRef?: string,
   ): string | null => {
     const normalizedPath = resolveExportMeshPath(mjcfMesh?.file || meshPath);
     const inlineVertices =
@@ -332,7 +435,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
 
     const key = buildMeshAssetKey({
       path: normalizedPath || null,
-      sourceAssetName: mjcfMesh?.name || null,
+      sourceAssetName: mjcfMesh?.name || assetRef || null,
       vertices: inlineVertices,
       scale: normalizeMjcfMeshScale(mjcfMesh, dimensions),
       refpos: normalizeMeshRefpos(mjcfMesh?.refpos),
@@ -816,11 +919,17 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     return !hasMass && !hasGeometry(link);
   };
 
+  const needsBalanceInertia = Object.values(links).some((link) => hasInvalidMujocoInertia(link));
+
   let xml = `<mujoco model="${name}">\n`;
-  xml +=
-    textureAssets.size > 0
-      ? `  <compiler angle="radian" meshdir="${meshdir}" texturedir="${texturedir}" />\n`
-      : `  <compiler angle="radian" meshdir="${meshdir}" />\n`;
+  const compilerAttrs = [`angle="radian"`, `meshdir="${meshdir}"`];
+  if (textureAssets.size > 0) {
+    compilerAttrs.push(`texturedir="${texturedir}"`);
+  }
+  if (needsBalanceInertia) {
+    compilerAttrs.push(`balanceinertia="true"`);
+  }
+  xml += `  <compiler ${compilerAttrs.join(' ')} />\n`;
 
   // Assets Section
   xml += `  <asset>\n`;
@@ -1075,7 +1184,12 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
           }
           vGeomAttrs += ` type="hfield" hfield="${hfieldAssetName}"`;
         } else if (v.type === GeometryType.SDF) {
-          const meshAssetName = resolveMeshAssetName(v.meshPath, v.dimensions, v.mjcfMesh);
+          const meshAssetName = resolveMeshAssetName(
+            v.meshPath,
+            v.dimensions,
+            v.mjcfMesh,
+            v.assetRef,
+          );
           const fallbackMeshRef = v.assetRef || resolveExportMeshPath(v.meshPath);
           if (!meshAssetName && !fallbackMeshRef) {
             throw new Error(
@@ -1099,6 +1213,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
                   vertices: undefined,
                 }
               : v.mjcfMesh,
+            v.assetRef,
           );
           if (meshAssetName) {
             vGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
@@ -1171,7 +1286,12 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         }
         cGeomAttrs += ` type="hfield" hfield="${hfieldAssetName}"`;
       } else if (c.type === GeometryType.SDF) {
-        const meshAssetName = resolveMeshAssetName(c.meshPath, c.dimensions, c.mjcfMesh);
+        const meshAssetName = resolveMeshAssetName(
+          c.meshPath,
+          c.dimensions,
+          c.mjcfMesh,
+          c.assetRef,
+        );
         const fallbackMeshRef = c.assetRef || resolveExportMeshPath(c.meshPath);
         if (!meshAssetName && !fallbackMeshRef) {
           throw new Error(
@@ -1186,7 +1306,12 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
           );
         }
 
-        const meshAssetName = resolveMeshAssetName(c.meshPath, c.dimensions, c.mjcfMesh);
+        const meshAssetName = resolveMeshAssetName(
+          c.meshPath,
+          c.dimensions,
+          c.mjcfMesh,
+          c.assetRef,
+        );
         if (meshAssetName) {
           cGeomAttrs += ` type="mesh" mesh="${meshAssetName}"`;
         } else {

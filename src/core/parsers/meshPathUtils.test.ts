@@ -63,6 +63,24 @@ test('normalizeMeshPathForExport strips imported package roots ahead of assets f
   assert.equal(normalizeMeshPathForExport('ARX L5/assets/base_link.obj'), 'assets/base_link.obj');
 });
 
+test('normalizeMeshPathForExport strips absolute imported MJCF asset prefixes down to the package asset root', () => {
+  assert.equal(
+    normalizeMeshPathForExport(
+      'home/xyk/Desktop/URDF-Studio/test/awesome_robot_descriptions_repos/mujoco_menagerie/unitree_go2/assets/base_0.obj',
+    ),
+    'assets/base_0.obj',
+  );
+});
+
+test('normalizeTexturePathForExport strips absolute imported asset prefixes down to a stable package path', () => {
+  assert.equal(
+    normalizeTexturePathForExport(
+      'home/xyk/Desktop/URDF-Studio/test/demo_robot/assets/albedo/base_color.png',
+    ),
+    'assets/albedo/base_color.png',
+  );
+});
+
 test('rewriteRobotMeshPathsForSource stabilizes relative texture paths alongside meshes', () => {
   const robot: RobotData = {
     name: 'demo',

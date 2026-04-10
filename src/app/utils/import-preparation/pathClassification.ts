@@ -13,8 +13,15 @@ export function isImportableDefinitionPath(lowerPath: string): boolean {
 
 export function isAuxiliaryTextImportPath(lowerPath: string): boolean {
   return (
-    lowerPath.endsWith('.material') || lowerPath.endsWith('.gazebo') || lowerPath.endsWith('.mtl')
+    lowerPath.endsWith('.material') ||
+    lowerPath.endsWith('.gazebo') ||
+    lowerPath.endsWith('.mtl') ||
+    lowerPath.endsWith('.srdf')
   );
+}
+
+export function shouldAlwaysLoadAuxiliaryImportPath(lowerPath: string): boolean {
+  return lowerPath.endsWith('.srdf');
 }
 
 export function shouldMirrorTextMeshAssetContent(lowerPath: string): boolean {

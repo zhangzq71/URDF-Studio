@@ -4,11 +4,7 @@ import type { UrdfLink } from '@/types';
 import { getCollisionGeometryByObjectIndex } from '@/core/robot';
 import { createHighlightOverrideMaterial, disposeMaterial } from '../utils/materials';
 import { _pooledRay, _pooledBox3 } from '../constants';
-import {
-  collectPickTargets,
-  collectSelectableHelperTargets,
-  type PickTargetMode,
-} from '../utils/pickTargets';
+import { collectPickTargets, type PickTargetMode } from '../utils/pickTargets';
 import { resolveTopLayerInteractionSubType } from '../utils/interactionMode';
 import {
   getSyntheticGeomParentName,
@@ -186,11 +182,10 @@ export function useHighlightManager({
         const pickTargets = targetMode
           ? collectPickTargets(linkMeshMapRef.current, targetMode, robot)
           : [];
-        const helperTargets = collectSelectableHelperTargets(robot);
-        const seenTargetIds = new Set<number>(pickTargets.map((target) => target.id));
-        const boundingTargets = pickTargets.concat(
-          helperTargets.filter((target) => !seenTargetIds.has(target.id)),
-        );
+        // Only include actual link geometry in the bounding box.
+        // Helper objects (joint-axis arrows, origin axes, etc.) can extend far
+        // beyond the robot mesh and must not inflate the broad-phase check.
+        const boundingTargets = pickTargets;
 
         boundingBox.makeEmpty();
 
