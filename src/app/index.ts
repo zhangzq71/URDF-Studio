@@ -10,6 +10,10 @@ export { default as App } from './App';
 export { AppContent } from './App';
 export type { AppExtensionSlots, AppExtensionConfig, AppExposedActions } from './App';
 
+// Plugin Registry (for registering custom tools)
+export { PluginRegistry } from './pluginRegistry';
+export type { ToolHandler } from './pluginRegistry';
+
 // Layout components
 export { AppLayout } from './AppLayout';
 export { Providers } from './Providers';

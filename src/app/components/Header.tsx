@@ -17,6 +17,7 @@ import type {
   HeaderViewAvailability,
   HeaderViewConfig,
 } from './header/types';
+import type { PluginRegistry } from '../pluginRegistry';
 
 interface HeaderProps {
   // Import actions
@@ -36,6 +37,8 @@ interface HeaderProps {
   // Snapshot
   onSnapshot: () => void;
   onOpenCollisionOptimizer: () => void;
+  // Plugin registry
+  pluginRegistry?: PluginRegistry;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -61,6 +64,7 @@ export function Header({
   secondaryAction,
   onSnapshot,
   onOpenCollisionOptimizer,
+  pluginRegistry,
   viewConfig,
   viewAvailability = { jointPanel: true },
   setViewConfig,
@@ -142,6 +146,7 @@ export function Header({
           onOpenAIConversation={onOpenAIConversation}
           onOpenIkTool={onOpenIkTool}
           onOpenCollisionOptimizer={onOpenCollisionOptimizer}
+          pluginRegistry={pluginRegistry}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           undo={undo}

@@ -45,6 +45,7 @@ import {
 } from '@/store';
 import type { InspectionReport, RobotFile, RobotState } from '@/types';
 import type { HeaderAction } from './components/header/types';
+import { PluginRegistry } from './pluginRegistry';
 
 /** Render slots: allows external repos to inject extra modals and overlays */
 export interface AppExtensionSlots {
@@ -64,6 +65,10 @@ export interface AppExtensionConfig {
 export interface AppExposedActions {
   importFiles: (files: FileList | File[]) => void;
   openLibraryExport: (file: RobotFile) => void;
+  /** Open a registered plugin by key */
+  openPlugin: (pluginKey: string) => void;
+  /** Access the plugin registry to register custom tools */
+  pluginRegistry: PluginRegistry;
 }
 
 interface AppContentProps {
@@ -1170,10 +1175,16 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
   );
 
   // Expose internal actions to external consumers (ref keeps the reference fresh)
+  const pluginRegistryRef = useRef(new PluginRegistry());
+
   const exposedActionsRef = useRef<AppExposedActions | null>(null);
   exposedActionsRef.current = {
     importFiles: handleImport,
     openLibraryExport: handleOpenLibraryExportDialog,
+    openPlugin: (pluginKey: string) => {
+      pluginRegistryRef.current.open(pluginKey);
+    },
+    pluginRegistry: pluginRegistryRef.current,
   };
 
   useEffect(() => {
@@ -1251,6 +1262,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         importPreparationOverlay={importPreparationOverlay}
         headerQuickAction={extensions?.config?.headerQuickAction}
         headerSecondaryAction={extensions?.config?.headerSecondaryAction}
+        pluginRegistry={pluginRegistryRef.current}
       />
 
       {/* Modals */}
