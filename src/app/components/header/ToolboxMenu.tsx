@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
 import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
-import type { PluginRegistry } from '../../pluginRegistry';
 
 interface ToolboxMenuProps {
   t: TranslationKeys;
@@ -19,7 +18,6 @@ interface ToolboxMenuProps {
   onOpenAIConversation: () => void;
   onOpenIkTool: () => void;
   onOpenCollisionOptimizer: () => void;
-  pluginRegistry?: PluginRegistry;
 }
 
 type ToolboxItemTone = 'primary' | 'neutral' | 'logo';
@@ -101,7 +99,6 @@ export function ToolboxMenu({
   onOpenAIConversation,
   onOpenIkTool,
   onOpenCollisionOptimizer,
-  pluginRegistry,
 }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
   const effectiveTheme = useEffectiveTheme();
@@ -136,26 +133,13 @@ export function ToolboxMenu({
     onOpenIkTool();
   }, [onClose, onOpenIkTool]);
 
-  /** Try to open a tool via the plugin registry; fall back to the direct callback */
-  const openViaRegistry = React.useCallback(
-    (key: string, fallback: () => void) => {
-      if (pluginRegistry?.has(key)) {
-        onClose();
-        pluginRegistry.open(key);
-      } else {
-        fallback();
-      }
-    },
-    [pluginRegistry, onClose],
-  );
-
   const items: ToolboxItem[] = [
     {
       key: 'ai-inspection',
       title: t.aiInspection,
       description: t.aiInspectionDesc,
       icon: <ScanSearch className="h-[18px] w-[18px]" />,
-      onClick: () => openViaRegistry('ai-inspection', openAIInspection),
+      onClick: openAIInspection,
       tone: 'primary',
     },
     {
@@ -163,7 +147,7 @@ export function ToolboxMenu({
       title: t.aiConversation,
       description: t.aiConversationDesc,
       icon: <MessageSquare className="h-[18px] w-[18px]" />,
-      onClick: () => openViaRegistry('ai-conversation', openAIConversation),
+      onClick: openAIConversation,
       tone: 'primary',
     },
     {
@@ -171,7 +155,7 @@ export function ToolboxMenu({
       title: t.ikTool,
       description: t.ikToolboxDesc,
       icon: <Crosshair className="h-[18px] w-[18px]" />,
-      onClick: () => openViaRegistry('ik-tool', openIkTool),
+      onClick: openIkTool,
       tone: 'primary',
     },
     {
@@ -179,7 +163,7 @@ export function ToolboxMenu({
       title: t.collisionOptimizerDialog,
       description: t.collisionOptimizerToolboxDesc,
       icon: <Box className="h-[18px] w-[18px]" />,
-      onClick: () => openViaRegistry('collision-optimizer', openCollisionOptimizer),
+      onClick: openCollisionOptimizer,
       tone: 'primary',
     },
     {

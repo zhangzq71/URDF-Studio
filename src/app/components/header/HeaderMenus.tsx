@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { ToolboxMenu } from './ToolboxMenu';
 import { HeaderButton } from './HeaderButton';
-import type { PluginRegistry } from '../../pluginRegistry';
 import { ViewMenuItem } from './ViewMenuItem';
 import { toggleOptionsPanel, toggleViewPanel } from './viewMenuState.js';
 import type {
@@ -43,7 +42,6 @@ interface HeaderMenusProps {
   onOpenAIConversation: () => void;
   onOpenIkTool: () => void;
   onOpenCollisionOptimizer: () => void;
-  pluginRegistry?: PluginRegistry;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   undo: () => void;
@@ -75,7 +73,6 @@ export function HeaderMenus({
   onOpenAIConversation,
   onOpenIkTool,
   onOpenCollisionOptimizer,
-  pluginRegistry,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   undo,
@@ -264,7 +261,6 @@ export function HeaderMenus({
             onOpenAIConversation={onOpenAIConversation}
             onOpenIkTool={onOpenIkTool}
             onOpenCollisionOptimizer={onOpenCollisionOptimizer}
-            pluginRegistry={pluginRegistry}
           />
         )}
       </div>

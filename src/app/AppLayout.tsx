@@ -67,7 +67,6 @@ import { buildPropertyEditorSelectionContext } from './utils/propertyEditorSelec
 import { resolveDocumentLoadingOverlayTargetFileName } from './utils/documentLoadProgress';
 import { clearIkDragHelperSelection } from './utils/ikDragSession';
 import { resolveIkToolSelectionState } from './utils/ikToolSelectionState';
-import type { PluginRegistry } from './pluginRegistry';
 
 interface ProModeRoundtripSession {
   baselineSnapshot: string;
@@ -109,8 +108,6 @@ interface AppLayoutProps {
   onLoadRobot: (file: RobotFile) => void;
   viewerReloadKey: number;
   importPreparationOverlay?: ImportPreparationOverlayState | null;
-  // Plugin registry (for registering internal tools)
-  pluginRegistry?: PluginRegistry;
 }
 
 export function AppLayout({
@@ -133,7 +130,6 @@ export function AppLayout({
   onLoadRobot,
   viewerReloadKey,
   importPreparationOverlay = null,
-  pluginRegistry,
 }: AppLayoutProps) {
   // UI Store (grouped with useShallow to reduce subscriptions)
   const {
@@ -785,37 +781,6 @@ export function AppLayout({
     setIsIkToolPanelOpen(true);
   }, [handleSetIkDragActive, setViewConfig]);
 
-  // Register internal tools in the plugin registry
-  useEffect(() => {
-    if (!pluginRegistry) return;
-
-    const unregisterers = [
-      pluginRegistry.register({
-        key: 'measure',
-        open: () => {
-          setViewConfig((prev) => ({ ...prev, showToolbar: true }));
-          setPendingViewerToolMode('measure');
-        },
-      }),
-      pluginRegistry.register({
-        key: 'collision-optimizer',
-        open: () => handleOpenCollisionOptimizer(),
-      }),
-      pluginRegistry.register({
-        key: 'ik-tool',
-        open: handleOpenIkTool,
-      }),
-    ];
-
-    return () => unregisterers.forEach((unregister) => unregister());
-  }, [
-    pluginRegistry,
-    setPendingViewerToolMode,
-    setViewConfig,
-    handleOpenCollisionOptimizer,
-    handleOpenIkTool,
-  ]);
-
   const handleSetDetailOptionsPanelVisibility = useCallback(
     (show: boolean) => {
       setViewConfig((prev) => setOptionsPanelVisibility(prev, show));
@@ -942,7 +907,6 @@ export function AppLayout({
         secondaryAction={headerSecondaryAction}
         onSnapshot={handleSnapshot}
         onOpenCollisionOptimizer={handleOpenCollisionOptimizer}
-        pluginRegistry={pluginRegistry}
         viewConfig={viewConfig}
         viewAvailability={{ jointPanel: jointPanelAvailable }}
         setViewConfig={setViewConfig}
