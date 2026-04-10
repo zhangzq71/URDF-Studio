@@ -597,7 +597,7 @@ test('generated MJCF preserves inline-only mesh assets that have vertex data', (
   );
   assert.match(
     generated,
-    /<geom pos="0 0 0" rgba="[^"]+" group="3" contype="1" conaffinity="1" type="mesh" mesh="pyramid" \/>/,
+    /<geom(?=[^>]*rgba="[^"]+")(?=[^>]*group="3")(?=[^>]*contype="1")(?=[^>]*conaffinity="1")(?=[^>]*type="mesh")(?=[^>]*mesh="pyramid")[^>]*>/,
   );
 });
 
@@ -842,6 +842,60 @@ test('generated MJCF does not inject a duplicate freejoint when the root is alre
   const freejointMatches = generated.match(/<freejoint\b/g) || [];
   assert.equal(freejointMatches.length, 1);
   assert.doesNotMatch(generated, /__joint_stage_0/);
+});
+
+test('generated MJCF preserves collision geom names through export and reparse', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'named-collisions',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.4, y: 0.3, z: 0.2 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.BOX,
+          name: 'base_collision',
+          dimensions: { x: 0.38, y: 0.28, z: 0.18 },
+          color: '#00ff00',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [
+          {
+            type: GeometryType.SPHERE,
+            name: 'motor_guard',
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#ffaa00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, { includeSceneHelpers: false, meshdir: 'meshes/' });
+  assert.match(generated, /<geom(?=[^>]*name="base_collision")(?=[^>]*group="3")[^>]*>/);
+  assert.match(generated, /<geom(?=[^>]*name="motor_guard")(?=[^>]*group="3")[^>]*>/);
+
+  const reparsed = parseMJCF(generated);
+  assert.equal(reparsed.links.base_link.collision.name, 'base_collision');
+  assert.equal(reparsed.links.base_link.collisionBodies?.[0]?.name, 'motor_guard');
 });
 
 test('unitree_go2 MJCF roundtrip preserves the floating root joint and base pose', () => {
@@ -1253,6 +1307,61 @@ test('generated MJCF honors mesh export path overrides for converted assets', ()
 
   assert.match(generated, /<mesh name="dae_hip_dae" file="dae\/hip\.dae\.obj"/);
   assert.doesNotMatch(generated, /file="dae\/hip\.dae"/);
+});
+
+test('generated MJCF preserves nested meshPathOverrides without stripping inner mesh directories', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'nested-mesh-override',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          meshPath: 'b2_z1_description/meshes/arm_meshes/meshes/visual/z1_Link00.dae',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+    meshPathOverrides: new Map([
+      [
+        'b2_z1_description/meshes/arm_meshes/meshes/visual/z1_Link00.dae',
+        'arm_meshes/meshes/visual/z1_Link00.dae.obj',
+      ],
+    ]),
+  });
+
+  assert.match(
+    generated,
+    /<mesh name="arm_meshes_meshes_visual_z1_Link00_dae" file="arm_meshes\/meshes\/visual\/z1_Link00\.dae\.obj"/,
+  );
+  assert.doesNotMatch(generated, /file="visual\/z1_Link00\.dae\.obj"/);
 });
 
 test('generated MJCF emits separate visual geoms for extracted mesh material variants', () => {

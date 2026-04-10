@@ -230,7 +230,7 @@ export interface TranslationKeys {
   radiusZ: string;
   totalLength: string;
 
-  // Visualizer
+  // Editor interaction
   move: string;
   rotate: string;
   urdfFrame: string;
@@ -357,6 +357,7 @@ export interface TranslationKeys {
   toolboxHoverHint: string;
   robotRedirect: string;
   step2urdf: string;
+  robogo: string;
   motrix: string;
   trajectoryEditing: string;
   featureInDevelopment: string;
@@ -368,6 +369,7 @@ export interface TranslationKeys {
   viewMode: string;
   faceMode: string;
   measureMode: string;
+  ikTool: string;
   paintMode: string;
   closeToolbar: string;
 
@@ -376,8 +378,14 @@ export interface TranslationKeys {
   aiInspectionDesc: string;
   aiConversationDesc: string;
   measureToolboxDesc: string;
+  ikToolboxDesc: string;
+  ikToolSelectedLink: string;
+  ikToolNoSelection: string;
+  ikToolRootLinkNotDraggable: string;
+  ikToolNoVariableChain: string;
   motionTrackingDesc: string;
   step2urdfDesc: string;
+  robogoDesc: string;
   motrixDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
@@ -474,6 +482,8 @@ export interface TranslationKeys {
   light: string;
   dark: string;
   system: string;
+  yes: string;
+  no: string;
   importWarning: string;
   sourceCodeAutoApply: string;
   fontSize: string;
@@ -623,6 +633,15 @@ export interface TranslationKeys {
   measureDeltaX: string;
   measureDeltaY: string;
   measureDeltaZ: string;
+  measureRelativeTransform: string;
+  measureRelativeTranslation: string;
+  measureRelativePoseUnavailable: string;
+  measurePoseMatrix: string;
+  measurePoseRpy: string;
+  measurePoseQuat: string;
+  measurePoseAxisAngle: string;
+  measurePoseAxis: string;
+  measurePoseAngle: string;
   measureNoMeasurement: string;
   undo: string;
   redo: string;

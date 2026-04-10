@@ -152,21 +152,13 @@ test('resolveAssemblySelection accepts viewer-facing link and joint names', () =
   );
 });
 
-test('resolveAssemblyViewerComponentSelection promotes viewer picks to a component when bridge picking is inactive', () => {
+test('resolveAssemblyViewerComponentSelection only promotes root link picks to a component when bridge picking is inactive', () => {
   const assemblyState = createAssemblyState();
 
   assert.equal(
     resolveAssemblyViewerComponentSelection(assemblyState, {
       type: 'link',
       id: 'component_a/base_link',
-    }),
-    'component_a',
-  );
-
-  assert.equal(
-    resolveAssemblyViewerComponentSelection(assemblyState, {
-      type: 'joint',
-      id: 'component_a/tool_joint',
     }),
     'component_a',
   );
@@ -184,7 +176,15 @@ test('resolveAssemblyViewerComponentSelection promotes viewer picks to a compone
       type: 'joint',
       id: 'robot_a_tool_joint',
     }),
-    'component_a',
+    null,
+  );
+
+  assert.equal(
+    resolveAssemblyViewerComponentSelection(assemblyState, {
+      type: 'link',
+      id: 'component_a/tool_link',
+    }),
+    null,
   );
 });
 
@@ -202,17 +202,23 @@ test('resolveAssemblyViewerComponentSelection keeps link or joint picking active
 });
 
 test('resolveBlockedBridgeComponentId blocks the opposite side component for the active pick target', () => {
-  assert.equal(resolveBlockedBridgeComponentId({
-    pickTarget: 'child',
-    parentComponentId: 'component_a',
-    childComponentId: '',
-  }), 'component_a');
+  assert.equal(
+    resolveBlockedBridgeComponentId({
+      pickTarget: 'child',
+      parentComponentId: 'component_a',
+      childComponentId: '',
+    }),
+    'component_a',
+  );
 
-  assert.equal(resolveBlockedBridgeComponentId({
-    pickTarget: 'parent',
-    parentComponentId: '',
-    childComponentId: 'component_b',
-  }), 'component_b');
+  assert.equal(
+    resolveBlockedBridgeComponentId({
+      pickTarget: 'parent',
+      parentComponentId: '',
+      childComponentId: 'component_b',
+    }),
+    'component_b',
+  );
 });
 
 test('bridge selection rules reject picks from the blocked component and trim dropdown options', () => {
@@ -256,7 +262,10 @@ test('bridge selection rules reject picks from the blocked component and trim dr
   );
 
   assert.deepEqual(
-    filterSelectableBridgeComponents(Object.values(assemblyState.components), blockedComponentId).map((component) => component.id),
+    filterSelectableBridgeComponents(
+      Object.values(assemblyState.components),
+      blockedComponentId,
+    ).map((component) => component.id),
     ['component_b'],
   );
 });

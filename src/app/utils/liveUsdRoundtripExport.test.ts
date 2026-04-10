@@ -3,16 +3,20 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import type { RobotFile } from '@/types';
-import { inferUsdBundleVirtualDirectory } from '@/features/urdf-viewer';
+import { inferUsdBundleVirtualDirectory } from '@/features/editor';
 import { buildLiveUsdRoundtripArchive } from './liveUsdRoundtripExport.ts';
 
 function deriveExpectedArchiveEntryPath(virtualPath: string): string {
   const normalizedVirtualPath = virtualPath.replace(/\\/g, '/').replace(/^\/+/, '');
-  const bundleDirectory = inferUsdBundleVirtualDirectory(normalizedVirtualPath).replace(/^\/+|\/+$/g, '');
+  const bundleDirectory = inferUsdBundleVirtualDirectory(normalizedVirtualPath).replace(
+    /^\/+|\/+$/g,
+    '',
+  );
   const archiveRoot = bundleDirectory.split('/').filter(Boolean).pop() || '';
-  const relativePath = bundleDirectory && normalizedVirtualPath.startsWith(`${bundleDirectory}/`)
-    ? normalizedVirtualPath.slice(bundleDirectory.length + 1)
-    : normalizedVirtualPath;
+  const relativePath =
+    bundleDirectory && normalizedVirtualPath.startsWith(`${bundleDirectory}/`)
+      ? normalizedVirtualPath.slice(bundleDirectory.length + 1)
+      : normalizedVirtualPath;
 
   return archiveRoot ? `${archiveRoot}/${relativePath}` : relativePath;
 }
@@ -55,14 +59,8 @@ test('buildLiveUsdRoundtripArchive keeps the original B2 file name instead of vi
   assert.equal(receivedOptions?.stageSourcePath, '/unitree_model/B2/usd/b2.usd');
   assert.equal(receivedOptions?.persistToServer, false);
   assert.equal(archive.archiveFileName, 'b2.zip');
-  assert.deepEqual(
-    Array.from(archive.archiveFiles.keys()).sort(),
-    ['B2/usd/b2.usd'],
-  );
-  assert.equal(
-    await archive.archiveFiles.get('B2/usd/b2.usd')?.text(),
-    '#usda 1.0\n',
-  );
+  assert.deepEqual(Array.from(archive.archiveFiles.keys()).sort(), ['B2/usd/b2.usd']);
+  assert.equal(await archive.archiveFiles.get('B2/usd/b2.usd')?.text(), '#usda 1.0\n');
 });
 
 test('buildLiveUsdRoundtripArchive preserves root-level bundle paths without adding a basename folder', async () => {
@@ -95,13 +93,10 @@ test('buildLiveUsdRoundtripArchive preserves root-level bundle paths without add
   });
 
   assert.equal(archive.archiveFileName, 'b2.zip');
-  assert.deepEqual(
-    Array.from(archive.archiveFiles.keys()).sort(),
-    [
-      'b2.usd',
-      'configuration/b2_description_base.usd',
-    ],
-  );
+  assert.deepEqual(Array.from(archive.archiveFiles.keys()).sort(), [
+    'b2.usd',
+    'configuration/b2_description_base.usd',
+  ]);
   assert.equal(await archive.archiveFiles.get('b2.usd')?.text(), '#usda 1.0\n');
 });
 
@@ -143,7 +138,12 @@ test('buildLiveUsdRoundtripArchive packages real unitree_model USD samples under
     });
 
     const expectedEntryPath = deriveExpectedArchiveEntryPath(virtualPath);
-    const expectedArchiveName = `${expectedEntryPath.split('/').pop()?.replace(/\.usd$/i, '') || 'model'}.zip`;
+    const expectedArchiveName = `${
+      expectedEntryPath
+        .split('/')
+        .pop()
+        ?.replace(/\.usd$/i, '') || 'model'
+    }.zip`;
 
     assert.equal(archive.archiveFileName, expectedArchiveName);
     assert.deepEqual(Array.from(archive.archiveFiles.keys()).sort(), [expectedEntryPath]);

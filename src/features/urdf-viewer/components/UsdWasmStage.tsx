@@ -32,7 +32,7 @@ import type {
   ViewerDocumentLoadEvent,
   ViewerHelperKind,
   ViewerInteractiveLayer,
-  URDFViewerProps,
+  ViewerProps,
   ViewerRuntimeStageBridge,
   UsdLoadingPhaseLabels,
   UsdLoadingProgress,
@@ -123,6 +123,7 @@ import {
   sortUsdInteractionCandidates,
   type ResolvedUsdHelperHit,
 } from '../utils/usdInteractionPicking';
+import { resolveScreenSpaceUsdHelperHit } from '../utils/usdScreenSpaceHelperInteraction';
 import { resolveUsdVisualMeshObjectOrder } from '../utils/usdRuntimeMeshObjectOrder';
 import { hasBlobBackedLargeUsdaInStageScope } from '../utils/usdBlobBackedUsda.ts';
 
@@ -134,11 +135,11 @@ interface UsdWasmStageProps {
   mode: ViewerSceneMode;
   justSelectedRef?: RefObject<boolean>;
   groundPlaneOffset?: number;
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  selection?: ViewerProps['selection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   hoverSelectionEnabled?: boolean;
-  onHover?: URDFViewerProps['onHover'];
-  onMeshSelect?: URDFViewerProps['onMeshSelect'];
+  onHover?: ViewerProps['onHover'];
+  onMeshSelect?: ViewerProps['onMeshSelect'];
   showOrigins: boolean;
   showOriginsOverlay: boolean;
   originSize: number;
@@ -157,8 +158,8 @@ interface UsdWasmStageProps {
   toolMode: ToolMode;
   robotLinks?: Record<string, UrdfLink>;
   transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
-  onCollisionTransformPreview?: URDFViewerProps['onCollisionTransformPreview'];
-  onCollisionTransformEnd?: URDFViewerProps['onCollisionTransform'];
+  onCollisionTransformPreview?: ViewerProps['onCollisionTransformPreview'];
+  onCollisionTransformEnd?: ViewerProps['onCollisionTransform'];
   onTransformPending?: (pending: boolean) => void;
   setIsDragging?: (dragging: boolean) => void;
   loadingLabel: string;
@@ -435,8 +436,8 @@ function getUsdMeshRole(meshId: string, meshName = ''): UsdMeshRole {
 }
 
 function areSelectionStatesEqual(
-  left: URDFViewerProps['selection'] | URDFViewerProps['hoveredSelection'],
-  right: URDFViewerProps['selection'] | URDFViewerProps['hoveredSelection'],
+  left: ViewerProps['selection'] | ViewerProps['hoveredSelection'],
+  right: ViewerProps['selection'] | ViewerProps['hoveredSelection'],
 ): boolean {
   return (
     (left?.type ?? null) === (right?.type ?? null) &&
@@ -895,7 +896,7 @@ export function UsdWasmStage({
   const baselineRobotLinksRef = useRef<Record<string, UrdfLink> | null>(null);
   const collisionMeshObjectIndexByMeshIdRef = useRef(new Map<string, number | undefined>());
   const previousCollisionCountByLinkPathRef = useRef(new Map<string, number>());
-  const previousSelectionRef = useRef<URDFViewerProps['selection']>(selection);
+  const previousSelectionRef = useRef<ViewerProps['selection']>(selection);
   const meshMetaByObjectRef = useRef(new Map<THREE.Object3D, RuntimeMeshMeta>());
   const meshesByLinkKeyRef = useRef(new Map<string, THREE.Mesh[]>());
   const pickMeshesRef = useRef<THREE.Object3D[]>([]);
@@ -913,7 +914,7 @@ export function UsdWasmStage({
   const linkRotationControllerRef = useRef(new LinkRotationController());
   const jointAxesControllerRef = useRef(new UsdJointAxesController());
   const loadTokenRef = useRef(0);
-  const lastRuntimeSelectionRef = useRef<URDFViewerProps['selection']>({
+  const lastRuntimeSelectionRef = useRef<ViewerProps['selection']>({
     type: null,
     id: null,
     subType: undefined,
@@ -927,7 +928,7 @@ export function UsdWasmStage({
     jointInfo: UsdStageJointInfoLike | null;
   } | null>(null);
   const runtimeJointPreviewFrameRef = useRef<number | null>(null);
-  const lastRuntimeHoverRef = useRef<URDFViewerProps['hoveredSelection']>({
+  const lastRuntimeHoverRef = useRef<ViewerProps['hoveredSelection']>({
     type: null,
     id: null,
     subType: undefined,
@@ -1187,7 +1188,7 @@ export function UsdWasmStage({
 
   const resolveUsdCollisionTransformTarget = useCallback(
     (
-      currentSelection: NonNullable<URDFViewerProps['selection']>,
+      currentSelection: NonNullable<ViewerProps['selection']>,
     ): UsdCollisionTransformTarget | null => {
       if (
         currentSelection.type !== 'link' ||
@@ -1556,7 +1557,7 @@ export function UsdWasmStage({
   }, []);
 
   const applyUsdHighlight = useCallback(
-    (candidate?: URDFViewerProps['selection']) => {
+    (candidate?: ViewerProps['selection']) => {
       const resolvedRobotData = resolvedRobotDataRef.current;
       if (!resolvedRobotData || !candidate?.type || !candidate.id) {
         return;
@@ -2011,7 +2012,7 @@ export function UsdWasmStage({
         pickedMeshMeta?.role === 'collision' && !Number.isInteger(pickedMeshMeta.objectIndex)
           ? null
           : pickedMeshMeta;
-      const nextSelection: URDFViewerProps['selection'] = {
+      const nextSelection: ViewerProps['selection'] = {
         type: 'link',
         id: linkId,
         subType: effectivePickedMeshMeta?.role,
@@ -2228,12 +2229,36 @@ export function UsdWasmStage({
         };
       }
 
-      return exactCandidate?.kind === 'geometry'
-        ? {
-            kind: 'geometry',
-            meta: exactCandidate.meta,
-          }
-        : null;
+      if (exactCandidate?.kind === 'geometry') {
+        return {
+          kind: 'geometry',
+          meta: exactCandidate.meta,
+        };
+      }
+
+      const screenSpaceHelperHit = resolveScreenSpaceUsdHelperHit({
+        pointerClientX: localX,
+        pointerClientY: localY,
+        helperTargets,
+        resolution: resolvedRobotDataRef.current,
+        camera,
+        canvasRect: {
+          x: 0,
+          y: 0,
+          width,
+          height,
+        },
+        interactionLayerPriority,
+      });
+
+      if (screenSpaceHelperHit) {
+        return {
+          kind: 'helper',
+          selection: screenSpaceHelperHit,
+        };
+      }
+
+      return null;
     },
     [camera, getGizmoTargets, getRuntimeMeshIndex, gl.domElement, interactionLayerPriority],
   );
@@ -2377,7 +2402,7 @@ export function UsdWasmStage({
   );
 
   const emitRuntimeHoverState = useCallback(
-    (nextState: URDFViewerProps['hoveredSelection']) => {
+    (nextState: ViewerProps['hoveredSelection']) => {
       if (areSelectionStatesEqual(lastRuntimeHoverRef.current, nextState)) {
         return;
       }
@@ -2502,7 +2527,7 @@ export function UsdWasmStage({
       armSelectionMissGuard(justSelectedRef);
 
       if (pickedTarget.kind === 'helper') {
-        const nextSelection: URDFViewerProps['selection'] = {
+        const nextSelection: ViewerProps['selection'] = {
           type: pickedTarget.selection.type,
           id: pickedTarget.selection.id,
           helperKind: pickedTarget.selection.helperKind,
@@ -2530,7 +2555,7 @@ export function UsdWasmStage({
         return;
       }
 
-      const nextSelection: URDFViewerProps['selection'] = {
+      const nextSelection: ViewerProps['selection'] = {
         type: 'link',
         id: linkId,
         subType: pickedMeshMeta.role,

@@ -12,14 +12,32 @@ import type {
   UrdfLink,
   UrdfJoint,
 } from '@/types';
-import { DEFAULT_LINK, DEFAULT_JOINT, DEFAULT_VISUAL_COLOR } from '@/types';
-import { resolveClosedLoopDrivenJointMotion } from '@/core/robot';
+import { DEFAULT_JOINT, DEFAULT_VISUAL_COLOR } from '@/types';
+import {
+  createAttachedChildLink,
+  resolveClosedLoopDrivenJointMotion,
+  resolveDefaultChildJointOrigin,
+} from '@/core/robot';
 import {
   syncRobotMaterialsForLinkUpdate,
   syncRobotVisualColorsFromMaterials,
 } from '@/core/robot/materials';
 
 const INITIAL_LINK_ID = 'base_link';
+const createInitialRootLink = (): UrdfLink => {
+  const link = createAttachedChildLink({
+    id: INITIAL_LINK_ID,
+    name: 'base_link',
+  });
+
+  return {
+    ...link,
+    visual: {
+      ...link.visual,
+      color: DEFAULT_VISUAL_COLOR,
+    },
+  };
+};
 
 // Robot data without selection (selection is in selectionStore)
 export interface RobotData {
@@ -109,12 +127,7 @@ interface RobotActions {
 const INITIAL_ROBOT_DATA: RobotData = {
   name: 'my_robot',
   links: {
-    [INITIAL_LINK_ID]: {
-      ...DEFAULT_LINK,
-      id: INITIAL_LINK_ID,
-      name: 'base_link',
-      visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR },
-    },
+    [INITIAL_LINK_ID]: createInitialRootLink(),
   },
   joints: {},
   rootLinkId: INITIAL_LINK_ID,
@@ -373,12 +386,15 @@ export const useRobotStore = create<
         // Calculate offset for new child
         const siblings = Object.values(state.joints).filter((j) => j.parentLinkId === parentLinkId);
         const yOffset = siblings.length * 0.5;
+        const parentLink = state.links[parentLinkId];
 
-        const newLink: UrdfLink = {
-          ...DEFAULT_LINK,
+        const newLink: UrdfLink = createAttachedChildLink({
           id: newLinkId,
           name: `link_${Object.keys(state.links).length + 1}`,
-          visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR },
+        });
+        newLink.visual = {
+          ...newLink.visual,
+          color: DEFAULT_VISUAL_COLOR,
         };
 
         const newJoint: UrdfJoint = {
@@ -387,10 +403,7 @@ export const useRobotStore = create<
           name: `joint_${Object.keys(state.joints).length + 1}`,
           parentLinkId,
           childLinkId: newLinkId,
-          origin: {
-            xyz: { x: 0, y: yOffset, z: 0.5 },
-            rpy: { r: 0, p: 0, y: 0 },
-          },
+          origin: resolveDefaultChildJointOrigin(parentLink, yOffset),
         };
 
         saveToHistory('Add child subtree');

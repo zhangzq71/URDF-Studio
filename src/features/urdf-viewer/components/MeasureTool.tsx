@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import type { MeasureToolProps, URDFViewerProps } from '../types';
+import type { MeasureToolProps, ViewerProps } from '../types';
 import {
   applyMeasurePick,
   clearActiveMeasureGroup,
@@ -50,7 +50,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function getSelectionSignature(selection?: URDFViewerProps['selection']): string {
+function getSelectionSignature(selection?: ViewerProps['selection']): string {
   if (!selection?.type || !selection?.id) {
     return 'none';
   }
@@ -170,12 +170,7 @@ const MeasurePreviewItem = memo(
           className="pointer-events-none select-none"
           zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
         >
-          <div
-            className="px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap text-amber-50/98 tracking-[-0.01em]"
-            style={{
-              textShadow: '0 2px 8px rgba(15, 23, 42, 0.78), 0 0 8px rgba(245, 158, 11, 0.55)',
-            }}
-          >
+          <div className="rounded-md border border-amber-300/40 bg-slate-950/78 px-1.5 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap text-amber-50/98 tracking-[-0.01em] backdrop-blur-sm">
             {formatMeasurementDistance(metrics.distance)}
           </div>
         </Html>
@@ -375,10 +370,10 @@ const MeasurementItem = memo(
               zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
             >
               <div
-                className="px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em]"
+                className="rounded-md border bg-slate-950/80 px-1.5 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em] backdrop-blur-sm"
                 style={{
                   color: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}F2`,
-                  textShadow: '0 2px 8px rgba(15, 23, 42, 0.82)',
+                  borderColor: `${MEASURE_AXIS_COLORS[segmentLabel.axis]}55`,
                 }}
               >
                 {segmentLabel.text}
@@ -395,12 +390,11 @@ const MeasurementItem = memo(
           zIndexRange={MEASURE_LABEL_Z_INDEX_RANGE}
         >
           <div
-            className={`group flex cursor-pointer items-center gap-1 px-1 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em] transition-colors pointer-events-auto ${
-              isHovered ? 'text-red-50' : 'text-red-100/96 hover:text-red-50'
+            className={`group pointer-events-auto flex cursor-pointer items-center gap-1 rounded-md border bg-slate-950/80 px-1.5 py-0.5 font-mono text-[8px] font-semibold whitespace-nowrap tracking-[-0.01em] backdrop-blur-sm transition-colors ${
+              isHovered
+                ? 'border-red-200/55 text-red-50'
+                : 'border-red-300/35 text-red-100/96 hover:border-red-200/55 hover:text-red-50'
             }`}
-            style={{
-              textShadow: '0 2px 10px rgba(15, 23, 42, 0.82), 0 0 10px rgba(239, 68, 68, 0.52)',
-            }}
             onMouseEnter={onHover}
             onMouseLeave={onLeave}
             onClick={(event) => {
@@ -446,6 +440,7 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
   const [hoveredMeasurementId, setHoveredMeasurementId] = useState<string | null>(null);
   const lastSelectionSignatureRef = useRef('none');
   const lastHoverSignatureRef = useRef('none');
+  const wasActiveRef = useRef(active);
   const resolveMeasureTarget = useCallback(
     (nextSelection = selection, fallbackSelection = hoveredSelection) =>
       measureTargetResolverRef?.current?.(nextSelection, fallbackSelection, measureAnchorMode) ??
@@ -476,6 +471,27 @@ export const MeasureTool: React.FC<MeasureToolProps> = ({
       });
     }
   }, [active, hoveredSelection, selection, setMeasureState]);
+
+  useEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = active;
+
+    if (!active || wasActive) {
+      return;
+    }
+
+    lastSelectionSignatureRef.current = getSelectionSignature(selection);
+    lastHoverSignatureRef.current = getSelectionSignature(hoveredSelection);
+
+    const target = resolveMeasureTarget(hoveredSelection, hoveredSelection);
+    setMeasureState((prev) => {
+      if (!target && !prev.hoverTarget) {
+        return prev;
+      }
+
+      return setMeasureHoverTarget(prev, target);
+    });
+  }, [active, hoveredSelection, resolveMeasureTarget, selection, setMeasureState]);
 
   useEffect(() => {
     if (!active) {

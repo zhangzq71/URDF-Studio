@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { DEFAULT_LINK } from '@/types/constants';
 import type { RobotData, RobotFile, UsdPreparedExportCache, UsdSceneSnapshot } from '@/types';
-import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
+import type { ViewerRobotDataResolution } from '@/features/editor';
 
 import { resolveUsdAssemblySeedRobotData } from './useWorkspaceModeTransitions.ts';
 

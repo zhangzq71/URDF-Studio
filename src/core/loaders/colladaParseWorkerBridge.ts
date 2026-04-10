@@ -11,8 +11,14 @@ import type {
 } from './colladaParseWorkerProtocol';
 
 interface WorkerLike {
-  addEventListener: (type: 'message' | 'error', listener: EventListenerOrEventListenerObject) => void;
-  removeEventListener: (type: 'message' | 'error', listener: EventListenerOrEventListenerObject) => void;
+  addEventListener: (
+    type: 'message' | 'error',
+    listener: EventListenerOrEventListenerObject,
+  ) => void;
+  removeEventListener: (
+    type: 'message' | 'error',
+    listener: EventListenerOrEventListenerObject,
+  ) => void;
   postMessage: (message: ParseColladaWorkerRequest) => void;
   terminate: () => void;
 }
@@ -60,17 +66,13 @@ function resolveDefaultWorkerCount(): number {
   return Math.max(1, Math.min(10, Math.floor(hardwareConcurrency / 2)));
 }
 
-export function createColladaParseWorkerPoolClient(
-  {
-    cacheLimit = DEFAULT_CACHE_LIMIT,
-    canUseWorker = () => typeof Worker !== 'undefined',
-    createWorker = () => new Worker(
-      new URL('./workers/colladaParse.worker.ts', import.meta.url),
-      { type: 'module' },
-    ),
-    getWorkerCount = resolveDefaultWorkerCount,
-  }: CreateColladaParseWorkerPoolClientOptions = {},
-): ColladaParseWorkerPoolClient {
+export function createColladaParseWorkerPoolClient({
+  cacheLimit = DEFAULT_CACHE_LIMIT,
+  canUseWorker = () => typeof Worker !== 'undefined',
+  createWorker = () =>
+    new Worker(new URL('./workers/colladaParse.worker.ts', import.meta.url), { type: 'module' }),
+  getWorkerCount = resolveDefaultWorkerCount,
+}: CreateColladaParseWorkerPoolClientOptions = {}): ColladaParseWorkerPoolClient {
   const resolvedCache = new Map<string, SerializedColladaSceneData>();
   const pendingLoads = new Map<string, Promise<THREE.Object3D>>();
   const pendingRequests = new Map<number, PendingWorkerRequest>();
@@ -101,7 +103,10 @@ export function createColladaParseWorkerPoolClient(
     }
 
     pendingRequests.delete(requestId);
-    pendingRequest.workerEntry.pendingCount = Math.max(0, pendingRequest.workerEntry.pendingCount - 1);
+    pendingRequest.workerEntry.pendingCount = Math.max(
+      0,
+      pendingRequest.workerEntry.pendingCount - 1,
+    );
     return pendingRequest;
   };
 
@@ -137,7 +142,12 @@ export function createColladaParseWorkerPoolClient(
     }
 
     if (message.type === 'parse-collada-error') {
-      pendingRequest.reject(new Error(message.error || 'Collada parse worker failed'));
+      const workerError = new Error(message.error || 'Collada parse worker failed');
+      console.error(
+        '[ColladaParseWorkerBridge] Worker returned a Collada parse failure.',
+        workerError,
+      );
+      pendingRequest.reject(workerError);
       return;
     }
 
@@ -145,8 +155,10 @@ export function createColladaParseWorkerPoolClient(
   };
 
   const handleWorkerError = (event: ErrorEvent): void => {
+    const workerError = createWorkerError(event);
+    console.error('[ColladaParseWorkerBridge] Collada parse worker crashed.', workerError);
     workerUnavailable = true;
-    disposeWorkerPool(createWorkerError(event));
+    disposeWorkerPool(workerError);
   };
 
   const ensureWorkerPool = (): WorkerPoolEntry[] => {
@@ -187,9 +199,10 @@ export function createColladaParseWorkerPoolClient(
     }
 
     const pool = ensureWorkerPool();
-    const workerEntry = pool.reduce((bestEntry, entry) => (
-      entry.pendingCount < bestEntry.pendingCount ? entry : bestEntry
-    ), pool[0]);
+    const workerEntry = pool.reduce(
+      (bestEntry, entry) => (entry.pendingCount < bestEntry.pendingCount ? entry : bestEntry),
+      pool[0],
+    );
 
     const workerResult = await new Promise<SerializedColladaSceneData>((resolve, reject) => {
       const requestId = ++requestIdCounter;
@@ -207,6 +220,13 @@ export function createColladaParseWorkerPoolClient(
           assetUrl,
         });
       } catch (error) {
+        console.error(
+          '[ColladaParseWorkerBridge] Failed to dispatch Collada parse request to worker.',
+          {
+            assetUrl,
+            error,
+          },
+        );
         clearPendingWorkerRequest(requestId);
         workerUnavailable = true;
         disposeWorkerPool(error);
@@ -224,10 +244,9 @@ export function createColladaParseWorkerPoolClient(
       return await pendingLoad;
     }
 
-    const nextLoad = dispatchToWorkerPool(assetUrl, manager)
-      .finally(() => {
-        pendingLoads.delete(assetUrl);
-      });
+    const nextLoad = dispatchToWorkerPool(assetUrl, manager).finally(() => {
+      pendingLoads.delete(assetUrl);
+    });
 
     pendingLoads.set(assetUrl, nextLoad);
     return await nextLoad;

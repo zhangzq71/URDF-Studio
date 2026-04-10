@@ -18,7 +18,7 @@ import type {
   UrdfJoint,
 } from '@/types';
 import { DEFAULT_JOINT, JointType } from '@/types';
-import { resolveRobotFileData } from '@/core/parsers';
+import { describeRobotImportFailure, resolveRobotFileData } from '@/core/parsers';
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
@@ -117,15 +117,7 @@ function buildAssemblyComponentImportError(
   file: RobotFile,
   importResult: Exclude<RobotImportResult, { status: 'ready' }>,
 ): Error {
-  const detail =
-    importResult.status === 'needs_hydration'
-      ? 'USD scene data is not hydrated yet.'
-      : importResult.reason === 'unsupported_format'
-        ? `Unsupported format "${file.format}".`
-        : importResult.reason === 'source_only_fragment'
-          ? 'The selected source file is only a fragment and cannot be assembled as a standalone component.'
-          : 'Source parsing failed.';
-
+  const detail = describeRobotImportFailure(importResult);
   return new Error(`Failed to add assembly component from "${file.name}". ${detail}`);
 }
 
@@ -516,11 +508,9 @@ export const useAssemblyStore = create<
                 });
 
           if (importResult.status !== 'ready') {
-            failFastInDev(
-              'AssemblyStore:addComponent',
-              buildAssemblyComponentImportError(file, importResult),
-            );
-            return null;
+            const importError = buildAssemblyComponentImportError(file, importResult);
+            failFastInDev('AssemblyStore:addComponent', importError);
+            throw importError;
           }
 
           return prepareAssemblyRobotData(importResult.robotData, {

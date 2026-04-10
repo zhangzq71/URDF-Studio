@@ -1,0 +1,91 @@
+import { analyzeAssemblyConnectivity } from '@/core/robot';
+import type { AssemblyState, RobotState } from '@/types';
+import type { ExportActionRequired, ExportTarget } from './types';
+
+export interface BoxFaceFallbackWarningLabels {
+  sdf: string;
+  urdf: string;
+  xacro: string;
+}
+
+export function createBoxFaceTextureFallbackWarnings(
+  format: 'urdf' | 'sdf' | 'xacro',
+  count: number,
+  replaceTemplate: (template: string, replacements: Record<string, string | number>) => string,
+  labels: BoxFaceFallbackWarningLabels,
+): string[] {
+  if (count <= 0) {
+    return [];
+  }
+
+  const template = format === 'urdf' ? labels.urdf : format === 'sdf' ? labels.sdf : labels.xacro;
+
+  return [
+    replaceTemplate(template, {
+      count,
+    }),
+  ];
+}
+
+export function assertUrdfExportSupported(
+  robot: Pick<RobotState, 'name' | 'closedLoopConstraints'>,
+  exportName: string | undefined,
+  replaceTemplate: (template: string, replacements: Record<string, string | number>) => string,
+  unsupportedLabel: string,
+): void {
+  const closedLoopConstraintCount = robot.closedLoopConstraints?.length ?? 0;
+  if (closedLoopConstraintCount === 0) {
+    return;
+  }
+
+  const resolvedExportName = exportName?.trim() || robot.name?.trim() || 'robot';
+  throw new Error(
+    replaceTemplate(unsupportedLabel, {
+      name: resolvedExportName,
+      count: closedLoopConstraintCount,
+    }),
+  );
+}
+
+export function assertAssemblyUrdfExportSupported(
+  assembly: AssemblyState,
+  replaceTemplate: (template: string, replacements: Record<string, string | number>) => string,
+  unsupportedLabel: string,
+): void {
+  Object.values(assembly.components).forEach((component) => {
+    assertUrdfExportSupported(
+      component.robot,
+      component.name?.trim() || component.id,
+      replaceTemplate,
+      unsupportedLabel,
+    );
+  });
+}
+
+export function resolveDisconnectedWorkspaceUrdfAction(
+  target: ExportTarget,
+  config: { format: string },
+  sidebarTab: string,
+  assemblyState: AssemblyState | null,
+): ExportActionRequired | null {
+  if (
+    target.type !== 'current' ||
+    config.format !== 'urdf' ||
+    sidebarTab !== 'workspace' ||
+    !assemblyState
+  ) {
+    return null;
+  }
+
+  const analysis = analyzeAssemblyConnectivity(assemblyState);
+  if (!analysis.hasDisconnectedComponents) {
+    return null;
+  }
+
+  return {
+    type: 'disconnected-workspace-urdf',
+    componentCount: analysis.componentCount,
+    connectedGroupCount: analysis.connectedGroupCount,
+    exportName: assemblyState.name?.trim() || 'assembly',
+  };
+}

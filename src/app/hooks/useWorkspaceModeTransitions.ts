@@ -8,7 +8,7 @@ import { markUnsavedChangesBaselineSaved } from '@/app/utils/unsavedChangesBasel
 import {
   getCurrentUsdViewerSceneSnapshot,
   prepareUsdExportCacheFromSnapshot,
-} from '@/features/urdf-viewer';
+} from '@/features/editor';
 import {
   createGeneratedWorkspaceUrdfFile,
   isGeneratedWorkspaceUrdfFileName,

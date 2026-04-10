@@ -362,7 +362,7 @@ const buildCachedUsdStlGeometry = async (
     const serializedGeometry = await loadSerializedStlGeometryData(assetUrl);
     const geometry = createGeometryFromSerializedStlData(serializedGeometry);
     if (meshCompression?.enabled && meshCompression.quality < 100) {
-      const mesh = new THREE.Mesh(geometry, createUsdBaseMaterial());
+      const mesh = new THREE.Mesh(geometry, createUsdBaseMaterial('#ffffff'));
       applyUsdMeshCompression(mesh, meshCompression.quality);
       return mesh.geometry;
     }

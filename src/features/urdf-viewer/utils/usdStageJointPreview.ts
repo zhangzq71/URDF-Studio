@@ -1,8 +1,7 @@
 import type { ViewerRobotDataResolution } from './viewerRobotData';
+import type { UsdRuntimeJointInfoLike } from './usdRuntimeJointInfo';
 
-export interface UsdStageJointInfoLike {
-  angleDeg?: number;
-}
+export type UsdStageJointInfoLike = UsdRuntimeJointInfoLike;
 
 export interface UsdStageJointPreview {
   activeJointId: string | null;
@@ -21,9 +20,10 @@ export function resolveUsdStageJointPreview(
     };
   }
 
-  const activeJointId = Object.entries(resolution.childLinkPathByJointId).find(
-    ([, childLinkPath]) => childLinkPath === linkPath,
-  )?.[0] ?? null;
+  const activeJointId =
+    Object.entries(resolution.childLinkPathByJointId).find(
+      ([, childLinkPath]) => childLinkPath === linkPath,
+    )?.[0] ?? null;
 
   if (!activeJointId) {
     return {

@@ -7,11 +7,17 @@ import {
   SceneCompileWarmup,
   shouldUseIndeterminateStreamingMeshProgress,
 } from '@/shared/components/3d';
+import { isAssemblyTransformSelectionArmed } from '@/shared/utils/assembly/transformSelection';
+import {
+  resolveViewerJointAngleValue,
+  resolveViewerJointKey,
+} from '@/shared/utils/jointPanelState';
 import { cloneAssemblyTransform } from '@/core/robot/assemblyTransforms';
 import {
   applyMeshMaterialPaintEdit,
   getVisualGeometryByObjectIndex,
   hasGeometryMeshMaterialGroups,
+  resolveDirectManipulableLinkIkDescriptor,
   resolveLinkIkHandleDescriptor,
   resolveLinkKey,
   resolveVisualMaterialOverride,
@@ -25,7 +31,9 @@ import {
 } from '@/core/utils/meshMaterialGroups';
 import { CollisionTransformControls } from './CollisionTransformControls';
 import { HoverSelectionSync } from './HoverSelectionSync';
-import { SourceSceneAssemblyTransformControls } from './SourceSceneAssemblyTransformControls';
+import { JointInteraction } from './JointInteraction';
+import { OriginTransformControls } from './OriginTransformControls';
+import { AssemblyTransformControls } from './AssemblyTransformControls';
 import { ViewerLoadingHud } from './ViewerLoadingHud';
 import type { RobotModelProps, ViewerPaintFaceHit } from '../types';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
@@ -39,10 +47,12 @@ import { useCameraFocus } from '../hooks/useCameraFocus';
 import { useMouseInteraction } from '../hooks/useMouseInteraction';
 import { useHoverDetection } from '../hooks/useHoverDetection';
 import { useVisualizationEffects } from '../hooks/useVisualizationEffects';
+import { isSingleDofJoint } from '../utils/jointTypes';
 import {
   createRuntimeSceneLinkMetadataState,
   resolveRuntimeSceneLinkMetadataState,
 } from '../utils/runtimeSceneMetadata';
+import { resolveSelectedIkDragLinkId } from '../utils/selectedIkDragLink';
 import { resolveViewerRobotSourceFormat } from '../utils/sourceFormat';
 import { shouldEnableViewerSceneCompileWarmup } from '../utils/sceneCompileWarmupPolicy';
 
@@ -59,12 +69,13 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     onDocumentLoadEvent,
     showCollision = false,
     showVisual = true,
-    showIkHandles = true,
+    showIkHandles = false,
     showIkHandlesAlwaysOnTop = true,
     showCollisionAlwaysOnTop = true,
     onSelect,
     onHover,
     onMeshSelect,
+    onUpdate,
     paintColor = '#ff6c0a',
     paintSelectionScope = 'island',
     paintOperation = 'paint',
@@ -100,6 +111,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     focusTarget,
     transformMode = 'select',
     toolMode = 'select',
+    ikDragActive = false,
     onCollisionTransformPreview,
     onCollisionTransformEnd,
     isOrbitDragging,
@@ -110,6 +122,11 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     interactionLayerPriority = [],
     groundPlaneOffset = 0,
     active = true,
+    assemblyState = null,
+    assemblySelection,
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
     sourceSceneAssemblyComponentId = null,
     sourceSceneAssemblyComponentTransform = null,
     showSourceSceneAssemblyComponentControls = false,
@@ -194,10 +211,14 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     }, [robotJoints, runtimeRobotLinks]);
     const selectedIkHandleLinkId = useMemo(
       () =>
-        selection?.type === 'link' && selection.helperKind === 'ik-handle'
-          ? (selection.id ?? null)
-          : null,
-      [selection?.helperKind, selection?.id, selection?.type],
+        resolveSelectedIkDragLinkId({
+          selection,
+          ikDragActive,
+          robotLinks: runtimeRobotLinks,
+          robotJoints,
+          rootLinkId: runtimeRobotRootLinkId,
+        }),
+      [ikDragActive, robotJoints, runtimeRobotLinks, runtimeRobotRootLinkId, selection],
     );
     const selectedIkRuntimeLink = useMemo(() => {
       if (!robot || !selectedIkHandleLinkId) {
@@ -225,7 +246,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
         )?.userData?.__ikHandle ?? null,
       [selectedIkRuntimeLink],
     );
-    const selectedIkHandleDescriptor = useMemo(() => {
+    const selectedPassiveIkHandleDescriptor = useMemo(() => {
       if (
         !selectedIkHandleLinkId ||
         !runtimeRobotRootLinkId ||
@@ -244,6 +265,57 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
         selectedIkHandleLinkId,
       );
     }, [robotJoints, runtimeRobotLinks, runtimeRobotRootLinkId, selectedIkHandleLinkId]);
+    const selectedDirectIkHandleDescriptor = useMemo(() => {
+      if (
+        !selectedIkHandleLinkId ||
+        !runtimeRobotRootLinkId ||
+        !runtimeRobotLinks ||
+        !robotJoints
+      ) {
+        return null;
+      }
+
+      return resolveDirectManipulableLinkIkDescriptor(
+        {
+          links: runtimeRobotLinks,
+          joints: robotJoints,
+          rootLinkId: runtimeRobotRootLinkId,
+        },
+        selectedIkHandleLinkId,
+      );
+    }, [robotJoints, runtimeRobotLinks, runtimeRobotRootLinkId, selectedIkHandleLinkId]);
+    const selectedIkHandleDescriptor =
+      selectedDirectIkHandleDescriptor ?? selectedPassiveIkHandleDescriptor;
+    const selectedJointEntry = useMemo(() => {
+      if (!robot || selection?.type !== 'joint' || !selection.id) {
+        return null;
+      }
+
+      const runtimeJoints = (robot as Object3D & { joints?: Record<string, any> }).joints;
+      const jointKey = resolveViewerJointKey(runtimeJoints, selection.id);
+      const joint = jointKey ? runtimeJoints?.[jointKey] : null;
+      if (!joint || !isSingleDofJoint(joint)) {
+        return null;
+      }
+
+      return {
+        jointKey,
+        joint,
+        jointName: joint.name || jointKey,
+      };
+    }, [robot, selection?.id, selection?.type]);
+    const selectedJointValue = useMemo(() => {
+      if (!selectedJointEntry) {
+        return 0;
+      }
+
+      return resolveViewerJointAngleValue(
+        undefined,
+        selectedJointEntry.jointKey,
+        selectedJointEntry.joint,
+        0,
+      );
+    }, [selectedJointEntry]);
     const fallbackIkRobotState = useMemo(
       () =>
         runtimeRobotRootLinkId && runtimeRobotLinks && robotJoints
@@ -257,6 +329,10 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
       [robotJoints, runtimeRobotLinks, runtimeRobotRootLinkId],
     );
     const ikRobotState = providedIkRobotState ?? fallbackIkRobotState;
+    const assemblyTransformSelectionArmed = useMemo(
+      () => isAssemblyTransformSelectionArmed(assemblyState, assemblySelection, selection),
+      [assemblySelection, assemblyState, selection],
+    );
 
     // ============================================================
     // HOOK: Highlight Manager
@@ -412,6 +488,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
         showCollisionAlwaysOnTop,
         interactionLayerPriority,
         linkMeshMapRef,
+        robotLinks: runtimeRobotLinks,
+        robotJoints,
         onHover,
         onSelect,
         onMeshSelect,
@@ -427,6 +505,20 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
         selection,
         rayIntersectsBoundingBox,
         highlightGeometry,
+        resolveDirectIkHandleLink:
+          ikDragActive && runtimeRobotRootLinkId && runtimeRobotLinks && robotJoints
+            ? (linkId) =>
+                resolveDirectManipulableLinkIkDescriptor(
+                  {
+                    links: runtimeRobotLinks,
+                    joints: robotJoints,
+                    rootLinkId: runtimeRobotRootLinkId,
+                  },
+                  linkId,
+                )
+                  ? linkId
+                  : null
+            : undefined,
       });
 
     const handleCollisionTransformDragging = useCallback(
@@ -456,6 +548,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
       selection,
       onHover,
       linkMeshMapRef,
+      robotLinks: runtimeRobotLinks,
+      robotJoints,
       mouseRef,
       raycasterRef,
       hoveredLinkRef,
@@ -480,6 +574,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
       showInertia,
       showIkHandles,
       showIkHandlesAlwaysOnTop,
+      ikDragActive,
       showCenterOfMass,
       showCoMOverlay,
       centerOfMassSize,
@@ -644,6 +739,8 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
           <LinkIkTransformControls
             selectedLinkId={selectedIkHandleLinkId}
             selectedHandle={selectedIkHandle}
+            selectedLinkObject={selectedIkRuntimeLink}
+            selectedAnchorLocal={selectedIkHandleDescriptor?.anchorLocal ?? null}
             coordinateRoot={robot}
             ikRobotState={ikRobotState}
             enabled={active && Boolean(selectedIkHandleDescriptor?.jointIds.length)}
@@ -656,39 +753,70 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
           />
         )}
         {!snapshotRenderActive &&
-          (() => {
-            if (
-              active &&
-              showSourceSceneAssemblyComponentControls &&
-              sourceSceneAssemblyComponentId &&
-              onSourceSceneAssemblyComponentTransform
-            ) {
-              return (
-                <SourceSceneAssemblyTransformControls
-                  object={sourceSceneComponentRoot}
-                  componentId={sourceSceneAssemblyComponentId}
-                  transformMode={transformMode}
-                  onComponentTransform={onSourceSceneAssemblyComponentTransform}
-                  onTransformPending={onTransformPending}
-                />
-              );
-            }
-
-            const shouldShow = transformMode !== 'select' && selection?.subType === 'collision';
-            return shouldShow ? (
-              <CollisionTransformControls
-                robot={robot}
-                robotVersion={robotVersion}
-                selection={selection}
-                transformMode={transformMode}
-                setIsDragging={handleCollisionTransformDragging}
-                onTransformChange={onCollisionTransformPreview}
-                onTransformEnd={onCollisionTransformEnd}
-                robotLinks={runtimeRobotLinks}
-                onTransformPending={onTransformPending}
-              />
-            ) : null;
-          })()}
+        active &&
+        selection?.helperKind === 'origin-axes' &&
+        transformMode !== 'select' ? (
+          <OriginTransformControls
+            robot={robot}
+            robotVersion={robotVersion}
+            selection={selection}
+            transformMode={transformMode}
+            setIsDragging={handleCollisionTransformDragging}
+            onTransformPending={onTransformPending}
+            onUpdate={onUpdate}
+            robotJoints={robotJoints}
+          />
+        ) : !snapshotRenderActive && active && selectedJointEntry && transformMode !== 'select' ? (
+          <JointInteraction
+            joint={selectedJointEntry.joint}
+            value={selectedJointValue}
+            transformMode={transformMode}
+            onChange={(nextValue) => onJointChange?.(selectedJointEntry.jointName, nextValue)}
+            onCommit={(nextValue) => onJointChangeCommit?.(selectedJointEntry.jointName, nextValue)}
+            setIsDragging={setIsDragging}
+          />
+        ) : null}
+        {!snapshotRenderActive &&
+        active &&
+        assemblySelection &&
+        transformMode !== 'select' &&
+        assemblyTransformSelectionArmed ? (
+          <AssemblyTransformControls
+            robot={{
+              name: 'workspace',
+              rootLinkId: runtimeRobotRootLinkId ?? '__workspace_world__',
+              links: runtimeRobotLinks ?? {},
+              joints: robotJoints ?? {},
+              selection: { type: null, id: null },
+            }}
+            runtimeRobot={robot}
+            assemblyState={assemblyState}
+            assemblySelection={assemblySelection}
+            transformMode={transformMode}
+            assemblyRoot={sourceSceneComponentRoot}
+            sourceSceneComponentRoot={sourceSceneComponentRoot}
+            sourceSceneComponentId={sourceSceneAssemblyComponentId}
+            onAssemblyTransform={onAssemblyTransform}
+            onComponentTransform={onComponentTransform}
+            onBridgeTransform={onBridgeTransform}
+            onSourceSceneComponentTransform={onSourceSceneAssemblyComponentTransform}
+            onTransformPendingChange={onTransformPending}
+          />
+        ) : !snapshotRenderActive &&
+          transformMode !== 'select' &&
+          selection?.subType === 'collision' ? (
+          <CollisionTransformControls
+            robot={robot}
+            robotVersion={robotVersion}
+            selection={selection}
+            transformMode={transformMode}
+            setIsDragging={handleCollisionTransformDragging}
+            onTransformChange={onCollisionTransformPreview}
+            onTransformEnd={onCollisionTransformEnd}
+            robotLinks={runtimeRobotLinks}
+            onTransformPending={onTransformPending}
+          />
+        ) : null}
       </>
     );
   },

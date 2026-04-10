@@ -1,5 +1,6 @@
 import type {
   ResolveRobotFileDataOptions,
+  RobotImportProgress,
   RobotImportResult,
 } from '@/core/parsers/importRobotFile';
 import type { RobotFile } from '@/types';
@@ -70,6 +71,12 @@ export interface ResolveRobotImportWorkerResponse {
   error?: string;
 }
 
+export interface ResolveRobotImportProgressWorkerResponse {
+  type: 'resolve-robot-file-progress';
+  requestId: number;
+  progress: RobotImportProgress;
+}
+
 export interface ParseEditableRobotSourceWorkerResponse {
   type: 'parse-editable-robot-source-result' | 'parse-editable-robot-source-error';
   requestId: number;
@@ -92,5 +99,6 @@ export type RobotImportWorkerRequest =
 
 export type RobotImportWorkerResponse =
   | ResolveRobotImportWorkerResponse
+  | ResolveRobotImportProgressWorkerResponse
   | ParseEditableRobotSourceWorkerResponse
   | PrepareAssemblyComponentWorkerResponse;

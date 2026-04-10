@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { useSelectionStore } from '@/store/selectionStore';
-import type { URDFViewerProps } from '../types';
+import type { ViewerProps } from '../types';
 
 interface HoverSelectionSyncProps {
   enabled?: boolean;
-  onHoverSelectionChange: (hoveredSelection?: URDFViewerProps['selection']) => void;
+  onHoverSelectionChange: (hoveredSelection?: ViewerProps['selection']) => void;
 }
 
 export function HoverSelectionSync({

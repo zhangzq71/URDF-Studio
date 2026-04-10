@@ -2,13 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RotateCcw, Settings } from 'lucide-react';
 import { OptionsPanel } from './OptionsPanel';
 import { JointControlItem } from './JointControlItem';
-import { isSingleDofJoint } from '@/shared/utils/jointTypes';
+import { getSingleDofJointEntries } from '@/shared/utils/jointTypes';
 import { resolveViewerJointAngleValue } from '@/shared/utils/jointPanelState';
 import {
   getMjcfJointDisplayName,
   getMjcfLinkDisplayName,
 } from '@/shared/utils/robot/mjcfDisplayNames';
-import type { JointPanelStore } from '@/shared/utils/jointPanelStore';
+import type { JointPanelActiveJointOptions, JointPanelStore } from '@/shared/utils/jointPanelStore';
 
 interface JointsPanelProps {
   showJointPanel: boolean;
@@ -32,7 +32,7 @@ interface JointsPanelProps {
   toggleJointsCollapsed: () => void;
   setShowJointPanel?: (show: boolean) => void;
   jointPanelStore: JointPanelStore;
-  setActiveJoint: (name: string | null) => void;
+  setActiveJoint: (name: string | null, options?: JointPanelActiveJointOptions) => void;
   handleJointAngleChange: (name: string, angle: number) => void;
   handleJointChangeCommit: (name: string, angle: number) => void;
   onSelect?: (type: 'link' | 'joint', id: string) => void;
@@ -50,7 +50,7 @@ interface JointPanelItemBindingProps {
   displayName?: string;
   angleUnit: 'rad' | 'deg';
   jointPanelStore: JointPanelStore;
-  setActiveJoint: (name: string | null) => void;
+  setActiveJoint: (name: string | null, options?: JointPanelActiveJointOptions) => void;
   handleJointAngleChange: (name: string, angle: number) => void;
   handleJointChangeCommit: (name: string, angle: number) => void;
   onSelect?: (type: 'link' | 'joint', id: string) => void;
@@ -61,10 +61,13 @@ interface JointPanelItemBindingProps {
 interface JointPanelItemSnapshot {
   value: number;
   isActive: boolean;
+  shouldAutoScroll: boolean;
 }
 
 function areJointPanelItemSnapshotsEqual(a: JointPanelItemSnapshot, b: JointPanelItemSnapshot) {
-  return a.value === b.value && a.isActive === b.isActive;
+  return (
+    a.value === b.value && a.isActive === b.isActive && a.shouldAutoScroll === b.shouldAutoScroll
+  );
 }
 
 function resolveJointPanelItemSnapshot(
@@ -77,6 +80,7 @@ function resolveJointPanelItemSnapshot(
   return {
     value: resolveViewerJointAngleValue(snapshot.jointAngles, name, joint, 0),
     isActive: snapshot.activeJoint === name,
+    shouldAutoScroll: snapshot.activeJoint === name && snapshot.activeJointAutoScroll,
   };
 }
 
@@ -118,7 +122,11 @@ const JointPanelItemBinding = React.memo(function JointPanelItemBinding({
   isAdvanced = false,
   onUpdate,
 }: JointPanelItemBindingProps) {
-  const { value, isActive } = useJointPanelItemSnapshot(jointPanelStore, name, joint);
+  const { value, isActive, shouldAutoScroll } = useJointPanelItemSnapshot(
+    jointPanelStore,
+    name,
+    joint,
+  );
 
   return (
     <JointControlItem
@@ -128,6 +136,7 @@ const JointPanelItemBinding = React.memo(function JointPanelItemBinding({
       value={value}
       angleUnit={angleUnit}
       isActive={isActive}
+      shouldAutoScroll={shouldAutoScroll}
       setActiveJoint={setActiveJoint}
       handleJointAngleChange={handleJointAngleChange}
       handleJointChangeCommit={handleJointChangeCommit}
@@ -161,14 +170,10 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
   onHover,
   onUpdate,
 }) => {
-  // Condition to show
-  const shouldShow = showJointPanel && robot?.joints && Object.keys(robot.joints).length > 0;
   const [isAdvanced, setIsAdvanced] = useState(false);
   const onHoverRef = useRef(onHover);
-  const jointEntries = useMemo(
-    () => Object.entries(robot?.joints ?? {}).filter(([_, joint]) => isSingleDofJoint(joint)),
-    [robot?.joints],
-  );
+  const jointEntries = useMemo(() => getSingleDofJointEntries(robot?.joints), [robot?.joints]);
+  const shouldShow = showJointPanel && jointEntries.length > 0;
   const sourceFormat = robot?.inspectionContext?.sourceFormat;
   const linkDisplayNames = useMemo<Record<string, string>>(
     () =>
@@ -244,6 +249,7 @@ export const JointsPanel: React.FC<JointsPanelProps> = ({
     <OptionsPanel
       title={t.joints || 'Joints'}
       show={!!shouldShow}
+      showDragGrip={false}
       panelRef={jointPanelRef}
       position={jointPanelPos}
       defaultPosition={

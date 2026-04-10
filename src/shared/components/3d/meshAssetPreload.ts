@@ -4,7 +4,7 @@ import * as THREE from 'three';
 
 import { buildAssetIndex, resolveManagedAssetUrl } from '@/core/loaders';
 import { loadColladaScene } from '@/core/loaders/colladaParseWorkerBridge';
-import { loadSerializedObjModelData } from '@/core/loaders/objParseWorkerBridge';
+import { loadObjScene } from '@/core/loaders/objMaterialUtils';
 import { loadSerializedStlGeometryData } from '@/core/loaders/stlParseWorkerBridge';
 
 export interface ManagedMeshPreloadRequest {
@@ -78,7 +78,8 @@ export async function preloadManagedMeshAsset({
     }
 
     if (normalizedExtension === 'obj') {
-      await loadSerializedObjModelData(assetUrl);
+      const manager = createManagedLoadingManager(assets, assetBaseDir);
+      await loadObjScene(assetUrl, manager, assetBaseDir);
       return;
     }
 

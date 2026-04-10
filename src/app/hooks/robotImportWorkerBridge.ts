@@ -1,5 +1,6 @@
 import {
   type ResolveRobotFileDataOptions,
+  type RobotImportProgress,
   type RobotImportResult,
 } from '@/core/parsers/importRobotFile';
 import type { RobotFile } from '@/types';
@@ -12,7 +13,6 @@ import type {
   RobotImportWorkerResponse,
   RobotImportWorkerContextSnapshot,
   ResolveRobotImportWorkerRequest,
-  ResolveRobotImportWorkerResponse,
   SyncRobotImportWorkerContextRequest,
   RobotImportWorkerRequest,
 } from '@/app/utils/robotImportWorker';
@@ -40,6 +40,7 @@ interface WorkerLike {
 }
 
 interface PendingRobotImportWorkerRequest {
+  onProgress?: (progress: RobotImportProgress) => void;
   resolve: (value: RobotImportResult) => void;
   reject: (error: unknown) => void;
   workerEntry: WorkerPoolEntry;
@@ -71,7 +72,11 @@ interface CreateRobotImportWorkerClientOptions {
 
 export interface RobotImportWorkerClient {
   dispose: (rejectPendingWith?: unknown) => void;
-  resolve: (file: RobotFile, options?: ResolveRobotFileDataOptions) => Promise<RobotImportResult>;
+  resolve: (
+    file: RobotFile,
+    options?: ResolveRobotFileDataOptions,
+    callbacks?: { onProgress?: (progress: RobotImportProgress) => void },
+  ) => Promise<RobotImportResult>;
   prepareAssemblyComponent: (
     file: RobotFile,
     options: PrepareAssemblyComponentWorkerOptions & {
@@ -168,6 +173,20 @@ export function createRobotImportWorkerClient({
   const handleSharedWorkerMessage = (event: MessageEvent<RobotImportWorkerResponse>): void => {
     const message = event.data;
     if (!message) {
+      return;
+    }
+
+    if (message.type === 'resolve-robot-file-progress') {
+      const pendingRequest = pendingRobotImportRequests.get(message.requestId) ?? null;
+      if (!pendingRequest?.onProgress) {
+        return;
+      }
+
+      try {
+        pendingRequest.onProgress(message.progress);
+      } catch (error) {
+        console.error('[robotImportWorkerBridge] Failed to handle worker progress event.', error);
+      }
       return;
     }
 
@@ -351,6 +370,7 @@ export function createRobotImportWorkerClient({
   const resolve = async (
     file: RobotFile,
     options: ResolveRobotFileDataOptions = {},
+    callbacks?: { onProgress?: (progress: RobotImportProgress) => void },
   ): Promise<RobotImportResult> => {
     if (workerUnavailable) {
       throw new Error('Robot import worker is unavailable');
@@ -393,6 +413,7 @@ export function createRobotImportWorkerClient({
       };
 
       pendingRobotImportRequests.set(requestId, {
+        onProgress: callbacks?.onProgress,
         resolve: resolveRequest,
         reject: rejectRequest,
         workerEntry,
@@ -550,13 +571,18 @@ const sharedRobotImportWorkerClient = createRobotImportWorkerClient();
 export function resolveRobotFileDataWithWorker(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
+  callbacks?: { onProgress?: (progress: RobotImportProgress) => void },
 ): Promise<RobotImportResult> {
   const preResolvedImportResult = consumePreResolvedRobotImport(file);
   if (preResolvedImportResult) {
+    callbacks?.onProgress?.({
+      progressPercent: 100,
+      message: null,
+    });
     return Promise.resolve(preResolvedImportResult);
   }
 
-  return sharedRobotImportWorkerClient.resolve(file, options);
+  return sharedRobotImportWorkerClient.resolve(file, options, callbacks);
 }
 
 export function parseEditableRobotSourceWithWorker(

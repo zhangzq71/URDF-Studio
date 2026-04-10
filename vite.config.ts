@@ -118,10 +118,10 @@ function isCodeEditorRuntimeChunkModule(normalizedId: string): boolean {
 const INITIAL_HTML_MODULE_PRELOAD_BLOCKLIST = [
   'feature-file-io-',
   'export-vendor-',
-  'feature-visualizer-runtime-',
+  'feature-editor-runtime-',
   'feature-urdf-viewer-runtime-',
   'ViewerSceneConnector-',
-  'URDFViewerJointsPanel-',
+  'ViewerJointsPanel-',
 ];
 
 function shouldSkipInitialHtmlModulePreload(dependency: string): boolean {

@@ -8,7 +8,6 @@ import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
-import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import {
   useAppShellState,
   useFileImport,
@@ -21,12 +20,18 @@ import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import {
   buildRobotLoadSupportContextKey,
   preserveDocumentLoadProgressForSameFile,
+  shouldReuseResolvedMjcfViewerRuntime,
   shouldCommitResolvedRobotSelection,
   shouldSkipRedundantRobotReload,
 } from './utils/documentLoadFlow';
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
+import {
+  mapRobotImportProgressToDocumentLoadPercent,
+  resolveBootstrapDocumentLoadPhase,
+  resolveRobotImportCompletedDocumentLoadPercent,
+} from './utils/documentLoadProgress';
 import {
   buildStandaloneImportAssetWarning,
   collectStandaloneImportSupportAssetPaths,
@@ -70,11 +75,12 @@ interface AppContentProps {
   onExposeActions?: (actions: AppExposedActions) => void;
 }
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { translations, type Language } from '@/shared/i18n';
 import { isAssetLibraryOnlyFormat, isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog/ExportDialog';
 import type { ExportProgressState } from '@/features/file-io/types';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
+import { getUsdStageExportHandler } from '@/features/editor';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
 import { consumeHandoffImportFromUrl } from './handoff/bootstrap';
 import {
@@ -545,7 +551,8 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
                     ? 'checking-path'
                     : 'preparing-scene',
               message: null,
-              progressPercent: null,
+              progressMode: 'percent',
+              progressPercent: resolveRobotImportCompletedDocumentLoadPercent(file.format),
               loadedCount: null,
               totalCount: null,
             },
@@ -585,7 +592,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
   );
 
   const commitResolvedFileSelection = useCallback(
-    (file: RobotFile) => {
+    (file: RobotFile, options?: { reloadViewer?: boolean }) => {
       const assetLibraryOnlyFile = isAssetLibraryOnlyFormat(file.format);
       const originalFileFormat =
         file.format === 'urdf' ||
@@ -595,7 +602,9 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         file.format === 'sdf'
           ? file.format
           : null;
-      setViewerReloadKey((value) => value + 1);
+      if (options?.reloadViewer !== false) {
+        setViewerReloadKey((value) => value + 1);
+      }
       setSelectedFile(file);
       setOriginalUrdfContent(assetLibraryOnlyFile ? '' : file.content);
       setOriginalFileFormat(originalFileFormat);
@@ -668,6 +677,31 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         return;
       }
 
+      const currentResolvedMjcfSource =
+        currentSelectedFile?.format === 'mjcf'
+          ? resolveMJCFSource(currentSelectedFile, liveAssetsState.availableFiles)
+          : null;
+      const nextResolvedMjcfSource =
+        file.format === 'mjcf' ? resolveMJCFSource(file, liveAssetsState.availableFiles) : null;
+      const shouldReloadViewer =
+        options?.forceReload ||
+        !shouldReuseResolvedMjcfViewerRuntime({
+          currentSelectedFile,
+          nextFile: file,
+          currentResolvedSource: currentResolvedMjcfSource
+            ? {
+                effectiveFileName: currentResolvedMjcfSource.effectiveFile.name,
+                content: currentResolvedMjcfSource.content,
+              }
+            : null,
+          nextResolvedSource: nextResolvedMjcfSource
+            ? {
+                effectiveFileName: nextResolvedMjcfSource.effectiveFile.name,
+                content: nextResolvedMjcfSource.content,
+              }
+            : null,
+        });
+
       setDocumentLoadState(
         preserveDocumentLoadProgressForSameFile({
           currentState: liveAssetsState.documentLoadState,
@@ -676,9 +710,10 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
             fileName: file.name,
             format: file.format,
             error: null,
-            phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+            phase: resolveBootstrapDocumentLoadPhase(file.format),
             message: null,
-            progressPercent: null,
+            progressMode: 'percent',
+            progressPercent: 0,
             loadedCount: null,
             totalCount: null,
           },
@@ -696,17 +731,70 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
 
         if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
           lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-          commitResolvedFileSelection(file);
+          commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
         }
         applyResolvedRobotImport(file, preResolvedImportResult);
+        if (
+          !shouldReloadViewer &&
+          preResolvedImportResult.status === 'ready' &&
+          file.format === 'mjcf'
+        ) {
+          setDocumentLoadState({
+            status: 'ready',
+            fileName: file.name,
+            format: file.format,
+            error: null,
+            phase: 'ready',
+            message: null,
+            progressMode: 'percent',
+            progressPercent: 100,
+            loadedCount: null,
+            totalCount: null,
+          });
+        }
         return;
       }
 
-      const importResultPromise = resolveRobotFileDataWithWorker(file, {
-        availableFiles: liveAssetsState.availableFiles,
-        assets: liveAssetsState.assets,
-        usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
-      });
+      const importResultPromise = resolveRobotFileDataWithWorker(
+        file,
+        {
+          availableFiles: liveAssetsState.availableFiles,
+          assets: liveAssetsState.assets,
+          usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
+        },
+        {
+          onProgress: (progress) => {
+            if (requestId !== loadRequestIdRef.current) {
+              return;
+            }
+
+            const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
+            const mappedProgressPercent = mapRobotImportProgressToDocumentLoadPercent(
+              file.format,
+              progress,
+            );
+            const nextProgressPercent =
+              currentDocumentLoadState.fileName === file.name &&
+              (currentDocumentLoadState.status === 'loading' ||
+                currentDocumentLoadState.status === 'hydrating')
+                ? Math.max(currentDocumentLoadState.progressPercent ?? 0, mappedProgressPercent)
+                : mappedProgressPercent;
+
+            setDocumentLoadState({
+              status: 'loading',
+              fileName: file.name,
+              format: file.format,
+              error: null,
+              phase: resolveBootstrapDocumentLoadPhase(file.format),
+              message: progress.message ?? null,
+              progressMode: 'percent',
+              progressPercent: nextProgressPercent,
+              loadedCount: null,
+              totalCount: null,
+            });
+          },
+        },
+      );
 
       await waitForNextPaint();
 
@@ -738,9 +826,23 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
 
       if (shouldCommitResolvedRobotSelection(importResult)) {
         lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-        commitResolvedFileSelection(file);
+        commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
       }
       applyResolvedRobotImport(file, importResult);
+      if (!shouldReloadViewer && importResult.status === 'ready' && file.format === 'mjcf') {
+        setDocumentLoadState({
+          status: 'ready',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: 'ready',
+          message: null,
+          progressMode: 'percent',
+          progressPercent: 100,
+          loadedCount: null,
+          totalCount: null,
+        });
+      }
     },
     [
       applyResolvedRobotImport,
@@ -778,6 +880,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     setRegressionAppHandlers({
       getAvailableFiles: () => useAssetsStore.getState().availableFiles,
       getSelectedFile: () => useAssetsStore.getState().selectedFile,
+      getDocumentLoadState: () => useAssetsStore.getState().documentLoadState,
       getRobotState: () => ({
         name: useRobotStore.getState().name,
         links: useRobotStore.getState().links,
@@ -1145,6 +1248,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
         viewerReloadKey={viewerReloadKey}
+        importPreparationOverlay={importPreparationOverlay}
         headerQuickAction={extensions?.config?.headerQuickAction}
         headerSecondaryAction={extensions?.config?.headerSecondaryAction}
       />
@@ -1254,16 +1358,6 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
           <ExportProgressDialog lang={lang} progress={projectExportProgress} />
         </Suspense>
-      )}
-
-      {importPreparationOverlay && (
-        <ImportPreparationOverlay
-          label={importPreparationOverlay.label}
-          detail={importPreparationOverlay.detail}
-          progress={importPreparationOverlay.progress}
-          statusLabel={importPreparationOverlay.statusLabel}
-          stageLabel={importPreparationOverlay.stageLabel}
-        />
       )}
 
       {/* Extension slot: external modal layer */}

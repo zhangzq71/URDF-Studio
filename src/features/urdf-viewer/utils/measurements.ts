@@ -4,12 +4,42 @@ import type { UrdfLink } from '@/types';
 export type MeasureSlot = 'first' | 'second';
 export type MeasureObjectType = 'visual' | 'collision';
 export type MeasureAnchorMode = 'frame' | 'centerOfMass' | 'geometry';
+export type MeasurePoseRepresentation = 'matrix' | 'rpy' | 'quat' | 'axisAngle';
+
+export interface MeasureRelativePose {
+  matrix: THREE.Matrix4;
+  translation: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  rpy: {
+    r: number;
+    p: number;
+    y: number;
+  };
+  quaternion: {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+  };
+  axisAngle: {
+    axis: {
+      x: number;
+      y: number;
+      z: number;
+    };
+    angle: number;
+  };
+}
 
 export interface MeasureTargetInput {
   linkName: string;
   objectType: MeasureObjectType;
   objectIndex: number;
   point: THREE.Vector3;
+  poseWorldMatrix?: THREE.Matrix4 | null;
 }
 
 export interface MeasureTarget {
@@ -19,6 +49,7 @@ export interface MeasureTarget {
   objectType: MeasureObjectType;
   objectIndex: number;
   point: THREE.Vector3;
+  poseWorldMatrix: THREE.Matrix4 | null;
 }
 
 export type MeasureLinkData = Pick<UrdfLink, 'inertial'>;
@@ -44,6 +75,7 @@ export interface MeasureMeasurement extends MeasurementMetrics {
   groupIndex: number;
   first: MeasureTarget;
   second: MeasureTarget;
+  relativePose: MeasureRelativePose | null;
 }
 
 export interface MeasureGroup {
@@ -60,9 +92,128 @@ export interface MeasureState {
 }
 
 const AXIS_EPSILON = 1e-6;
+const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 
 function normalizeNumber(value: number): number {
   return Math.abs(value) < AXIS_EPSILON ? 0 : value;
+}
+
+function cloneRigidPoseMatrix(matrix?: THREE.Matrix4 | null): THREE.Matrix4 | null {
+  if (!matrix) {
+    return null;
+  }
+
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  matrix.decompose(position, quaternion, new THREE.Vector3());
+
+  return new THREE.Matrix4().compose(position, quaternion.normalize(), UNIT_SCALE);
+}
+
+function normalizeDisplayQuaternion(quaternion: THREE.Quaternion): THREE.Quaternion {
+  const normalizedQuaternion = quaternion.clone().normalize();
+  if (normalizedQuaternion.w < 0) {
+    normalizedQuaternion.set(
+      -normalizedQuaternion.x,
+      -normalizedQuaternion.y,
+      -normalizedQuaternion.z,
+      -normalizedQuaternion.w,
+    );
+  }
+  return normalizedQuaternion;
+}
+
+function toAxisAngle(quaternion: THREE.Quaternion): MeasureRelativePose['axisAngle'] {
+  const normalizedQuaternion = normalizeDisplayQuaternion(quaternion);
+  const clampedW = THREE.MathUtils.clamp(normalizedQuaternion.w, -1, 1);
+  const angle = normalizeNumber(2 * Math.acos(clampedW));
+  const sinHalfAngle = Math.sqrt(Math.max(0, 1 - clampedW * clampedW));
+
+  if (sinHalfAngle < AXIS_EPSILON || Math.abs(angle) < AXIS_EPSILON) {
+    return {
+      axis: { x: 1, y: 0, z: 0 },
+      angle: 0,
+    };
+  }
+
+  return {
+    axis: {
+      x: normalizeNumber(normalizedQuaternion.x / sinHalfAngle),
+      y: normalizeNumber(normalizedQuaternion.y / sinHalfAngle),
+      z: normalizeNumber(normalizedQuaternion.z / sinHalfAngle),
+    },
+    angle,
+  };
+}
+
+export function createRigidWorldPoseMatrix(
+  position: THREE.Vector3,
+  quaternion: THREE.Quaternion,
+): THREE.Matrix4 {
+  return new THREE.Matrix4().compose(position.clone(), quaternion.clone().normalize(), UNIT_SCALE);
+}
+
+export function getObjectWorldPoseMatrix(object: THREE.Object3D): THREE.Matrix4 {
+  object.updateMatrixWorld(true);
+
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  object.matrixWorld.decompose(position, quaternion, new THREE.Vector3());
+
+  return createRigidWorldPoseMatrix(position, quaternion);
+}
+
+export function getPoseMatrixFromPointAndObjectOrientation(
+  point: THREE.Vector3,
+  object: THREE.Object3D,
+): THREE.Matrix4 {
+  object.updateMatrixWorld(true);
+  return createRigidWorldPoseMatrix(point, object.getWorldQuaternion(new THREE.Quaternion()));
+}
+
+export function getMeasureRelativePose(
+  startPoseWorldMatrix?: THREE.Matrix4 | null,
+  endPoseWorldMatrix?: THREE.Matrix4 | null,
+): MeasureRelativePose | null {
+  const startPose = cloneRigidPoseMatrix(startPoseWorldMatrix);
+  const endPose = cloneRigidPoseMatrix(endPoseWorldMatrix);
+  if (!startPose || !endPose) {
+    return null;
+  }
+
+  const relativeMatrix = startPose.clone().invert().multiply(endPose);
+  const rigidRelativeMatrix = cloneRigidPoseMatrix(relativeMatrix);
+  if (!rigidRelativeMatrix) {
+    return null;
+  }
+
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  rigidRelativeMatrix.decompose(position, quaternion, new THREE.Vector3());
+
+  const normalizedQuaternion = normalizeDisplayQuaternion(quaternion);
+  const euler = new THREE.Euler(0, 0, 0, 'ZYX').setFromQuaternion(normalizedQuaternion, 'ZYX');
+
+  return {
+    matrix: rigidRelativeMatrix,
+    translation: {
+      x: normalizeNumber(position.x),
+      y: normalizeNumber(position.y),
+      z: normalizeNumber(position.z),
+    },
+    rpy: {
+      r: normalizeNumber(euler.x),
+      p: normalizeNumber(euler.y),
+      y: normalizeNumber(euler.z),
+    },
+    quaternion: {
+      x: normalizeNumber(normalizedQuaternion.x),
+      y: normalizeNumber(normalizedQuaternion.y),
+      z: normalizeNumber(normalizedQuaternion.z),
+      w: normalizeNumber(normalizedQuaternion.w),
+    },
+    axisAngle: toAxisAngle(normalizedQuaternion),
+  };
 }
 
 function parseVector3Text(value: string | null | undefined): THREE.Vector3 | null {
@@ -98,10 +249,20 @@ function getLinkDataCenterOfMassLocal(linkData?: MeasureLinkData | null): THREE.
   return new THREE.Vector3(x, y, z);
 }
 
-function getLinkUrdfNodeCenterOfMassLocal(linkObject?: THREE.Object3D | null): THREE.Vector3 | null {
-  const urdfNode = (linkObject as THREE.Object3D & {
-    urdfNode?: { querySelector?: (selector: string) => { getAttribute?: (name: string) => string | null } | null } | null;
-  } | null)?.urdfNode;
+function getLinkUrdfNodeCenterOfMassLocal(
+  linkObject?: THREE.Object3D | null,
+): THREE.Vector3 | null {
+  const urdfNode = (
+    linkObject as
+      | (THREE.Object3D & {
+          urdfNode?: {
+            querySelector?: (
+              selector: string,
+            ) => { getAttribute?: (name: string) => string | null } | null;
+          } | null;
+        })
+      | null
+  )?.urdfNode;
 
   if (!urdfNode || typeof urdfNode.querySelector !== 'function') {
     return null;
@@ -119,8 +280,7 @@ export function getLinkCenterOfMassLocal(
   linkData?: MeasureLinkData | null,
   linkObject?: THREE.Object3D | null,
 ): THREE.Vector3 | null {
-  return getLinkDataCenterOfMassLocal(linkData)
-    ?? getLinkUrdfNodeCenterOfMassLocal(linkObject);
+  return getLinkDataCenterOfMassLocal(linkData) ?? getLinkUrdfNodeCenterOfMassLocal(linkObject);
 }
 
 export function getLinkCenterOfMassWorld(
@@ -149,10 +309,7 @@ export function getLinkFrameWorldPoint(linkObject: THREE.Object3D): THREE.Vector
   return linkObject.getWorldPosition(new THREE.Vector3());
 }
 
-function isMeasureBody(
-  object: THREE.Object3D,
-  objectType: MeasureObjectType,
-): boolean {
+function isMeasureBody(object: THREE.Object3D, objectType: MeasureObjectType): boolean {
   if (objectType === 'collision') {
     return Boolean((object as any).isURDFCollider || object.userData?.isCollisionGroup === true);
   }
@@ -162,9 +319,9 @@ function isMeasureBody(
 
 function isCollisionMeasureMesh(object: THREE.Object3D): boolean {
   return Boolean(
-    object.userData?.isCollisionMesh === true
-    || object.userData?.isCollision === true
-    || object.userData?.geometryRole === 'collision',
+    object.userData?.isCollisionMesh === true ||
+    object.userData?.isCollision === true ||
+    object.userData?.geometryRole === 'collision',
   );
 }
 
@@ -182,7 +339,11 @@ function isMeasureMesh(
 }
 
 function isDirectLinkMeasureObject(object: THREE.Object3D): boolean {
-  if (object.userData?.isHelper === true || object.userData?.isGizmo === true || String(object.name || '').startsWith('__')) {
+  if (
+    object.userData?.isHelper === true ||
+    object.userData?.isGizmo === true ||
+    String(object.name || '').startsWith('__')
+  ) {
     return false;
   }
 
@@ -191,18 +352,15 @@ function isDirectLinkMeasureObject(object: THREE.Object3D): boolean {
   }
 
   return Boolean(
-    (object as any).isURDFVisual
-    || (object as any).isURDFCollider
-    || object.userData?.isVisualGroup === true
-    || object.userData?.isCollisionGroup === true
-    || (object as any).isMesh,
+    (object as any).isURDFVisual ||
+    (object as any).isURDFCollider ||
+    object.userData?.isVisualGroup === true ||
+    object.userData?.isCollisionGroup === true ||
+    (object as any).isMesh,
   );
 }
 
-function expandBoundsWithObject(
-  bounds: THREE.Box3,
-  object: THREE.Object3D,
-): boolean {
+function expandBoundsWithObject(bounds: THREE.Box3, object: THREE.Object3D): boolean {
   const objectBounds = new THREE.Box3().setFromObject(object);
   if (objectBounds.isEmpty()) {
     return false;
@@ -223,9 +381,9 @@ export function getLinkMeasureCenter(
     return getObjectWorldCenter(targetBody);
   }
 
-  const directMeshes = linkObject.children.filter((child): child is THREE.Mesh => (
-    isMeasureMesh(child, objectType)
-  ));
+  const directMeshes = linkObject.children.filter((child): child is THREE.Mesh =>
+    isMeasureMesh(child, objectType),
+  );
   const targetMesh = directMeshes[objectIndex] ?? directMeshes[0] ?? null;
   if (targetMesh) {
     return getObjectWorldCenter(targetMesh);
@@ -324,6 +482,7 @@ export function createMeasureTarget({
   objectType,
   objectIndex,
   point,
+  poseWorldMatrix = null,
 }: MeasureTargetInput): MeasureTarget {
   return {
     key: `link:${linkName}`,
@@ -332,6 +491,7 @@ export function createMeasureTarget({
     objectType,
     objectIndex,
     point: point.clone(),
+    poseWorldMatrix: cloneRigidPoseMatrix(poseWorldMatrix),
   };
 }
 
@@ -358,10 +518,7 @@ export function getMeasurementMetrics(
   };
 }
 
-export function createMeasureMeasurement(
-  group: MeasureGroup,
-  groupIndex = 1,
-): MeasureMeasurement {
+export function createMeasureMeasurement(group: MeasureGroup, groupIndex = 1): MeasureMeasurement {
   if (!group.first || !group.second) {
     throw new Error('Cannot create a measurement from an incomplete measure group.');
   }
@@ -372,6 +529,7 @@ export function createMeasureMeasurement(
     groupIndex,
     first: createMeasureTarget(group.first),
     second: createMeasureTarget(group.second),
+    relativePose: getMeasureRelativePose(group.first.poseWorldMatrix, group.second.poseWorldMatrix),
     ...getMeasurementMetrics(group.first.point, group.second.point),
   };
 }
@@ -381,9 +539,9 @@ export function getActiveMeasureGroup(state: MeasureState): MeasureGroup {
 }
 
 export function getMeasureStateMeasurements(state: MeasureState): MeasureMeasurement[] {
-  return state.groups.flatMap((group, index) => (
-    group.first && group.second ? [createMeasureMeasurement(group, index + 1)] : []
-  ));
+  return state.groups.flatMap((group, index) =>
+    group.first && group.second ? [createMeasureMeasurement(group, index + 1)] : [],
+  );
 }
 
 export function getActiveMeasureMeasurement(state: MeasureState): MeasureMeasurement | null {
@@ -407,10 +565,7 @@ export function addMeasureGroup(state: MeasureState): MeasureState {
   };
 }
 
-export function removeMeasureGroup(
-  state: MeasureState,
-  groupId: string,
-): MeasureState {
+export function removeMeasureGroup(state: MeasureState, groupId: string): MeasureState {
   const groupIndex = state.groups.findIndex((group) => group.id === groupId);
   if (groupIndex < 0) {
     return state;
@@ -421,9 +576,11 @@ export function removeMeasureGroup(
     return createEmptyMeasureState();
   }
 
-  const nextActiveGroupId = state.activeGroupId === groupId
-    ? remainingGroups[Math.min(groupIndex, remainingGroups.length - 1)]?.id ?? remainingGroups[0].id
-    : state.activeGroupId;
+  const nextActiveGroupId =
+    state.activeGroupId === groupId
+      ? (remainingGroups[Math.min(groupIndex, remainingGroups.length - 1)]?.id ??
+        remainingGroups[0].id)
+      : state.activeGroupId;
 
   return {
     ...state,
@@ -433,10 +590,7 @@ export function removeMeasureGroup(
   };
 }
 
-export function setActiveMeasureGroup(
-  state: MeasureState,
-  groupId: string,
-): MeasureState {
+export function setActiveMeasureGroup(state: MeasureState, groupId: string): MeasureState {
   if (!state.groups.some((group) => group.id === groupId) || state.activeGroupId === groupId) {
     return state;
   }
@@ -448,10 +602,7 @@ export function setActiveMeasureGroup(
   };
 }
 
-export function setActiveMeasureSlot(
-  state: MeasureState,
-  slot: MeasureSlot,
-): MeasureState {
+export function setActiveMeasureSlot(state: MeasureState, slot: MeasureSlot): MeasureState {
   return {
     ...updateMeasureGroup(state, state.activeGroupId, (group) => ({
       ...group,
@@ -490,10 +641,7 @@ export function applyMeasurePick(
   };
 }
 
-export function clearMeasureSlot(
-  state: MeasureState,
-  slot: MeasureSlot,
-): MeasureState {
+export function clearMeasureSlot(state: MeasureState, slot: MeasureSlot): MeasureState {
   return {
     ...updateMeasureGroup(state, state.activeGroupId, (group) => ({
       ...group,

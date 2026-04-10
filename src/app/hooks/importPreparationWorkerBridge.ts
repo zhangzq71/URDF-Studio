@@ -228,3 +228,10 @@ export async function hydrateDeferredImportAssetsWithWorker({
     }
   });
 }
+
+export function disposeImportPreparationWorker(): void {
+  workerUnavailable = false;
+  requestIdCounter = 0;
+  disposeSharedWorker();
+  pendingWorkerRequests.clear();
+}

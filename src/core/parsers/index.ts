@@ -27,5 +27,9 @@ export { generateSDF, generateSdfModelConfig } from './sdf/sdfGenerator';
 
 // File Preview - Convert various robot file formats to URDF for preview
 export { computePreviewUrdf } from './filePreview';
-export { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRobotFile';
+export {
+  createUsdPlaceholderRobotData,
+  describeRobotImportFailure,
+  resolveRobotFileData,
+} from './importRobotFile';
 export type { RobotImportErrorReason, RobotImportResult } from './importRobotFile';

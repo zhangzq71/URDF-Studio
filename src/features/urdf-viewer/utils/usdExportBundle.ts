@@ -60,6 +60,11 @@ type ExportDescriptor = {
 
 type RobotLike = RobotData | RobotState;
 const ORIGIN_EPSILON = 1e-9;
+const EXPORT_COLOR_PLACEHOLDERS = new Set([
+  DEFAULT_LINK.visual.color.toLowerCase(),
+  DEFAULT_LINK.collision.color.toLowerCase(),
+  '#3b82f6',
+]);
 
 export interface UsdExportBundle {
   robot: RobotState;
@@ -480,10 +485,7 @@ function shouldAdoptSnapshotColor(color: string | null | undefined): boolean {
     return true;
   }
 
-  return (
-    normalized === DEFAULT_LINK.visual.color.toLowerCase() ||
-    normalized === DEFAULT_LINK.collision.color.toLowerCase()
-  );
+  return EXPORT_COLOR_PLACEHOLDERS.has(normalized);
 }
 
 function getDescriptorLinkPath(descriptor: SnapshotMeshDescriptor): string {
@@ -899,6 +901,106 @@ function mergeLinkWithSnapshotMeshPaths(current: UrdfLink, fallback?: UrdfLink):
     collision:
       mergeGeometryWithSnapshot(current.collision, fallback.collision) || current.collision,
     collisionBodies: mergedBodies,
+  };
+}
+
+function mergeGeometryWithPreparedCache(
+  current: UrdfVisual | undefined,
+  fallback?: UrdfVisual,
+): UrdfVisual | undefined {
+  if (!current) {
+    return fallback;
+  }
+
+  if (!fallback) {
+    return current;
+  }
+
+  if (current.type === GeometryType.NONE && fallback.type !== GeometryType.NONE) {
+    return fallback;
+  }
+
+  if (current.type !== GeometryType.MESH || fallback.type !== GeometryType.MESH) {
+    return current;
+  }
+
+  return {
+    ...fallback,
+    ...current,
+    meshPath: current.meshPath || fallback.meshPath,
+  };
+}
+
+function mergeLinkWithPreparedCacheGeometry(current: UrdfLink, fallback?: UrdfLink): UrdfLink {
+  if (!fallback) {
+    return current;
+  }
+
+  const fallbackBodies = fallback.collisionBodies || [];
+  const currentBodies = current.collisionBodies || [];
+  const mergedBodies =
+    currentBodies.length > 0
+      ? currentBodies
+          .map((currentBody, index) =>
+            mergeGeometryWithPreparedCache(currentBody, fallbackBodies[index]),
+          )
+          .filter((body): body is UrdfVisual => Boolean(body))
+      : fallback.collisionBodies;
+
+  return {
+    ...fallback,
+    ...current,
+    visual:
+      mergeGeometryWithPreparedCache(current.visual, fallback.visual) ||
+      current.visual ||
+      fallback.visual,
+    collision:
+      mergeGeometryWithPreparedCache(current.collision, fallback.collision) ||
+      current.collision ||
+      fallback.collision,
+    collisionBodies: mergedBodies,
+  };
+}
+
+function mergeCurrentRobotWithPreparedCacheGeometry(
+  currentRobot: RobotLike,
+  preparedRobot: RobotState,
+): RobotState {
+  const baseRobot = cloneRobotState(currentRobot);
+  const mergedLinks: Record<string, UrdfLink> = {};
+  const linkIds = new Set([...Object.keys(preparedRobot.links), ...Object.keys(baseRobot.links)]);
+
+  linkIds.forEach((linkId) => {
+    const currentLink = baseRobot.links[linkId];
+    const preparedLink = preparedRobot.links[linkId];
+    if (currentLink && preparedLink) {
+      mergedLinks[linkId] = mergeLinkWithPreparedCacheGeometry(currentLink, preparedLink);
+      return;
+    }
+    mergedLinks[linkId] = currentLink || preparedLink;
+  });
+
+  return {
+    ...preparedRobot,
+    ...baseRobot,
+    rootLinkId:
+      preparedRobot.rootLinkId && mergedLinks[preparedRobot.rootLinkId]
+        ? preparedRobot.rootLinkId
+        : baseRobot.rootLinkId,
+    links: mergedLinks,
+    joints: {
+      ...preparedRobot.joints,
+      ...baseRobot.joints,
+    },
+    materials: {
+      ...(preparedRobot.materials || {}),
+      ...(baseRobot.materials || {}),
+    },
+    closedLoopConstraints: baseRobot.closedLoopConstraints || preparedRobot.closedLoopConstraints,
+    selection:
+      'selection' in currentRobot
+        ? { ...((currentRobot as RobotState).selection || { type: null, id: null }) }
+        : { type: null, id: null },
   };
 }
 
@@ -1333,7 +1435,7 @@ function mergeLinkMaterial(
     payload.color && shouldAdoptSnapshotMaterialColor(current.color)
       ? payload.color
       : current.color;
-  const nextTexture = current.texture || payload.texture;
+  const nextTexture = payload.texture || current.texture;
   const nextUsdMaterial = hasSnapshotMaterialRecordContent(payload.usdMaterial)
     ? structuredClone(payload.usdMaterial)
     : current.usdMaterial;
@@ -2227,7 +2329,7 @@ export function buildUsdExportBundleFromPreparedCache(
   });
   const robot = stripSyntheticWorldRootForExport(
     options.currentRobot
-      ? mergeCurrentRobotWithSnapshotMeshPaths(options.currentRobot, snapshotRobot)
+      ? mergeCurrentRobotWithPreparedCacheGeometry(options.currentRobot, snapshotRobot)
       : snapshotRobot,
   );
 

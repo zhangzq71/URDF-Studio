@@ -148,6 +148,48 @@ test('rewriteRobotMeshPathsForSource preserves package-rooted texture paths that
   assert.equal(rewritten.materials?.base_link?.texture, 'demo/materials/textures/panel.png');
 });
 
+test('rewriteRobotMeshPathsForSource preserves canonical cross-model SDF texture paths', () => {
+  const robot: RobotData = {
+    name: 'ambulance',
+    rootLinkId: 'link',
+    links: {
+      link: {
+        id: 'link',
+        name: 'link',
+        visual: {
+          type: GeometryType.MESH,
+          meshPath: 'ambulance/meshes/ambulance.obj',
+          color: '#ffffff',
+          authoredMaterials: [{ texture: 'suv/materials/textures/wheels_01.png' }],
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.BOX,
+          color: '#ffffff',
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        inertial: undefined,
+      },
+    },
+    joints: {},
+    materials: {
+      link: {
+        texture: 'suv/materials/textures/wheels_01.png',
+      },
+    },
+  };
+
+  const rewritten = rewriteRobotMeshPathsForSource(robot, 'ambulance/model.sdf');
+
+  assert.equal(
+    rewritten.links.link.visual.authoredMaterials?.[0]?.texture,
+    'suv/materials/textures/wheels_01.png',
+  );
+  assert.equal(rewritten.materials?.link?.texture, 'suv/materials/textures/wheels_01.png');
+});
+
 test('rewriteUrdfAssetPathsForExport preserves go2 multi-material visuals while rewriting asset roots', () => {
   const source = fs.readFileSync(
     'test/unitree_ros/robots/go2_description/urdf/go2_description.urdf',

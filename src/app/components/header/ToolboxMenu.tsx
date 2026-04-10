@@ -3,9 +3,9 @@ import {
   Activity,
   ArrowUpRight,
   Box,
+  Crosshair,
   MessageSquare,
   RefreshCw,
-  Ruler,
   ScanSearch,
 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
@@ -16,7 +16,7 @@ interface ToolboxMenuProps {
   onClose: () => void;
   onOpenAIInspection: () => void;
   onOpenAIConversation: () => void;
-  onOpenMeasureTool: () => void;
+  onOpenIkTool: () => void;
   onOpenCollisionOptimizer: () => void;
 }
 
@@ -59,7 +59,7 @@ function ToolboxItemCard({
       onFocus={() => onHoverStart(item)}
       onBlur={onHoverEnd}
       aria-label={item.title}
-      className={`group relative flex min-h-[3.55rem] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-center transition-all duration-100 hover:-translate-y-0.5 hover:bg-element-hover/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+      className={`group relative flex min-h-[3.45rem] flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 text-center transition-all duration-100 hover:-translate-y-0.5 hover:bg-element-hover/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
         isActive ? '-translate-y-0.5 bg-element-hover/90 shadow-sm' : ''
       }`}
     >
@@ -97,7 +97,7 @@ export function ToolboxMenu({
   onClose,
   onOpenAIInspection,
   onOpenAIConversation,
-  onOpenMeasureTool,
+  onOpenIkTool,
   onOpenCollisionOptimizer,
 }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
@@ -128,10 +128,10 @@ export function ToolboxMenu({
     onOpenCollisionOptimizer();
   }, [onClose, onOpenCollisionOptimizer]);
 
-  const openMeasureTool = React.useCallback(() => {
+  const openIkTool = React.useCallback(() => {
     onClose();
-    onOpenMeasureTool();
-  }, [onClose, onOpenMeasureTool]);
+    onOpenIkTool();
+  }, [onClose, onOpenIkTool]);
 
   const items: ToolboxItem[] = [
     {
@@ -151,11 +151,11 @@ export function ToolboxMenu({
       tone: 'primary',
     },
     {
-      key: 'measure',
-      title: t.measureMode,
-      description: t.measureToolboxDesc,
-      icon: <Ruler className="h-[18px] w-[18px]" />,
-      onClick: openMeasureTool,
+      key: 'ik-tool',
+      title: t.ikTool,
+      description: t.ikToolboxDesc,
+      icon: <Crosshair className="h-[18px] w-[18px]" />,
+      onClick: openIkTool,
       tone: 'primary',
     },
     {
@@ -181,6 +181,21 @@ export function ToolboxMenu({
       description: t.step2urdfDesc,
       icon: <img src="/logos/step2urdf-logo.svg" alt="" className="h-5 w-5 object-contain" />,
       onClick: () => openExternal('https://step2urdf.top/'),
+      external: true,
+      tone: 'logo',
+    },
+    {
+      key: 'robogo',
+      title: t.robogo,
+      description: t.robogoDesc,
+      icon: (
+        <img
+          src="/logos/d-robotics-logo.jpg"
+          alt=""
+          className="h-5 w-5 rounded-[0.5rem] object-contain"
+        />
+      ),
+      onClick: () => openExternal('https://robogo.d-robotics.cc/'),
       external: true,
       tone: 'logo',
     },
@@ -221,8 +236,8 @@ export function ToolboxMenu({
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute top-full left-0 z-50 mt-1 w-[15.5rem] max-w-[calc(100vw-1rem)] rounded-2xl border border-border-black bg-panel-bg p-2 shadow-xl dark:shadow-black">
-        <div className="grid grid-cols-3 gap-x-1.5 gap-y-1">
+      <div className="absolute top-full left-0 z-50 mt-1 w-[23rem] max-w-[calc(100vw-1rem)] rounded-2xl border border-border-black bg-panel-bg p-2 shadow-xl dark:shadow-black sm:left-1/2 sm:-translate-x-1/2">
+        <div className="grid grid-cols-4 gap-x-0.5 gap-y-0.5">
           {items.map((item) => (
             <ToolboxItemCard
               key={item.key}

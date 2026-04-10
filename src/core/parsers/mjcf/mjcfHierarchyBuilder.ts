@@ -307,6 +307,168 @@ function cloneTextureWithMaterialSettings(
   return texture;
 }
 
+function clampBuiltinTextureChannel(value: number | undefined, fallback: number): number {
+  return Math.max(0, Math.min(1, value ?? fallback));
+}
+
+function resolveBuiltinTextureColor(
+  rgb: number[] | undefined,
+  fallback: [number, number, number],
+): [number, number, number] {
+  return [
+    clampBuiltinTextureChannel(rgb?.[0], fallback[0]),
+    clampBuiltinTextureChannel(rgb?.[1], fallback[1]),
+    clampBuiltinTextureChannel(rgb?.[2], fallback[2]),
+  ];
+}
+
+function resolveBuiltinTextureDimension(
+  value: number | undefined,
+  fallback: number,
+  maxDimension = 512,
+): number {
+  const resolved = Number.isFinite(value ?? Number.NaN) ? Math.round(value ?? fallback) : fallback;
+  return Math.max(1, Math.min(maxDimension, resolved));
+}
+
+function createBuiltinDataTexture(
+  width: number,
+  height: number,
+  resolveColor: (x: number, y: number) => [number, number, number],
+  options: { nearest?: boolean } = {},
+): THREE.Texture {
+  const data = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b] = resolveColor(x, y);
+      const offset = (y * width + x) * 4;
+      data[offset] = Math.round(r * 255);
+      data[offset + 1] = Math.round(g * 255);
+      data[offset + 2] = Math.round(b * 255);
+      data[offset + 3] = 255;
+    }
+  }
+
+  const texture = configureLoadedTexture(new THREE.DataTexture(data, width, height));
+  texture.generateMipmaps = false;
+  texture.minFilter = options.nearest ? THREE.NearestFilter : THREE.LinearFilter;
+  texture.magFilter = options.nearest ? THREE.NearestFilter : THREE.LinearFilter;
+  return texture;
+}
+
+function createBuiltinCheckerTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 128);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 128);
+  const primaryColor = resolveBuiltinTextureColor(textureDef.rgb1, [0.2, 0.3, 0.4]);
+  const secondaryColor = resolveBuiltinTextureColor(textureDef.rgb2, [0.1, 0.2, 0.3]);
+  const edgeColor = resolveBuiltinTextureColor(textureDef.markrgb, primaryColor);
+  const cellsX = 10;
+  const cellsY = 10;
+  const edgeThicknessX = Math.max(1, Math.round(width / cellsX));
+  const edgeThicknessY = Math.max(1, Math.round(height / cellsY));
+  const hasEdgeMark =
+    String(textureDef.mark || '')
+      .trim()
+      .toLowerCase() === 'edge';
+
+  return createBuiltinDataTexture(
+    width,
+    height,
+    (x, y) => {
+      if (
+        hasEdgeMark &&
+        (x < edgeThicknessX ||
+          x >= width - edgeThicknessX ||
+          y < edgeThicknessY ||
+          y >= height - edgeThicknessY)
+      ) {
+        return edgeColor;
+      }
+
+      const cellX = Math.floor((x / width) * cellsX);
+      const cellY = Math.floor((y / height) * cellsY);
+      return (cellX + cellY) % 2 === 0 ? primaryColor : secondaryColor;
+    },
+    { nearest: true },
+  );
+}
+
+function createBuiltinFlatTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 16);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 16);
+  const color = resolveBuiltinTextureColor(textureDef.rgb1, [1, 1, 1]);
+
+  return createBuiltinDataTexture(width, height, () => color);
+}
+
+function createBuiltinGradientTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 64);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 256);
+  const topColor = resolveBuiltinTextureColor(textureDef.rgb1, [0.3, 0.5, 0.7]);
+  const bottomColor = resolveBuiltinTextureColor(textureDef.rgb2, [0, 0, 0]);
+
+  return createBuiltinDataTexture(width, height, (_x, y) => {
+    const ratio = height <= 1 ? 0 : y / (height - 1);
+    return [
+      topColor[0] * (1 - ratio) + bottomColor[0] * ratio,
+      topColor[1] * (1 - ratio) + bottomColor[1] * ratio,
+      topColor[2] * (1 - ratio) + bottomColor[2] * ratio,
+    ];
+  });
+}
+
+function createBuiltinTexture(textureDef: MJCFTexture): THREE.Texture | null {
+  const builtin = String(textureDef.builtin || '')
+    .trim()
+    .toLowerCase();
+
+  switch (builtin) {
+    case 'checker':
+      return createBuiltinCheckerTexture(textureDef);
+    case 'flat':
+      return createBuiltinFlatTexture(textureDef);
+    case 'gradient':
+      return createBuiltinGradientTexture(textureDef);
+    default:
+      console.warn(
+        `[MJCFLoader] Unsupported builtin texture "${textureDef.builtin}" on texture "${textureDef.name}".`,
+      );
+      return null;
+  }
+}
+
+function getBuiltinTextureCacheKey(textureDef: MJCFTexture): string {
+  return [
+    '__mjcf_builtin__',
+    textureDef.name,
+    textureDef.builtin || '',
+    textureDef.type || '',
+    `${textureDef.width || ''}x${textureDef.height || ''}`,
+  ].join(':');
+}
+
+function getBuiltinTexturePromise(
+  textureDef: MJCFTexture,
+  textureLoadCache: MJCFTextureLoadCache,
+): Promise<THREE.Texture | null> {
+  const cacheKey = getBuiltinTextureCacheKey(textureDef);
+  const cached = textureLoadCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = Promise.resolve()
+    .then(() => createBuiltinTexture(textureDef))
+    .catch((error) => {
+      console.error(`[MJCFLoader] Failed to generate builtin texture "${textureDef.name}".`, error);
+      return null;
+    });
+
+  textureLoadCache.set(cacheKey, promise);
+  return promise;
+}
+
 function collectReferencedTextureAssetUrls(
   bodies: MJCFHierarchyBody[],
   materialMap: Map<string, MJCFMaterial>,
@@ -394,7 +556,27 @@ async function loadMaterialTexture(
   }
 
   const textureDef = textureMap.get(materialDef.texture);
-  if (!textureDef?.file) {
+  if (!textureDef) {
+    console.error(
+      `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references missing texture definition: ${materialDef.texture}`,
+    );
+    return null;
+  }
+
+  if (!textureDef.file && textureDef.builtin) {
+    const texture = await getBuiltinTexturePromise(textureDef, textureLoadCache);
+    if (!texture) {
+      return null;
+    }
+
+    throwIfMJCFLoadAborted(abortSignal);
+    return cloneTextureWithMaterialSettings(texture, materialDef);
+  }
+
+  if (!textureDef.file) {
+    console.error(
+      `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references missing texture definition: ${materialDef.texture}`,
+    );
     return null;
   }
 
@@ -429,6 +611,15 @@ async function loadCubeMaterialTextures(
   const textureDef = textureMap.get(materialDef.texture);
   const cubeFaceRecord = getMjcfCubeTextureFaceRecord(textureDef);
   if (!cubeFaceRecord) {
+    if (
+      String(textureDef?.type || '')
+        .trim()
+        .toLowerCase() === 'cube'
+    ) {
+      console.error(
+        `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references incomplete cube texture definition: ${materialDef.texture}`,
+      );
+    }
     return null;
   }
 
@@ -678,6 +869,9 @@ async function applyMaterialAssetToMesh(
         throwIfMJCFLoadAborted(abortSignal);
       }
       if (!deferredTexture) {
+        console.warn(
+          `[MJCFLoader] Deferred texture application produced no texture for material "${materialDef.name || materialName || '<unnamed>'}".`,
+        );
         return;
       }
 

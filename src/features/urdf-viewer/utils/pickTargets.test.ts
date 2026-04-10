@@ -15,6 +15,18 @@ function createBoxMesh(material?: THREE.Material): THREE.Mesh {
   );
 }
 
+function createPickOnlyMesh(renderOrder = 0): THREE.Mesh {
+  const mesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  mesh.renderOrder = renderOrder;
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const material of materials) {
+    material.colorWrite = false;
+    material.depthTest = false;
+    material.depthWrite = false;
+  }
+  return mesh;
+}
+
 test('collectPickTargets skips internal helper meshes and fully transparent meshes', () => {
   const pickableMesh = createBoxMesh();
 
@@ -256,7 +268,7 @@ test('findPickIntersections filters out hidden collision hits', () => {
   );
 });
 
-test('findPickIntersections keeps selectable helpers ahead of geometry even when visual layer is explicitly preferred', () => {
+test('findPickIntersections keeps nearer geometry ahead of a non-overlay helper that sits behind it', () => {
   const robot = new THREE.Group();
 
   const visualMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0x3366ff }));
@@ -269,7 +281,7 @@ test('findPickIntersections keeps selectable helpers ahead of geometry even when
   helperGroup.name = '__origin_axes__';
   helperGroup.userData = { isGizmo: true, isSelectableHelper: true };
 
-  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+  const helperMesh = createPickOnlyMesh(10020);
   helperMesh.position.set(0, 0, -1.5);
   helperMesh.userData = { isGizmo: true, isSelectableHelper: true };
   helperGroup.add(helperMesh);
@@ -285,7 +297,7 @@ test('findPickIntersections keeps selectable helpers ahead of geometry even when
   ]);
 
   assert.equal(hits.length >= 2, true);
-  assert.equal(hits[0]?.object, helperMesh);
+  assert.equal(hits[0]?.object, visualMesh);
   assert.ok(hits.some((hit) => hit.object === helperMesh));
   assert.ok(hits.some((hit) => hit.object === visualMesh));
 });

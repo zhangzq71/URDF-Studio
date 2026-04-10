@@ -8,7 +8,6 @@
 2. 再读 `docs/prompts/CLAUDE.md`
 3. 只在需要文件锚点时再看：
    - `docs/prompts/URDF_STUDIO_STYLE_GUIDE.md`
-   - `docs/prompts/visualizer.md`
    - `docs/prompts/urdf-viewer.md`
 4. 需要边界或对外库说明时再看：
    - `docs/architecture-boundaries.md`

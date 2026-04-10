@@ -1,6 +1,6 @@
 /**
  * @typedef {import('./types').HeaderViewConfig} HeaderViewConfig
- * @typedef {'showToolbar' | 'showOptionsPanel' | 'showVisualizerOptionsPanel' | 'showJointPanel'} ViewConfigKey
+ * @typedef {'showToolbar' | 'showOptionsPanel' | 'showJointPanel'} ViewConfigKey
  */
 
 /**
@@ -18,20 +18,27 @@ export function toggleViewPanel(current, key) {
 }
 
 /**
- * In the merged-mode workspace, view options are no longer scene-specific.
- * Toggling the options entry should update both the viewer and visualizer
- * option panels so the user never needs to think about which runtime owns
- * the current canvas.
+ * The merged workspace exposes a single shared detail/options panel.
+ *
+ * @param {HeaderViewConfig} current
+ * @param {boolean} visible
+ * @returns {HeaderViewConfig}
+ */
+export function setOptionsPanelVisibility(current, visible) {
+  return {
+    ...current,
+    showOptionsPanel: visible,
+  };
+}
+
+/**
+ * Toggling the options entry should update the shared detail panel.
  *
  * @param {HeaderViewConfig} current
  * @returns {HeaderViewConfig}
  */
-export function toggleOptionsPanels(current) {
-  const nextVisible = !(current.showOptionsPanel || current.showVisualizerOptionsPanel);
+export function toggleOptionsPanel(current) {
+  const nextVisible = !current.showOptionsPanel;
 
-  return {
-    ...current,
-    showOptionsPanel: nextVisible,
-    showVisualizerOptionsPanel: nextVisible,
-  };
+  return setOptionsPanelVisibility(current, nextVisible);
 }

@@ -666,6 +666,43 @@ test('buildRobotMetadataSnapshotForStage marks metadata stale when driver physic
     }
 });
 
+test('tryBuildRobotMetadataSnapshotFromDriver logs driver metadata snapshot failures to console', () => {
+    const previousWindow = globalThis.window;
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    globalThis.window = {
+        driver: {
+            GetRobotMetadataSnapshot() {
+                throw new Error('driver-metadata-snapshot-failed');
+            },
+        },
+    };
+    console.error = (...args) => {
+        loggedErrors.push(args);
+    };
+
+    try {
+        const delegate = createFallbackMetadataDelegate();
+
+        const snapshot = delegate.tryBuildRobotMetadataSnapshotFromDriver(
+            '/robots/two_link_robot.usd',
+            ['/Robot/base_link'],
+            {},
+        );
+
+        assert.equal(snapshot, null);
+    }
+    finally {
+        console.error = originalConsoleError;
+        globalThis.window = previousWindow;
+    }
+
+    assert.equal(loggedErrors.length, 1);
+    assert.match(String(loggedErrors[0]?.[0] || ''), /Failed to build robot metadata snapshot from USD driver/);
+    assert.equal(loggedErrors[0]?.[1]?.stageSourcePath, '/robots/two_link_robot.usd');
+    assert.match(String(loggedErrors[0]?.[1]?.error || ''), /driver-metadata-snapshot-failed/);
+});
+
 test('startRobotMetadataWarmupForStage annotates stale metadata when URDF truth load fails', async () => {
     const delegate = Object.create(ThreeRenderDelegateCore.prototype);
     delegate._robotMetadataSnapshotByStageSource = new Map();

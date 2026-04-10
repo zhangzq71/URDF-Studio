@@ -40,7 +40,7 @@ import { RobotCanvas } from '@/lib';
   onJointAnglesChange={(jointAngles) => {
     console.log(jointAngles);
   }}
-/>
+/>;
 ```
 
 ## 已完成
@@ -66,7 +66,7 @@ import { RobotCanvas } from '@/lib';
 
 - `assets` 目前仍是 `Record<string, string>`，后续应升级为 `assetResolver`
 - 类型声明现在已切到 `tsc` 自动生成，并对产物里的 `@/` 别名做发布前重写
-- `Visualizer` 仍属于应用内编辑壳，尚未抽成独立可发布子包
+- `editor` 子域能力仍属于应用内壳，尚未抽成独立可发布子包
 
 ## 当前发布方式
 

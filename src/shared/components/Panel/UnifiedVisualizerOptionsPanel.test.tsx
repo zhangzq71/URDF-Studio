@@ -5,6 +5,7 @@ import React, { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
+import { translations } from '@/shared/i18n';
 import { UnifiedVisualizerOptionsPanel } from './UnifiedVisualizerOptionsPanel';
 
 function installDom() {
@@ -68,8 +69,8 @@ function renderPanel(
     root.render(
       React.createElement(UnifiedVisualizerOptionsPanel, {
         lang: 'zh',
-        showGeometry: true,
-        setShowGeometry: () => {},
+        showVisual: true,
+        setShowVisual: () => {},
         showOrigin: false,
         setShowOrigin: () => {},
         frameSize: 0.15,
@@ -84,8 +85,8 @@ function renderPanel(
         setJointAxisSize: () => {},
         showCollision: false,
         setShowCollision: () => {},
-        showIkHandles: false,
-        setShowIkHandles: () => {},
+        showCollisionAlwaysOnTop: false,
+        setShowCollisionAlwaysOnTop: () => {},
         showInertia: false,
         setShowInertia: () => {},
         showCenterOfMass: false,
@@ -111,6 +112,84 @@ test('visualizer options panel exposes the shared model opacity control', async 
   await renderPanel(root);
 
   assert.match(container.textContent ?? '', /模型不透明度/);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('visualizer options panel binds the top toggle to visual visibility', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const visualVisibilityUpdates: boolean[] = [];
+  let geometryToggleCalls = 0;
+
+  await renderPanel(root, {
+    setShowVisual: (nextValue) => {
+      visualVisibilityUpdates.push(nextValue);
+    },
+  } as Partial<React.ComponentProps<typeof UnifiedVisualizerOptionsPanel>>);
+
+  assert.match(container.textContent ?? '', /显示可视化/);
+
+  const firstCheckbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  assert.ok(firstCheckbox, 'top visual visibility checkbox should render');
+
+  await act(async () => {
+    firstCheckbox.click();
+  });
+
+  assert.deepEqual(visualVisibilityUpdates, [false]);
+  assert.equal(geometryToggleCalls, 0);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('visualizer options panel only shows collision overlay toggle when collision display is enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderPanel(root, {
+    showCollision: false,
+  });
+
+  assert.equal(container.querySelector(`[aria-label="${translations.zh.alwaysOnTop}"]`), null);
+
+  await renderPanel(root, {
+    showCollision: true,
+  });
+
+  assert.ok(container.querySelector(`[aria-label="${translations.zh.alwaysOnTop}"]`));
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('visualizer options panel toggles collision always-on-top state from the trailing control', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const collisionOverlayUpdates: boolean[] = [];
+
+  await renderPanel(root, {
+    showCollision: true,
+    setShowCollisionAlwaysOnTop: (nextValue) => {
+      collisionOverlayUpdates.push(nextValue);
+    },
+  });
+
+  const overlayToggle = container.querySelector<HTMLButtonElement>(
+    `[aria-label="${translations.zh.alwaysOnTop}"]`,
+  );
+  assert.ok(overlayToggle, 'collision overlay toggle should render when collision display is on');
+
+  await act(async () => {
+    overlayToggle.click();
+  });
+
+  assert.deepEqual(collisionOverlayUpdates, [true]);
 
   await act(async () => {
     root.unmount();
@@ -205,6 +284,19 @@ test('visualizer view options keep corner resize without a right-edge resize hot
     container.querySelector('[data-testid="ui-options-panel-resize-corner"]'),
     'visualizer view options should keep the bottom-right resize handle',
   );
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('visualizer options panel no longer renders IK handle toggle', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderPanel(root);
+
+  assert.equal(container.textContent?.includes(translations.zh.showIkHandles), false);
 
   await act(async () => {
     root.unmount();

@@ -106,3 +106,9 @@ test('joint properties can lock the type selector for closed-loop bridge editing
 
   assert.match(markup, /<select[^>]*disabled=""/);
 });
+
+test('joint properties expose custom combobox triggers for select-based fields', () => {
+  const markup = renderJointProperties('editor');
+
+  assert.match(markup, /role="combobox"/);
+});

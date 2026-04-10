@@ -208,6 +208,52 @@ test('alignObjectLowestPointToZ grounds nested roots using ancestor-aware world 
   assert.equal(getLowestMeshZ(root, { includeVisual: true, includeCollision: false }), 0);
 });
 
+test('alignObjectLowestPointToZ handles rotated parents without leaving a ground gap', () => {
+  const parent = new THREE.Group();
+  parent.rotation.x = Math.PI / 6;
+  const root = new THREE.Group();
+  parent.add(root);
+
+  const robotMesh = createBoxMesh(2, [0, 0, 0]);
+  robotMesh.userData.isVisualMesh = true;
+  root.add(robotMesh);
+
+  const alignedZ = alignObjectLowestPointToZ(root, 0, {
+    includeVisual: true,
+    includeCollision: false,
+  });
+
+  assert.equal(alignedZ, 0);
+  assert.ok(
+    Math.abs(getLowestMeshZ(root, { includeVisual: true, includeCollision: false }) ?? Infinity) <
+      1e-9,
+  );
+});
+
+test('alignObjectLowestPointToZ handles scaled parents when converting world delta to local space', () => {
+  const parent = new THREE.Group();
+  parent.scale.set(1, 1, 2);
+  parent.position.z = 3;
+  const root = new THREE.Group();
+  parent.add(root);
+
+  const robotMesh = createBoxMesh(2, [0, 0, 0]);
+  robotMesh.userData.isVisualMesh = true;
+  root.add(robotMesh);
+
+  const alignedZ = alignObjectLowestPointToZ(root, 0, {
+    includeVisual: true,
+    includeCollision: false,
+  });
+
+  assert.equal(alignedZ, 0);
+  assert.equal(Number(root.position.z.toFixed(6)), -0.5);
+  assert.ok(
+    Math.abs(getLowestMeshZ(root, { includeVisual: true, includeCollision: false }) ?? Infinity) <
+      1e-9,
+  );
+});
+
 test('computeVisibleMeshBounds uses ancestor transforms when measuring nested roots', () => {
   const parent = new THREE.Group();
   parent.position.set(1, -2, 5);

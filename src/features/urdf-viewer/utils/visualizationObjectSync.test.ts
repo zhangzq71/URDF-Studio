@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
-import { DEFAULT_LINK, GeometryType } from '@/types';
+import {
+  DEFAULT_JOINT,
+  DEFAULT_LINK,
+  GeometryType,
+  JointType,
+  type UrdfJoint,
+  type UrdfLink,
+} from '@/types';
 import {
   syncInertiaVisualizationForLinks,
   syncIkHandleVisualizationForLinks,
@@ -73,7 +80,7 @@ test('syncInertiaVisualizationForLinks is a no-op on the second identical pass',
   link.userData.__cachedMaxLinkSize = 1;
   link.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()));
 
-  const robotLinks = {
+  const robotLinks: Record<string, UrdfLink> = {
     base_link: {
       inertial: {
         mass: 1,
@@ -117,7 +124,7 @@ test('syncInertiaVisualizationForLinks is a no-op on the second identical pass',
   assert.equal(link.userData.__inertiaVisualGroup.visible, true);
 });
 
-test('syncIkHandleVisualizationForLinks toggles IK handle top-most rendering and keeps the darker base green', () => {
+test('syncIkHandleVisualizationForLinks creates an invisible IK anchor without a visible mesh sphere', () => {
   const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
   link.isURDFLink = true;
   link.name = 'base_link';
@@ -162,12 +169,9 @@ test('syncIkHandleVisualizationForLinks toggles IK handle top-most rendering and
   assert.equal(firstChanged, true);
   const ikHandle = link.userData.__ikHandle as THREE.Group | undefined;
   assert.ok(ikHandle, 'ik handle should be created');
-  const ikMesh = ikHandle.children[0] as THREE.Mesh;
-  const ikMaterial = ikMesh.material as THREE.MeshBasicMaterial;
-
-  assert.equal(ikMaterial.color.getHex(), 0x16a34a);
-  assert.equal(ikMaterial.depthTest, true);
-  assert.equal(ikMesh.renderOrder, 0);
+  assert.equal(ikHandle.children.length, 1, 'ik handle should keep only a hidden pick target');
+  assert.equal(ikHandle.children[0]?.name, '__ik_handle_pick_target__');
+  assert.equal(ikHandle.visible, true);
 
   const secondChanged = syncIkHandleVisualizationForLinks({
     links: [link],
@@ -178,8 +182,107 @@ test('syncIkHandleVisualizationForLinks toggles IK handle top-most rendering and
   });
 
   assert.equal(secondChanged, true);
-  assert.equal(ikMaterial.depthTest, false);
-  assert.equal(ikMesh.renderOrder, 10030);
+  assert.equal(ikHandle.children.length, 1, 'top-most toggle should keep the hidden pick target');
+});
+
+test('syncIkHandleVisualizationForLinks exposes a hidden anchor for intermediate links when IK drag is active', () => {
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'link1';
+
+  const robotLinks = {
+    base: {
+      ...DEFAULT_LINK,
+      id: 'base',
+      name: 'base',
+    },
+    link1: {
+      ...DEFAULT_LINK,
+      id: 'link1',
+      name: 'link1',
+      visual: {
+        ...DEFAULT_LINK.visual,
+        type: GeometryType.BOX,
+        dimensions: { x: 0.8, y: 0.1, z: 0.1 },
+        origin: {
+          xyz: { x: 0.4, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+      visualBodies: [],
+    },
+    link2: {
+      ...DEFAULT_LINK,
+      id: 'link2',
+      name: 'link2',
+      visual: {
+        ...DEFAULT_LINK.visual,
+        type: GeometryType.BOX,
+        dimensions: { x: 0.6, y: 0.1, z: 0.1 },
+        origin: {
+          xyz: { x: 0.3, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+      visualBodies: [],
+    },
+  };
+  const robotJoints: Record<string, UrdfJoint> = {
+    joint1: {
+      ...DEFAULT_JOINT,
+      id: 'joint1',
+      name: 'joint1',
+      type: JointType.REVOLUTE,
+      parentLinkId: 'base',
+      childLinkId: 'link1',
+      origin: {
+        xyz: { x: 0, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+      axis: { x: 0, y: 0, z: 1 },
+    },
+    joint2: {
+      ...DEFAULT_JOINT,
+      id: 'joint2',
+      name: 'joint2',
+      type: JointType.REVOLUTE,
+      parentLinkId: 'link1',
+      childLinkId: 'link2',
+      origin: {
+        xyz: { x: 0.8, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+      axis: { x: 0, y: 0, z: 1 },
+    },
+  };
+
+  const passiveChanged = syncIkHandleVisualizationForLinks({
+    links: [link],
+    robotLinks,
+    robotJoints,
+    showIkHandles: true,
+    showIkHandlesAlwaysOnTop: false,
+    ikDragActive: false,
+  });
+
+  assert.equal(passiveChanged, false);
+  assert.equal(link.userData.__ikHandle, undefined);
+
+  const directDragChanged = syncIkHandleVisualizationForLinks({
+    links: [link],
+    robotLinks,
+    robotJoints,
+    showIkHandles: true,
+    showIkHandlesAlwaysOnTop: false,
+    ikDragActive: true,
+  });
+
+  assert.equal(directDragChanged, true);
+  const ikHandle = link.userData.__ikHandle as THREE.Group | undefined;
+  assert.ok(ikHandle, 'direct IK drag should create a hidden anchor on intermediate links');
+  assert.equal(ikHandle.children.length, 1, 'direct IK drag handle should stay invisible');
+  assert.equal(ikHandle.children[0]?.name, '__ik_handle_pick_target__');
+  assert.equal(ikHandle.visible, true);
 });
 
 test('syncMjcfSiteVisualizationForLinks creates MJCF site helpers lazily and hides them when disabled', () => {
@@ -494,6 +597,7 @@ test('syncLinkHelperInteractionStateForLinks keeps hovered origin axes at a stab
   const originAxes = link.userData.__originAxes as THREE.Object3D;
   const originMesh = originAxes.children.find((child: any) => child.isMesh) as THREE.Mesh;
   const baseRenderOrder = originMesh.renderOrder;
+  const baseColor = (originMesh.material as THREE.MeshBasicMaterial).color.clone();
 
   const changed = syncLinkHelperInteractionStateForLinks({
     links: [link],
@@ -506,6 +610,14 @@ test('syncLinkHelperInteractionStateForLinks keeps hovered origin axes at a stab
   assert.equal(originAxes.scale.y, 1);
   assert.equal(originAxes.scale.z, 1);
   assert.ok(originMesh.renderOrder > baseRenderOrder);
+  assert.notEqual(
+    (originMesh.material as THREE.MeshBasicMaterial).color.getHex(),
+    baseColor.getHex(),
+  );
+  assert.ok(
+    (originMesh.material as THREE.MeshBasicMaterial).color.r >= baseColor.r,
+    'origin axis hover should brighten the helper color',
+  );
 });
 
 test('syncLinkHelperInteractionStateForLinks boosts hovered inertia helpers', () => {

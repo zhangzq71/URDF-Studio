@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Upload, Package, FileCode, Layers, Lock, Braces, Loader2, Info } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
-import { Slider, Switch, Tooltip } from '@/shared/components/ui';
+import { CompactSwitch, PanelSelect, Slider, Tooltip } from '@/shared/components/ui';
 import { translations } from '@/shared/i18n';
 import type { TranslationKeys } from '@/shared/i18n/types';
 import type { ExportProgressState } from '../../types';
@@ -188,7 +188,7 @@ function Row({
 }
 
 function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return <Switch checked={value} onChange={onChange} size="sm" />;
+  return <CompactSwitch checked={value} onChange={onChange} />;
 }
 
 function SelectField({
@@ -205,20 +205,14 @@ function SelectField({
   fullWidth?: boolean;
 }) {
   return (
-    <select
+    <PanelSelect
+      variant="compact"
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      options={options}
       title={title}
-      className={`bg-input-bg border border-border-black text-text-primary text-xs rounded-md px-2 py-1 focus:ring-2 focus:ring-system-blue/25 focus:border-system-blue transition-all ${
-        fullWidth ? 'w-full min-w-0' : ''
-      }`}
-    >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
-    </select>
+      className={fullWidth ? 'w-full min-w-0' : 'min-w-[9rem]'}
+    />
   );
 }
 
@@ -595,8 +589,6 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         className="z-[100] bg-panel-bg flex flex-col text-text-primary overflow-hidden rounded-2xl shadow-xl border border-border-black"
         headerClassName="h-10 border-b border-border-black flex items-center justify-between px-3 bg-element-bg shrink-0"
         interactionClassName="select-none"
-        headerDraggableClassName="cursor-grab"
-        headerDraggingClassName="cursor-grabbing"
         showMinimizeButton={false}
         showMaximizeButton={false}
         showCloseButton={!isExporting}

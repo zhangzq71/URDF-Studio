@@ -52,6 +52,12 @@ export interface MJCFTexture {
   fileup?: string;
   type?: string;
   builtin?: string;
+  rgb1?: number[];
+  rgb2?: number[];
+  mark?: string;
+  markrgb?: number[];
+  width?: number;
+  height?: number;
 }
 
 export interface MJCFHfield {
@@ -941,6 +947,14 @@ export function parseTextureAssets(
   }
 
   let textureIndex = 0;
+  const parseOptionalPositiveNumber = (value: string | null | undefined): number | undefined => {
+    if (value == null || value.trim() === '') {
+      return undefined;
+    }
+
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  };
   const normalizeTextureFilePath = (filePath: string | null | undefined): string | undefined => {
     const normalizedPath = String(filePath || '').trim();
     if (!normalizedPath) {
@@ -982,6 +996,18 @@ export function parseTextureAssets(
       );
       const builtin = textureEl.getAttribute('builtin') || textureAttrs.builtin || undefined;
       const type = textureEl.getAttribute('type') || textureAttrs.type || undefined;
+      const rgb1 = parseNumbers(textureEl.getAttribute('rgb1') || textureAttrs.rgb1 || null);
+      const rgb2 = parseNumbers(textureEl.getAttribute('rgb2') || textureAttrs.rgb2 || null);
+      const mark = textureEl.getAttribute('mark') || textureAttrs.mark || undefined;
+      const markrgb = parseNumbers(
+        textureEl.getAttribute('markrgb') || textureAttrs.markrgb || null,
+      );
+      const width = parseOptionalPositiveNumber(
+        textureEl.getAttribute('width') || textureAttrs.width || null,
+      );
+      const height = parseOptionalPositiveNumber(
+        textureEl.getAttribute('height') || textureAttrs.height || null,
+      );
       const explicitName = textureEl.getAttribute('name') || textureAttrs.name || undefined;
 
       const name =
@@ -993,7 +1019,7 @@ export function parseTextureAssets(
 
       textureMap.set(name, {
         name,
-        file: file || undefined,
+        ...(file ? { file } : {}),
         ...(fileback ? { fileback } : {}),
         ...(filedown ? { filedown } : {}),
         ...(filefront ? { filefront } : {}),
@@ -1002,6 +1028,12 @@ export function parseTextureAssets(
         ...(fileup ? { fileup } : {}),
         type,
         builtin,
+        ...(rgb1.length > 0 ? { rgb1 } : {}),
+        ...(rgb2.length > 0 ? { rgb2 } : {}),
+        ...(mark ? { mark } : {}),
+        ...(markrgb.length > 0 ? { markrgb } : {}),
+        ...(width != null ? { width } : {}),
+        ...(height != null ? { height } : {}),
       });
 
       textureIndex += 1;

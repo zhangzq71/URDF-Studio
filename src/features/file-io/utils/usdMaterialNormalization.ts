@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createMatteMaterial } from '@/core/utils/materialFactory.ts';
 import { disposeMaterial, disposeObject3D } from '@/shared/utils/three/dispose.ts';
 
-export const createUsdBaseMaterial = (color: string | undefined): THREE.MeshStandardMaterial => {
+export const createUsdBaseMaterial = (color?: string): THREE.MeshStandardMaterial => {
   return createMatteMaterial({
     color: color || '#808080',
     side: THREE.FrontSide,
@@ -13,14 +13,16 @@ export const createUsdBaseMaterial = (color: string | undefined): THREE.MeshStan
 
 export const isUsdMeshObject = (value: unknown): value is THREE.Mesh => {
   return Boolean(
-    value
-    && typeof value === 'object'
-    && (value as THREE.Mesh).isMesh
-    && 'geometry' in (value as Record<string, unknown>),
+    value &&
+    typeof value === 'object' &&
+    (value as THREE.Mesh).isMesh &&
+    'geometry' in (value as Record<string, unknown>),
   );
 };
 
-const isMeshStandardMaterial = (material: THREE.Material): material is THREE.MeshStandardMaterial => {
+const isMeshStandardMaterial = (
+  material: THREE.Material,
+): material is THREE.MeshStandardMaterial => {
   return Boolean((material as THREE.MeshStandardMaterial).isMeshStandardMaterial);
 };
 
@@ -93,7 +95,9 @@ const createUsdMaterialVariantMesh = (
   }
 
   const geometry = mesh.geometry.clone();
-  const filteredGroups = geometry.groups.filter((group) => (group.materialIndex ?? 0) === materialIndex);
+  const filteredGroups = geometry.groups.filter(
+    (group) => (group.materialIndex ?? 0) === materialIndex,
+  );
   if (filteredGroups.length === 0) {
     geometry.dispose();
     return null;
@@ -105,9 +109,8 @@ const createUsdMaterialVariantMesh = (
   });
 
   const variant = new THREE.Mesh(geometry, material.clone());
-  variant.name = variantIndex === 0
-    ? (mesh.name || 'mesh')
-    : `${mesh.name || 'mesh'}_${materialIndex}`;
+  variant.name =
+    variantIndex === 0 ? mesh.name || 'mesh' : `${mesh.name || 'mesh'}_${materialIndex}`;
   variant.position.copy(mesh.position);
   variant.quaternion.copy(mesh.quaternion);
   variant.scale.copy(mesh.scale);
@@ -144,9 +147,9 @@ export const expandUsdMultiMaterialMeshesForSerialization = (root: THREE.Object3
       return;
     }
 
-    const materialIndexes = Array.from(new Set(
-      child.geometry.groups.map((group) => group.materialIndex ?? 0),
-    )).filter((index) => Number.isInteger(index) && index >= 0);
+    const materialIndexes = Array.from(
+      new Set(child.geometry.groups.map((group) => group.materialIndex ?? 0)),
+    ).filter((index) => Number.isInteger(index) && index >= 0);
 
     if (materialIndexes.length <= 1) {
       return;
@@ -179,7 +182,10 @@ export const expandUsdMultiMaterialMeshesForSerialization = (root: THREE.Object3
     parent.remove(mesh);
     variants.forEach((variant) => parent.add(variant));
 
-    const appendedVariants = parent.children.splice(parent.children.length - variants.length, variants.length);
+    const appendedVariants = parent.children.splice(
+      parent.children.length - variants.length,
+      variants.length,
+    );
     parent.children.splice(Math.max(0, insertionIndex), 0, ...appendedVariants);
 
     disposeObject3D(mesh, true);

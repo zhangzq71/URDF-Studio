@@ -16,7 +16,11 @@ import {
 } from '@/shared/utils';
 import { useAssemblyStore, useSelectionStore, useUIStore, type Language } from '@/store';
 import { buildFileTree } from '../utils';
-import { buildChildJointsByParent, buildParentLinkByChild } from '../utils/treeSelectionScope';
+import {
+  buildChildJointsByParent,
+  buildParentLinkByChild,
+  resolveTreeSelectionIdentity,
+} from '../utils/treeSelectionScope';
 import { FileTreeContextMenu } from './FileTreeContextMenu';
 import type { LibraryDeleteTarget } from './FileTreeNode';
 import { TreeEditorFileBrowserPanel } from './tree-editor/TreeEditorFileBrowserPanel';
@@ -32,6 +36,7 @@ export interface TreeEditorProps {
     subType: 'visual' | 'collision',
     objectIndex?: number,
     suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
   ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;
@@ -221,6 +226,16 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     () => (isAssemblyView ? {} : buildParentLinkByChild(robot.joints)),
     [isAssemblyView, robot.joints],
   );
+  const resolvedRobotSelection = useMemo(
+    () =>
+      isAssemblyView
+        ? robotSelection
+        : resolveTreeSelectionIdentity(robotSelection, {
+            links: robot.links,
+            joints: robot.joints,
+          }),
+    [isAssemblyView, robot.joints, robot.links, robotSelection],
+  );
   const selectionBranchLinkIds = useMemo(() => {
     if (isAssemblyView) {
       return new Set<string>();
@@ -229,10 +244,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     const branch = new Set<string>();
     let currentLinkId: string | null = null;
 
-    if (robotSelection.type === 'link' && robotSelection.id) {
-      currentLinkId = robotSelection.id;
-    } else if (robotSelection.type === 'joint' && robotSelection.id) {
-      currentLinkId = robot.joints[robotSelection.id]?.parentLinkId ?? null;
+    if (resolvedRobotSelection.type === 'link' && resolvedRobotSelection.id) {
+      currentLinkId = resolvedRobotSelection.id;
+    } else if (resolvedRobotSelection.type === 'joint' && resolvedRobotSelection.id) {
+      currentLinkId = robot.joints[resolvedRobotSelection.id]?.parentLinkId ?? null;
     }
 
     while (currentLinkId) {
@@ -241,7 +256,13 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
     }
 
     return branch;
-  }, [isAssemblyView, parentLinkByChild, robot.joints, robotSelection.id, robotSelection.type]);
+  }, [
+    isAssemblyView,
+    parentLinkByChild,
+    resolvedRobotSelection.id,
+    resolvedRobotSelection.type,
+    robot.joints,
+  ]);
   const treeRootLinkIds = useMemo(
     () => (isAssemblyView ? [] : getTreeRenderRootLinkIds(robot)),
     [isAssemblyView, robot.joints, robot.links, robot.rootLinkId],
@@ -636,10 +657,10 @@ export const TreeEditor: React.FC<TreeEditorProps> = ({
             }
             onAddChildFromSelection={() => {
               let targetId = getPrimaryTreeRenderRootLinkId(robot) ?? robot.rootLinkId;
-              if (robotSelection.type === 'link' && robotSelection.id) {
-                targetId = robotSelection.id;
-              } else if (robotSelection.type === 'joint' && robotSelection.id) {
-                const selectedJoint = robot.joints[robotSelection.id];
+              if (resolvedRobotSelection.type === 'link' && resolvedRobotSelection.id) {
+                targetId = resolvedRobotSelection.id;
+              } else if (resolvedRobotSelection.type === 'joint' && resolvedRobotSelection.id) {
+                const selectedJoint = robot.joints[resolvedRobotSelection.id];
                 if (selectedJoint) {
                   targetId = selectedJoint.childLinkId;
                 }

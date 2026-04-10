@@ -1,8 +1,8 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
-import { GeometryType, JointType, type InspectionReport, type RobotState } from '@/types'
-import { buildConversationContext } from './buildConversationContext.ts'
+import { GeometryType, JointType, type InspectionReport, type RobotState } from '@/types';
+import { buildConversationContext } from './buildConversationContext.ts';
 
 const createRobotFixture = (): RobotState => ({
   name: 'chat-fixture',
@@ -55,13 +55,14 @@ const createRobotFixture = (): RobotState => ({
           name: 'main_tendon',
           type: 'spatial',
           attachmentRefs: ['a_site', 'b_site'],
+          attachments: [],
           actuatorNames: ['M1'],
         },
       ],
     },
   },
   selection: { type: 'link', id: 'base_link' },
-})
+});
 
 const reportFixture: InspectionReport = {
   summary: 'Found one warning on joint limit configuration.',
@@ -81,19 +82,19 @@ const reportFixture: InspectionReport = {
       relatedIds: ['hip_joint', 'base_link'],
     },
   ],
-}
+};
 
 test('buildConversationContext includes robot snapshot in general mode without inspection report payload', () => {
   const contextString = buildConversationContext({
     mode: 'general',
     robot: createRobotFixture(),
-  })
+  });
 
-  const payload = JSON.parse(contextString) as Record<string, unknown>
-  assert.equal(payload.mode, 'general')
-  assert.ok(payload.robot)
-  assert.equal(payload.inspectionReport, undefined)
-})
+  const payload = JSON.parse(contextString) as Record<string, unknown>;
+  assert.equal(payload.mode, 'general');
+  assert.ok(payload.robot);
+  assert.equal(payload.inspectionReport, undefined);
+});
 
 test('buildConversationContext includes compact report snapshot for inspection-followup mode', () => {
   const contextString = buildConversationContext({
@@ -113,26 +114,26 @@ test('buildConversationContext includes compact report snapshot for inspection-f
       score: 6,
       relatedIds: ['hip_joint', 'base_link'],
     },
-  })
+  });
 
   const payload = JSON.parse(contextString) as {
-    mode: string
-    robot: { name: string; jointCount: number }
-    inspectionReport: { summary: string; issues: Array<{ relatedIds?: string[] }> }
-    selectedEntity: { type: string; id: string; name: string }
-    focusedIssue: { title: string; relatedIds?: string[] }
-  }
+    mode: string;
+    robot: { name: string; jointCount: number };
+    inspectionReport: { summary: string; issues: Array<{ relatedIds?: string[] }> };
+    selectedEntity: { type: string; id: string; name: string };
+    focusedIssue: { title: string; relatedIds?: string[] };
+  };
 
-  assert.equal(payload.mode, 'inspection-followup')
-  assert.equal(payload.robot.name, 'chat-fixture')
-  assert.equal(payload.robot.jointCount, 1)
-  assert.equal(payload.inspectionReport.summary, reportFixture.summary)
-  assert.deepEqual(payload.inspectionReport.issues[0]?.relatedIds, ['base_link', 'hip_joint'])
+  assert.equal(payload.mode, 'inspection-followup');
+  assert.equal(payload.robot.name, 'chat-fixture');
+  assert.equal(payload.robot.jointCount, 1);
+  assert.equal(payload.inspectionReport.summary, reportFixture.summary);
+  assert.deepEqual(payload.inspectionReport.issues[0]?.relatedIds, ['base_link', 'hip_joint']);
   assert.deepEqual(payload.selectedEntity, {
     type: 'joint',
     id: 'hip_joint',
     name: 'hip_joint',
-  })
-  assert.equal(payload.focusedIssue.title, 'Joint range may be too narrow')
-  assert.deepEqual(payload.focusedIssue.relatedIds, ['base_link', 'hip_joint'])
-})
+  });
+  assert.equal(payload.focusedIssue.title, 'Joint range may be too narrow');
+  assert.deepEqual(payload.focusedIssue.relatedIds, ['base_link', 'hip_joint']);
+});

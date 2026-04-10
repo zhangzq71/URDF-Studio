@@ -13,6 +13,9 @@ interface SegmentedControlProps<T> {
   onChange: (value: T) => void;
   size?: 'xs' | 'sm' | 'md';
   className?: string;
+  itemClassName?: string;
+  selectedItemClassName?: string;
+  unselectedItemClassName?: string;
   disabled?: boolean;
   stretch?: boolean;
 }
@@ -23,6 +26,9 @@ export function SegmentedControl<T extends string | number>({
   onChange,
   size = 'sm',
   className = '',
+  itemClassName = '',
+  selectedItemClassName = '',
+  unselectedItemClassName = '',
   disabled = false,
   stretch = true,
 }: SegmentedControlProps<T>) {
@@ -67,6 +73,8 @@ export function SegmentedControl<T extends string | number>({
                   ? 'bg-segmented-active text-text-primary shadow-sm'
                   : 'text-text-tertiary hover:text-text-primary'
               }
+              ${itemClassName}
+              ${isSelected ? selectedItemClassName : unselectedItemClassName}
             `}
           >
             {option.icon && (

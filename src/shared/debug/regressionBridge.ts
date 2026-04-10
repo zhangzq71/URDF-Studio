@@ -33,6 +33,12 @@ export interface RegressionViewerFlags {
 interface AppRegressionHandlers {
   getAvailableFiles: () => RobotFile[];
   getSelectedFile: () => RobotFile | null;
+  getDocumentLoadState: () => {
+    status: string;
+    fileName: string | null;
+    format?: string | null;
+    error?: string | null;
+  };
   getRobotState: () => RobotState;
   getAssetDebugState: () => {
     appAssetKeys: string[];
@@ -121,6 +127,13 @@ interface RuntimeVisualMeshSummary {
   materials: RuntimeMaterialSummary[];
 }
 
+interface RegressionDocumentLoadState {
+  status: string;
+  fileName: string | null;
+  format?: string | null;
+  error?: string | null;
+}
+
 interface RegressionSnapshot {
   timestamp: number;
   runtimeRevision: number;
@@ -156,6 +169,7 @@ interface RegressionAssetDebugState {
 export interface RegressionDebugApi {
   getAvailableFiles: () => Array<{ name: string; format: string }>;
   getRegressionSnapshot: () => RegressionSnapshot;
+  getDocumentLoadState: () => RegressionDocumentLoadState | null;
   getProjectedInteractionTargets: () => RegressionProjectedInteractionTarget[];
   getAssetDebugState: () => RegressionAssetDebugState;
   getRuntimeSceneTransforms: () => ReturnType<typeof summarizeRuntimeSceneTransforms> | null;
@@ -408,6 +422,62 @@ function summarizeRuntimeRobot(robot: any) {
     return null;
   }
 
+  const joints = robot.joints ? Object.values(robot.joints as Record<string, any>) : [];
+  const runtimeJoints: RuntimeJointSummary[] = [];
+  joints.forEach((joint: any) => {
+    runtimeJoints.push({
+      name: typeof joint?.name === 'string' ? joint.name : '',
+      type:
+        typeof joint?.jointType === 'string'
+          ? joint.jointType
+          : typeof joint?.type === 'string'
+            ? joint.type
+            : null,
+      angle:
+        typeof joint?.angle === 'number'
+          ? joint.angle
+          : typeof joint?.jointValue === 'number'
+            ? joint.jointValue
+            : null,
+      axis: toFixedArray(joint?.axis),
+      limit: joint?.limit
+        ? {
+            lower: typeof joint.limit.lower === 'number' ? joint.limit.lower : null,
+            upper: typeof joint.limit.upper === 'number' ? joint.limit.upper : null,
+          }
+        : null,
+    });
+  });
+
+  if (typeof robot?.traverse !== 'function') {
+    return {
+      name: typeof robot?.name === 'string' ? robot.name : null,
+      linkCount: 0,
+      jointCount: runtimeJoints.length,
+      visualGroupCount: 0,
+      collisionGroupCount: 0,
+      visualMeshCount: 0,
+      collisionMeshCount: 0,
+      placeholderMeshCount: 0,
+      visiblePlaceholderMeshCount: 0,
+      hiddenPlaceholderMeshCount: 0,
+      visualPlaceholderMeshCount: 0,
+      visibleVisualPlaceholderMeshCount: 0,
+      collisionPlaceholderMeshCount: 0,
+      texturedVisualMeshCount: 0,
+      helpers: {
+        centerOfMass: 0,
+        inertiaBox: 0,
+        originAxes: 0,
+        jointAxis: 0,
+      },
+      links: [],
+      placeholderMeshes: [],
+      visualMeshes: [],
+      joints: runtimeJoints.sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }
+
   const linkMap = new Map<string, RuntimeLinkSummary>();
   const placeholderMeshes: Array<{
     link: string;
@@ -423,7 +493,6 @@ function summarizeRuntimeRobot(robot: any) {
     originAxes: 0,
     jointAxis: 0,
   };
-  const runtimeJoints: RuntimeJointSummary[] = [];
 
   const getOrCreateLinkSummary = (linkName: string): RuntimeLinkSummary => {
     const existing = linkMap.get(linkName);
@@ -463,104 +532,81 @@ function summarizeRuntimeRobot(robot: any) {
     };
   };
 
-  robot.traverse((child: any) => {
-    if (child.name === '__com_visual__') helperCounts.centerOfMass += 1;
-    if (child.name === '__inertia_box__') helperCounts.inertiaBox += 1;
-    if (child.name === '__origin_axes__') helperCounts.originAxes += 1;
-    if (child.name === '__joint_axis__' || child.name === '__joint_axis_helper__')
-      helperCounts.jointAxis += 1;
+  if (typeof robot.traverse === 'function') {
+    robot.traverse((child: any) => {
+      if (child.name === '__com_visual__') helperCounts.centerOfMass += 1;
+      if (child.name === '__inertia_box__') helperCounts.inertiaBox += 1;
+      if (child.name === '__origin_axes__') helperCounts.originAxes += 1;
+      if (child.name === '__joint_axis__' || child.name === '__joint_axis_helper__')
+        helperCounts.jointAxis += 1;
 
-    const linkName = resolveRuntimeLinkName(child);
-    if (linkName) {
-      const entry = getOrCreateLinkSummary(linkName);
-      const isMesh = child.isMesh === true;
-      const isVisualMesh = isMesh && child.userData?.isVisualMesh === true;
-      const isCollisionMesh = isMesh && child.userData?.isCollisionMesh === true;
-      const isPlaceholder = isMesh && child.userData?.isPlaceholder === true;
-      const effectiveVisible = isMesh ? isEffectivelyVisible(child) : false;
+      const linkName = resolveRuntimeLinkName(child);
+      if (linkName) {
+        const entry = getOrCreateLinkSummary(linkName);
+        const isMesh = child.isMesh === true;
+        const isVisualMesh = isMesh && child.userData?.isVisualMesh === true;
+        const isCollisionMesh = isMesh && child.userData?.isCollisionMesh === true;
+        const isPlaceholder = isMesh && child.userData?.isPlaceholder === true;
+        const effectiveVisible = isMesh ? isEffectivelyVisible(child) : false;
 
-      if (child.userData?.isVisualGroup) entry.visualGroupCount += 1;
-      if (child.userData?.isCollisionGroup || child.isURDFCollider) entry.collisionGroupCount += 1;
-      if (isVisualMesh) entry.visualMeshCount += 1;
-      if (isCollisionMesh) entry.collisionMeshCount += 1;
+        if (child.userData?.isVisualGroup) entry.visualGroupCount += 1;
+        if (child.userData?.isCollisionGroup || child.isURDFCollider)
+          entry.collisionGroupCount += 1;
+        if (isVisualMesh) entry.visualMeshCount += 1;
+        if (isCollisionMesh) entry.collisionMeshCount += 1;
 
-      if (isPlaceholder) {
-        entry.placeholderMeshCount += 1;
-        if (effectiveVisible) {
-          entry.visiblePlaceholderMeshCount += 1;
-        } else {
-          entry.hiddenPlaceholderMeshCount += 1;
-        }
-        if (isVisualMesh) {
-          entry.visualPlaceholderMeshCount += 1;
+        if (isPlaceholder) {
+          entry.placeholderMeshCount += 1;
           if (effectiveVisible) {
-            entry.visibleVisualPlaceholderMeshCount += 1;
+            entry.visiblePlaceholderMeshCount += 1;
+          } else {
+            entry.hiddenPlaceholderMeshCount += 1;
+          }
+          if (isVisualMesh) {
+            entry.visualPlaceholderMeshCount += 1;
+            if (effectiveVisible) {
+              entry.visibleVisualPlaceholderMeshCount += 1;
+            }
+          }
+          if (isCollisionMesh) {
+            entry.collisionPlaceholderMeshCount += 1;
           }
         }
-        if (isCollisionMesh) {
-          entry.collisionPlaceholderMeshCount += 1;
-        }
-      }
 
-      if (isVisualMesh) {
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        const summarizedMaterials = materials.map(summarizeRuntimeMaterial);
-        if (summarizedMaterials.some((material) => material.hasTexture)) {
-          entry.texturedVisualMeshCount += 1;
-        }
+        if (isVisualMesh) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          const summarizedMaterials = materials.map(summarizeRuntimeMaterial);
+          if (summarizedMaterials.some((material) => material.hasTexture)) {
+            entry.texturedVisualMeshCount += 1;
+          }
 
-        const visualMeshSummary: RuntimeVisualMeshSummary = {
-          link: linkName,
-          name: typeof child.name === 'string' ? child.name : '',
-          visible: child.visible !== false,
-          effectiveVisible,
-          isPlaceholder,
-          missingMeshPath:
-            typeof child.userData?.missingMeshPath === 'string'
-              ? child.userData.missingMeshPath
-              : null,
-          materials: summarizedMaterials,
-        };
-        visualMeshes.push(visualMeshSummary);
-
-        if (visualMeshSummary.isPlaceholder) {
-          placeholderMeshes.push({
+          const visualMeshSummary: RuntimeVisualMeshSummary = {
             link: linkName,
-            name: visualMeshSummary.name,
-            missingMeshPath: visualMeshSummary.missingMeshPath,
-            visible: visualMeshSummary.visible,
-            effectiveVisible: visualMeshSummary.effectiveVisible,
-          });
+            name: typeof child.name === 'string' ? child.name : '',
+            visible: child.visible !== false,
+            effectiveVisible,
+            isPlaceholder,
+            missingMeshPath:
+              typeof child.userData?.missingMeshPath === 'string'
+                ? child.userData.missingMeshPath
+                : null,
+            materials: summarizedMaterials,
+          };
+          visualMeshes.push(visualMeshSummary);
+
+          if (visualMeshSummary.isPlaceholder) {
+            placeholderMeshes.push({
+              link: linkName,
+              name: visualMeshSummary.name,
+              missingMeshPath: visualMeshSummary.missingMeshPath,
+              visible: visualMeshSummary.visible,
+              effectiveVisible: visualMeshSummary.effectiveVisible,
+            });
+          }
         }
       }
-    }
-  });
-
-  const joints = robot.joints ? Object.values(robot.joints as Record<string, any>) : [];
-  joints.forEach((joint: any) => {
-    runtimeJoints.push({
-      name: typeof joint?.name === 'string' ? joint.name : '',
-      type:
-        typeof joint?.jointType === 'string'
-          ? joint.jointType
-          : typeof joint?.type === 'string'
-            ? joint.type
-            : null,
-      angle:
-        typeof joint?.angle === 'number'
-          ? joint.angle
-          : typeof joint?.jointValue === 'number'
-            ? joint.jointValue
-            : null,
-      axis: toFixedArray(joint?.axis),
-      limit: joint?.limit
-        ? {
-            lower: typeof joint.limit.lower === 'number' ? joint.limit.lower : null,
-            upper: typeof joint.limit.upper === 'number' ? joint.limit.upper : null,
-          }
-        : null,
     });
-  });
+  }
 
   return {
     name: typeof robot?.name === 'string' ? robot.name : null,
@@ -627,7 +673,26 @@ function summarizeRuntimeSceneTransforms(robot: any) {
     return null;
   }
 
-  robot.updateMatrixWorld?.(true);
+  if (typeof robot?.traverse !== 'function') {
+    const joints = Object.values(robot?.joints ?? {}).map((joint: any) => ({
+      name: typeof joint?.name === 'string' ? joint.name : '',
+      type:
+        typeof joint?.jointType === 'string'
+          ? joint.jointType
+          : typeof joint?.type === 'string'
+            ? joint.type
+            : null,
+      position: null,
+      quaternion: null,
+      axis: toFixedArray(joint?.axis),
+    }));
+
+    return {
+      links: [],
+      joints: joints.sort((a, b) => a.name.localeCompare(b.name)),
+      visualMeshes: [],
+    };
+  }
 
   const links: Array<{
     name: string;
@@ -648,56 +713,92 @@ function summarizeRuntimeSceneTransforms(robot: any) {
     quaternion: [number, number, number, number] | null;
   }> = [];
 
-  robot.traverse((child: any) => {
-    if (child?.isURDFLink) {
-      links.push({
-        name: typeof child.name === 'string' ? child.name : '',
-        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
-        quaternion: child.getWorldQuaternion
-          ? (child
-              .getWorldQuaternion(new Quaternion())
-              .toArray()
-              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
-          : null,
-      });
-      return;
-    }
+  if (typeof robot.traverse === 'function') {
+    robot.updateMatrixWorld?.(true);
 
-    if (child?.isURDFJoint) {
-      joints.push({
-        name: typeof child.name === 'string' ? child.name : '',
-        type: typeof child?.jointType === 'string' ? child.jointType : null,
-        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
-        quaternion: child.getWorldQuaternion
-          ? (child
-              .getWorldQuaternion(new Quaternion())
-              .toArray()
-              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
-          : null,
-        axis: toFixedArray(child.axis),
-      });
-      return;
-    }
-
-    if (child?.isMesh && child?.userData?.isVisualMesh) {
-      const linkName = resolveRuntimeLinkName(child);
-      if (!linkName) {
+    robot.traverse((child: any) => {
+      if (child?.isURDFLink) {
+        links.push({
+          name: typeof child.name === 'string' ? child.name : '',
+          position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+          quaternion: child.getWorldQuaternion
+            ? (child
+                .getWorldQuaternion(new Quaternion())
+                .toArray()
+                .map((value: number) => Number(value.toFixed(6))) as [
+                number,
+                number,
+                number,
+                number,
+              ])
+            : null,
+        });
         return;
       }
 
-      visualMeshes.push({
-        link: linkName,
-        name: typeof child.name === 'string' ? child.name : '',
-        position: toFixedArray(child.getWorldPosition?.(new Vector3())),
-        quaternion: child.getWorldQuaternion
-          ? (child
-              .getWorldQuaternion(new Quaternion())
-              .toArray()
-              .map((value: number) => Number(value.toFixed(6))) as [number, number, number, number])
-          : null,
+      if (child?.isURDFJoint) {
+        joints.push({
+          name: typeof child.name === 'string' ? child.name : '',
+          type: typeof child?.jointType === 'string' ? child.jointType : null,
+          position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+          quaternion: child.getWorldQuaternion
+            ? (child
+                .getWorldQuaternion(new Quaternion())
+                .toArray()
+                .map((value: number) => Number(value.toFixed(6))) as [
+                number,
+                number,
+                number,
+                number,
+              ])
+            : null,
+          axis: toFixedArray(child.axis),
+        });
+        return;
+      }
+
+      if (child?.isMesh && child?.userData?.isVisualMesh) {
+        const linkName = resolveRuntimeLinkName(child);
+        if (!linkName) {
+          return;
+        }
+
+        visualMeshes.push({
+          link: linkName,
+          name: typeof child.name === 'string' ? child.name : '',
+          position: toFixedArray(child.getWorldPosition?.(new Vector3())),
+          quaternion: child.getWorldQuaternion
+            ? (child
+                .getWorldQuaternion(new Quaternion())
+                .toArray()
+                .map((value: number) => Number(value.toFixed(6))) as [
+                number,
+                number,
+                number,
+                number,
+              ])
+            : null,
+        });
+      }
+    });
+  }
+
+  if (joints.length === 0 && robot.joints) {
+    Object.values(robot.joints as Record<string, any>).forEach((joint: any) => {
+      joints.push({
+        name: typeof joint?.name === 'string' ? joint.name : '',
+        type:
+          typeof joint?.jointType === 'string'
+            ? joint.jointType
+            : typeof joint?.type === 'string'
+              ? joint.type
+              : null,
+        position: null,
+        quaternion: null,
+        axis: toFixedArray(joint?.axis),
       });
-    }
-  });
+    });
+  }
 
   return {
     links: links.sort((a, b) => a.name.localeCompare(b.name)),
@@ -805,11 +906,16 @@ export function installRegressionDebugApi(targetWindow: Window): void {
 
     while (Date.now() - startedAt < timeoutMs) {
       const snapshot = getRegressionSnapshot();
+      const documentLoadState = appHandlers?.getDocumentLoadState() ?? null;
+      const isMatchingDocumentState = documentLoadState?.fileName === fileName;
       if (
         isUsd
           ? getLatestUsdStageLoadDebugEntry(targetWindow, fileName, 'ready', 'resolved') &&
             hasCommittedUsdSnapshot(fileName, snapshot)
-          : snapshot.selectedFile?.name === fileName && snapshot.runtime
+          : snapshot.selectedFile?.name === fileName &&
+            snapshot.runtime &&
+            isMatchingDocumentState &&
+            documentLoadState?.status === 'ready'
       ) {
         return snapshot;
       }
@@ -829,6 +935,8 @@ export function installRegressionDebugApi(targetWindow: Window): void {
         if (loadFailedEntry || commitRejectedEntry) {
           return snapshot;
         }
+      } else if (isMatchingDocumentState && documentLoadState?.status === 'error') {
+        return snapshot;
       }
 
       await new Promise((resolve) => globalThis.setTimeout(resolve, 50));
@@ -840,6 +948,17 @@ export function installRegressionDebugApi(targetWindow: Window): void {
   targetWindow.__URDF_STUDIO_DEBUG__ = {
     getAvailableFiles: () => getAvailableFilesSummary(),
     getRegressionSnapshot: () => getRegressionSnapshot(),
+    getDocumentLoadState: () => {
+      const documentLoadState = appHandlers?.getDocumentLoadState() ?? null;
+      return documentLoadState
+        ? {
+            status: documentLoadState.status,
+            fileName: documentLoadState.fileName,
+            format: documentLoadState.format ?? null,
+            error: documentLoadState.error ?? null,
+          }
+        : null;
+    },
     getProjectedInteractionTargets: () => projectedInteractionTargetsProvider?.() ?? [],
     getAssetDebugState: () => {
       const appAssetDebugState = appHandlers?.getAssetDebugState() ?? {

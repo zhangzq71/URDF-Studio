@@ -2305,11 +2305,15 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                     summary.subsetReboundCount += 1;
                 }
             }
-            catch {
+            catch (error) {
                 summary.subsetFailureCount += 1;
                 if (hydraMesh?._id) {
                     summary.subsetFailureMeshIds.push(String(hydraMesh._id));
                 }
+                getRawConsoleMethod('error')('[HydraDelegate] Failed to apply pending geometry subset materials.', {
+                    meshId: String(hydraMesh?._id || ''),
+                    error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+                });
             }
         }
         this._preferredVisualMaterialByLinkCache?.clear?.();
@@ -2321,11 +2325,15 @@ export class ThreeRenderDelegateMaterialOps extends ThreeRenderDelegateCore {
                     summary.inheritedCount += 1;
                 }
             }
-            catch {
+            catch (error) {
                 summary.inheritFailureCount += 1;
                 if (hydraMesh?._id) {
                     summary.inheritFailureMeshIds.push(String(hydraMesh._id));
                 }
+                getRawConsoleMethod('error')('[HydraDelegate] Failed to inherit visual material from link.', {
+                    meshId: String(hydraMesh?._id || ''),
+                    error: error instanceof Error ? error.message : String(error || 'unknown-error'),
+                });
             }
         }
         return summary;

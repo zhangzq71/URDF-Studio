@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 
+import { deriveObjAuthoredMaterialsFromLookup } from '@/core/loaders/objMaterialUtils';
+import { syncRobotMaterialsForLinkUpdate } from '@/core/robot/materials';
 import { postProcessColladaScene } from '@/core/loaders';
 import {
   createSceneFromSerializedColladaData,
@@ -338,6 +340,61 @@ function shouldBackfillGeometryColor(
   );
 }
 
+function syncGeometryMeshTextMaterials(
+  geometry: UrdfVisual,
+  textAssetContentLookup: TextAssetContentLookup,
+  colorCache: Map<string, string | null>,
+  existingMaterial?: RobotMaterialEntry,
+): UrdfVisual {
+  if (!shouldBackfillGeometryColor(geometry, existingMaterial)) {
+    return geometry;
+  }
+
+  const normalizedMeshPath = normalizeLookupPath(geometry.meshPath!);
+  if (normalizedMeshPath.toLowerCase().endsWith('.obj')) {
+    const authoredMaterials = deriveObjAuthoredMaterialsFromLookup(
+      normalizedMeshPath,
+      textAssetContentLookup,
+    );
+    if (authoredMaterials.length > 1) {
+      return {
+        ...geometry,
+        color: '',
+        authoredMaterials,
+      };
+    }
+
+    if (authoredMaterials.length === 1) {
+      const [primaryMaterial] = authoredMaterials;
+      const representativeColor =
+        normalizeMaterialValue(primaryMaterial?.color) ??
+        (normalizeMaterialValue(primaryMaterial?.texture) ? '#ffffff' : undefined) ??
+        deriveRepresentativeMeshColor(normalizedMeshPath, textAssetContentLookup, colorCache) ??
+        undefined;
+
+      return {
+        ...geometry,
+        ...(representativeColor ? { color: representativeColor } : {}),
+        authoredMaterials,
+      };
+    }
+  }
+
+  const representativeColor = deriveRepresentativeMeshColor(
+    normalizedMeshPath,
+    textAssetContentLookup,
+    colorCache,
+  );
+  if (!representativeColor) {
+    return geometry;
+  }
+
+  return {
+    ...geometry,
+    color: representativeColor,
+  };
+}
+
 export function syncMjcfMeshTextMaterialColors(
   robotData: RobotData,
   allFileContents: Record<string, string> = {},
@@ -349,58 +406,39 @@ export function syncMjcfMeshTextMaterialColors(
   const colorCache = new Map<string, string | null>();
   const textAssetContentLookup = createTextAssetContentLookup(allFileContents);
   let linksChanged = false;
-  let materialsChanged = false;
-  const nextMaterials: NonNullable<RobotData['materials']> = { ...(robotData.materials ?? {}) };
+  let nextMaterials = robotData.materials;
 
   const nextLinks = Object.fromEntries(
     Object.entries(robotData.links).map(([linkId, link]) => {
       const existingMaterial = robotData.materials?.[link.id] ?? robotData.materials?.[link.name];
-      if (!shouldBackfillGeometryColor(link.visual, existingMaterial)) {
-        return [linkId, link];
-      }
-
-      const representativeColor = deriveRepresentativeMeshColor(
-        link.visual.meshPath!,
+      const nextVisual = syncGeometryMeshTextMaterials(
+        link.visual,
         textAssetContentLookup,
         colorCache,
+        existingMaterial,
       );
-      if (!representativeColor) {
+      if (nextVisual === link.visual) {
         return [linkId, link];
       }
 
       linksChanged = true;
+      const nextLink = {
+        ...link,
+        visual: nextVisual,
+      };
+      nextMaterials = syncRobotMaterialsForLinkUpdate(nextMaterials, nextLink, link);
 
-      if (
-        !normalizeMaterialValue(existingMaterial?.color) &&
-        !normalizeMaterialValue(existingMaterial?.texture)
-      ) {
-        nextMaterials[link.id] = {
-          ...(existingMaterial ?? {}),
-          color: representativeColor,
-        };
-        materialsChanged = true;
-      }
-
-      return [
-        linkId,
-        {
-          ...link,
-          visual: {
-            ...link.visual,
-            color: representativeColor,
-          },
-        },
-      ];
+      return [linkId, nextLink];
     }),
   ) as RobotData['links'];
 
-  if (!linksChanged && !materialsChanged) {
+  if (!linksChanged) {
     return robotData;
   }
 
   return {
     ...robotData,
     links: nextLinks,
-    ...(Object.keys(nextMaterials).length > 0 ? { materials: nextMaterials } : {}),
+    ...(nextMaterials ? { materials: nextMaterials } : {}),
   };
 }

@@ -60,6 +60,23 @@ function createMesh(
   return mesh;
 }
 
+function createPickOnlyMesh(options: { renderOrder?: number } = {}): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  mesh.renderOrder = options.renderOrder ?? 0;
+
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const material of materials) {
+    material.colorWrite = false;
+    material.depthTest = false;
+    material.depthWrite = false;
+  }
+
+  return mesh;
+}
+
 function createSupportPlane(): THREE.Mesh {
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(8, 8),
@@ -113,7 +130,7 @@ test('resolveHoverInteractionResolution keeps floor-like support planes hoverabl
   assert.equal(result.primaryInteraction?.subType, 'collision');
 });
 
-test('resolveHoverInteractionResolution follows latest activation order when no layer is pinned', () => {
+test('resolveHoverInteractionResolution keeps nearer geometry ahead of non-overlay helper layers that sit behind it', () => {
   const candidates = [
     createLinkCandidate('visual_link', 0.58, 'visual', createMesh()),
     createHelperCandidate('base_link', 0.62, 'center-of-mass', createMesh()),
@@ -121,8 +138,8 @@ test('resolveHoverInteractionResolution follows latest activation order when no 
 
   const result = resolveHoverInteractionResolution(candidates, ['center-of-mass', 'visual']);
 
-  assert.equal(result.primaryInteraction?.id, 'base_link');
-  assert.equal(result.primaryInteraction?.helperKind, 'center-of-mass');
+  assert.equal(result.primaryInteraction?.id, 'visual_link');
+  assert.equal(result.primaryInteraction?.subType, 'visual');
 });
 
 test('resolveHoverInteractionResolution treats overlay presentation as stronger than plain geometry when pinned', () => {
@@ -142,7 +159,7 @@ test('resolveHoverInteractionResolution treats overlay presentation as stronger 
   assert.equal(result.primaryInteraction?.helperKind, 'joint-axis');
 });
 
-test('resolveHoverInteractionResolution lets a screen-space helper beat higher-priority collision geometry', () => {
+test('resolveHoverInteractionResolution keeps direct geometry hover ahead of screen-space helper fallback', () => {
   const candidates = [
     createLinkCandidate('collision_link', 0.2, 'collision', createMesh()),
     {
@@ -157,9 +174,25 @@ test('resolveHoverInteractionResolution lets a screen-space helper beat higher-p
     'visual',
   ]);
 
-  assert.equal(result.primaryInteraction?.id, 'hip_joint');
-  assert.equal(result.primaryInteraction?.helperKind, 'joint-axis');
-  assert.equal(result.primaryInteraction?.screenSpaceProjected, true);
+  assert.equal(result.primaryInteraction?.id, 'collision_link');
+  assert.equal(result.primaryInteraction?.subType, 'collision');
+});
+
+test('resolveHoverInteractionResolution lets nearer geometry beat a non-overlay helper hit that is hidden behind it', () => {
+  const candidates = [
+    createLinkCandidate('visual_link', 0.2, 'visual', createMesh()),
+    createHelperCandidate(
+      'base_link',
+      0.3,
+      'origin-axes',
+      createPickOnlyMesh({ renderOrder: 10020 }),
+    ),
+  ];
+
+  const result = resolveHoverInteractionResolution(candidates, ['origin-axes', 'visual']);
+
+  assert.equal(result.primaryInteraction?.id, 'visual_link');
+  assert.equal(result.primaryInteraction?.subType, 'visual');
 });
 
 test('resolveHoverInteractionResolution returns null when there are no candidates', () => {

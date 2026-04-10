@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+import { resolveObjAuthoredMaterialsFromAssets } from '@/core/loaders/objMaterialMetadata';
+import { resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
 import {
   DEFAULT_JOINT,
   DEFAULT_LINK,
@@ -13,6 +15,7 @@ import {
   type UrdfLink,
   type UrdfVisual,
   type UrdfVisualMaterial,
+  type RobotFile,
   type Vector3,
 } from '@/types';
 import { resolveGazeboScriptMaterial } from './gazeboMaterialScripts';
@@ -97,6 +100,7 @@ interface ParsedSdfGraph {
 
 export interface ParseSDFOptions {
   allFileContents?: Record<string, string>;
+  availableFiles?: readonly Pick<RobotFile, 'name'>[];
   sourcePath?: string | null;
 }
 
@@ -293,6 +297,41 @@ function parseSdfMaterial(
         authoredMaterials: [{ color: ambient }],
       }
     : {};
+}
+
+function hasParsedMaterialDefinition(definition: ParsedMaterialDefinition): boolean {
+  return Boolean(
+    definition.color || definition.texture || (definition.authoredMaterials?.length ?? 0) > 0,
+  );
+}
+
+function parseObjMeshMaterialDefinition(
+  geometry: ParsedSdfGeometry,
+  { allFileContents = {}, availableFiles = [], sourcePath }: ParseSDFOptions = {},
+): ParsedMaterialDefinition {
+  if (
+    geometry.type !== GeometryType.MESH ||
+    !geometry.meshPath ||
+    !geometry.meshPath.toLowerCase().endsWith('.obj')
+  ) {
+    return {};
+  }
+
+  const authoredMaterials = resolveObjAuthoredMaterialsFromAssets(
+    sourcePath ? resolveImportedAssetPath(geometry.meshPath, sourcePath) : geometry.meshPath,
+    allFileContents,
+    [...Object.keys(allFileContents), ...availableFiles.map((file) => file.name)],
+  );
+  if (authoredMaterials.length === 0) {
+    return {};
+  }
+
+  const primaryMaterial = authoredMaterials[0];
+  return {
+    ...(primaryMaterial?.color ? { color: primaryMaterial.color } : {}),
+    ...(primaryMaterial?.texture ? { texture: primaryMaterial.texture } : {}),
+    authoredMaterials,
+  };
 }
 
 function parseSdfGeometry(
@@ -689,6 +728,7 @@ function parseIncludedModelGraph(
   parentGraph: ParsedSdfGraph,
   {
     allFileContents = {},
+    availableFiles = [],
     sourcePath,
     parentMatrix = new THREE.Matrix4().identity(),
     namespacePrefix,
@@ -727,6 +767,7 @@ function parseIncludedModelGraph(
 
   const includeGraph = parseSdfModel(includeModelEl, {
     allFileContents,
+    availableFiles,
     sourcePath: resolvedInclude.path,
     parentMatrix: parentMatrix.clone().multiply(poseToMatrix(includePose.pose)),
     namespacePrefix: qualifyScopedName(includeName, namespacePrefix),
@@ -742,6 +783,7 @@ function parseSdfModel(
   modelEl: Element,
   {
     allFileContents = {},
+    availableFiles = [],
     sourcePath,
     parentMatrix = new THREE.Matrix4().identity(),
     namespacePrefix,
@@ -869,20 +911,37 @@ function parseSdfModel(
     const linkWorldMatrix = resolveFrameWorldMatrix(linkId);
 
     const visuals = getDirectChildElements(linkEl, 'visual').map(
-      (visualEl, index): ParsedSdfVisual => ({
-        name: visualEl.getAttribute('name')?.trim() || `${linkId}_visual_${index}`,
-        geometry: parseSdfGeometry(getFirstDirectChild(visualEl, 'geometry'), DEFAULT_LINK.visual),
-        pose: resolvePoseRelativeToFrame(
-          parsePoseElement(visualEl),
-          linkId,
-          linkId,
-          resolveFrameWorldMatrix,
-        ),
-        ...parseSdfMaterial(visualEl, {
+      (visualEl, index): ParsedSdfVisual => {
+        const geometry = parseSdfGeometry(
+          getFirstDirectChild(visualEl, 'geometry'),
+          DEFAULT_LINK.visual,
+        );
+        const explicitMaterial = parseSdfMaterial(visualEl, {
           allFileContents,
+          availableFiles,
           sourcePath,
-        }),
-      }),
+        });
+        const meshMaterial = hasParsedMaterialDefinition(explicitMaterial)
+          ? {}
+          : parseObjMeshMaterialDefinition(geometry, {
+              allFileContents,
+              availableFiles,
+              sourcePath,
+            });
+
+        return {
+          name: visualEl.getAttribute('name')?.trim() || `${linkId}_visual_${index}`,
+          geometry,
+          pose: resolvePoseRelativeToFrame(
+            parsePoseElement(visualEl),
+            linkId,
+            linkId,
+            resolveFrameWorldMatrix,
+          ),
+          ...meshMaterial,
+          ...explicitMaterial,
+        };
+      },
     );
 
     const collisions = getDirectChildElements(linkEl, 'collision').map(
@@ -944,6 +1003,7 @@ function parseSdfModel(
   for (const includeEl of getDirectChildElements(modelEl, 'include')) {
     parseIncludedModelGraph(includeEl, graph, {
       allFileContents,
+      availableFiles,
       sourcePath,
       parentMatrix: modelMatrix,
       namespacePrefix,

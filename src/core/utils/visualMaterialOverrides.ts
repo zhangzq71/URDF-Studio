@@ -235,6 +235,12 @@ export function applyVisualMaterialOverrideToObject(
   });
 
   if (!texturePath || replacementMaterials.length === 0) {
+    if (texturePath && replacementMaterials.length === 0) {
+      console.warn(
+        '[EditorViewer] Visual texture override requested, but no mesh materials were available to receive it.',
+        texturePath,
+      );
+    }
     return;
   }
 
@@ -253,7 +259,7 @@ export function applyVisualMaterialOverrideToObject(
     },
     undefined,
     (error) => {
-      console.error('[URDFViewer] Failed to apply visual texture override:', texturePath, error);
+      console.error('[EditorViewer] Failed to apply visual texture override:', texturePath, error);
     },
   );
 }

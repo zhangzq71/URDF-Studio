@@ -127,6 +127,81 @@ test('loadMJCFToThreeJS releases parsed model cache after scene construction', a
   disposeTransientObject3D(root);
 });
 
+test('loadMJCFToThreeJS keeps top-level world plane geoms and applies builtin checker textures', async () => {
+  installDomGlobals();
+  clearParsedMJCFModelCache();
+
+  const originalConsoleError = console.error;
+  const consoleErrors: string[] = [];
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args.map((arg) => String(arg)).join(' '));
+  };
+
+  let root: THREE.Object3D | null = null;
+  try {
+    root = await loadMJCFToThreeJS(
+      `
+        <mujoco model="scene-groundplane">
+          <asset>
+            <texture
+              name="groundplane"
+              type="2d"
+              builtin="checker"
+              rgb1="0.2 0.3 0.4"
+              rgb2="0.1 0.2 0.3"
+              mark="edge"
+              markrgb="0.8 0.8 0.8"
+              width="64"
+              height="64"
+            />
+            <material name="groundplane" texture="groundplane" texrepeat="5 5" />
+          </asset>
+          <worldbody>
+            <geom name="floor" type="plane" size="5 5 0.1" material="groundplane" />
+            <body name="base_link">
+              <geom name="body_box" type="box" size="0.1 0.1 0.1" rgba="0.8 0.2 0.2 1" />
+            </body>
+          </worldbody>
+        </mujoco>
+    `,
+      {},
+    );
+
+    const floor = root.getObjectByName('floor');
+    assert.ok(floor);
+    assert.ok(root.getObjectByName('body_box'));
+    assert.ok((root as THREE.Object3D & { links?: Record<string, THREE.Object3D> }).links?.world);
+
+    let floorMaterial: THREE.Material | null = null;
+    floor?.traverse((child: any) => {
+      if (!child?.isMesh || floorMaterial) {
+        return;
+      }
+
+      floorMaterial = Array.isArray(child.material) ? child.material[0] : child.material;
+    });
+
+    if (!(floorMaterial instanceof THREE.MeshStandardMaterial)) {
+      throw new Error('Expected the floor to resolve to a MeshStandardMaterial.');
+    }
+
+    const floorTexture = floorMaterial.map;
+    assert.ok(floorTexture instanceof THREE.Texture);
+    const floorImage = floorTexture.image as { width?: number; height?: number };
+    assert.equal(floorTexture.repeat.x, 5);
+    assert.equal(floorTexture.repeat.y, 5);
+    assert.equal(floorImage.width, 64);
+    assert.equal(floorImage.height, 64);
+    assert.equal(
+      consoleErrors.some((message) => message.includes('missing texture definition')),
+      false,
+    );
+  } finally {
+    console.error = originalConsoleError;
+    disposeTransientObject3D(root);
+  }
+});
+
 test('loadMJCFToThreeJS preserves runtime joint parent-child metadata for implicit fixed MJCF bodies', async () => {
   installDomGlobals();
   clearParsedMJCFModelCache();

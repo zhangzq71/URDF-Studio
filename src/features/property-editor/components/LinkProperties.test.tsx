@@ -404,6 +404,7 @@ test('visual tab shows authored material summaries inside the embedded material 
       type: GeometryType.MESH,
       meshPath: 'meshes/base.stl',
       dimensions: { x: 1, y: 1, z: 1 },
+      color: '',
       materialSource: 'inline',
       authoredMaterials: [
         { name: 'Body', color: '#112233', texture: 'textures/body.png' },
@@ -437,8 +438,8 @@ test('visual tab shows authored material summaries inside the embedded material 
 
     assert.match(
       container.textContent ?? '',
-      /Multiple Materials \(2\)/,
-      'visual tab should summarize authored materials inside the material section',
+      /This visual uses multiple authored materials\./,
+      'visual tab should surface the embedded multi-material summary inside the material section',
     );
 
     const authoredColorBadges = Array.from(container.querySelectorAll('span')).filter((node) =>
@@ -806,6 +807,11 @@ test('collision tab lists every collision geometry for the selected link', async
       container.querySelector('button[aria-label="Collision 1"]'),
       'primary collision entry should render in the list',
     );
+    assert.match(
+      container.querySelector('button[aria-label="Collision 1"]')?.textContent ?? '',
+      /Collision 1.*Box.*Visible/s,
+      'collision rows should summarize name, geometry type, and visibility inline',
+    );
     assert.ok(
       container.querySelector('button[aria-label="Collision 2"]'),
       'secondary collision entry should render in the list',
@@ -814,10 +820,216 @@ test('collision tab lists every collision geometry for the selected link', async
       container.querySelector('button[aria-label="Collision 3"]'),
       'third collision entry should render in the list',
     );
-    assert.match(
+    assert.ok(
+      container.querySelector('div.max-h-48.overflow-y-auto'),
+      'collision list should render inside a scrollable container',
+    );
+    assert.doesNotMatch(
       container.textContent ?? '',
       /Primary/,
-      'the primary collision should be labeled explicitly',
+      'collision list should not split or label a primary collision body',
+    );
+
+    const deleteCollisionButton = container.querySelector(
+      `button[aria-label="${translations.en.deleteCollisionGeometry}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(deleteCollisionButton, 'delete collision body button should render');
+    assert.match(
+      deleteCollisionButton.className,
+      /\btext-danger\b/,
+      'delete collision body button should use the danger styling',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision tab supports renaming collision bodies and shows custom names in the list', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    function ControlledCollisionRenameHarness() {
+      const [link, setLink] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collision.name = 'base_collision';
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            name: 'motor_guard',
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 0,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: (_type, _id, nextData) => {
+          setLink(nextData as UrdfLink);
+        },
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0) => {
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionRenameHarness));
+    });
+
+    const primaryCollisionButton = container.querySelector(
+      'button[aria-label="base_collision"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(primaryCollisionButton, 'custom collision names should appear in the list');
+
+    const collisionNameInput = container.querySelector(
+      'input[value="base_collision"]',
+    ) as HTMLInputElement | null;
+    assert.ok(collisionNameInput, 'selected collision should expose a rename input');
+
+    await act(async () => {
+      dispatchReactChange(collisionNameInput, 'torso_shell');
+    });
+
+    assert.ok(
+      container.querySelector('button[aria-label="torso_shell"]'),
+      'renaming a collision should update the list label',
+    );
+
+    const secondaryCollisionButton = container.querySelector(
+      'button[aria-label="motor_guard"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(secondaryCollisionButton, 'secondary custom collision names should remain visible');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision list supports right-click rename for collision entries', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+
+    function ControlledCollisionContextRenameHarness() {
+      const [link, setLink] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            name: 'motor_guard',
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 0,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: (_type, _id, nextData) => {
+          setLink(nextData as UrdfLink);
+        },
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0) => {
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionContextRenameHarness));
+    });
+
+    const secondCollisionRow = container.querySelector(
+      '[data-collision-list-row="1"]',
+    ) as HTMLDivElement | null;
+    assert.ok(secondCollisionRow, 'secondary collision row should render');
+
+    await act(async () => {
+      secondCollisionRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 140,
+          clientY: 96,
+        }),
+      );
+    });
+
+    const renameButton = Array.from(document.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === translations.en.rename,
+    ) as HTMLButtonElement | undefined;
+    assert.ok(renameButton, 'right-clicking a collision row should open a rename action');
+
+    await act(async () => {
+      dispatchReactClick(renameButton);
+    });
+
+    const renameInput = container.querySelector(
+      'input[aria-label="Rename"]',
+    ) as HTMLInputElement | null;
+    assert.ok(renameInput, 'collision row should switch into inline rename mode');
+    assert.equal(renameInput.value, 'motor_guard');
+
+    await act(async () => {
+      dispatchReactChange(renameInput, 'arm_guard');
+    });
+
+    await act(async () => {
+      dispatchReactBlur(renameInput);
+    });
+
+    assert.ok(
+      container.querySelector('button[aria-label="arm_guard"]'),
+      'context menu rename should update the collision list entry label',
     );
   } finally {
     await destroyComponentRoot(dom, root);
@@ -897,6 +1109,94 @@ test('collision list selection switches the editor to the clicked collision body
       GeometryType.SPHERE,
       'clicking a collision list item should retarget the editor to that collision body',
     );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('collision list visibility button toggles the clicked collision body', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    useUIStore.getState().setDetailLinkTab('collision');
+    const selectionCalls: Array<
+      [string, 'visual' | 'collision', number | undefined, boolean | undefined, boolean | undefined]
+    > = [];
+
+    function ControlledCollisionVisibilityHarness() {
+      const [link, setLink] = React.useState(() => {
+        const nextLink = createLink();
+        nextLink.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextLink;
+      });
+      const [selection, setSelection] = React.useState<RobotState['selection']>({
+        type: 'link',
+        id: link.id,
+        subType: 'collision',
+        objectIndex: 0,
+      });
+      const robot = React.useMemo(
+        () => ({
+          ...createRobot(link),
+          selection,
+        }),
+        [link, selection],
+      );
+
+      return React.createElement(LinkProperties, {
+        data: link,
+        robot,
+        mode: 'editor',
+        selection,
+        onUpdate: (_type, _id, nextData) => {
+          setLink(nextData as UrdfLink);
+        },
+        onSelect: () => {},
+        onSelectGeometry: (linkId, subType, objectIndex = 0, suppressPulse, suppressAutoReveal) => {
+          selectionCalls.push([linkId, subType, objectIndex, suppressPulse, suppressAutoReveal]);
+          setSelection({ type: 'link', id: linkId, subType, objectIndex });
+        },
+        onAddCollisionBody: () => {},
+        motorLibrary: {},
+        assets: {},
+        onUploadAsset: () => {},
+        t: translations.en,
+        lang: 'en',
+      });
+    }
+
+    await act(async () => {
+      root.render(React.createElement(ControlledCollisionVisibilityHarness));
+    });
+
+    const toggleVisibilityButton = container.querySelector(
+      'button[aria-label="Hide Collision 2"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(toggleVisibilityButton, 'collision list visibility button should render');
+
+    await act(async () => {
+      dispatchReactClick(toggleVisibilityButton);
+    });
+
+    assert.ok(
+      container.querySelector('button[aria-label="Show Collision 2"]'),
+      'clicking the list eye button should toggle that collision body visibility',
+    );
+
+    const geometryVisibilityButton = container.querySelector(
+      'button[aria-label="Show"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(
+      geometryVisibilityButton,
+      'toggling visibility from the list should retarget the editor to the same collision body',
+    );
+    assert.deepEqual(selectionCalls.at(-1), ['base_link', 'collision', 1, true, true]);
   } finally {
     await destroyComponentRoot(dom, root);
   }

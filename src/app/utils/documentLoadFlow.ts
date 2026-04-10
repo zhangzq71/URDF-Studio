@@ -6,6 +6,7 @@ interface DocumentLoadStateLike {
   status: DocumentLoadStatus;
   fileName: string | null;
   format?: string | null;
+  error?: string | null;
   phase?: string | null;
   message?: string | null;
   progressMode?: LoadingProgressMode | null;
@@ -48,6 +49,25 @@ interface PreserveDocumentLoadProgressInput<TDocumentLoadState extends DocumentL
 interface ViewerLoadRegressionAfterReadyInput<TDocumentLoadState extends DocumentLoadStateLike> {
   currentState: TDocumentLoadState;
   nextState: TDocumentLoadState;
+}
+
+interface RuntimeRobotReadyDocumentLoadStateInput<
+  TDocumentLoadState extends DocumentLoadStateLike,
+> {
+  activeFile: Pick<RobotFile, 'name' | 'format'> | null;
+  currentState: TDocumentLoadState;
+}
+
+interface ResolvedMjcfViewerSourceLike {
+  content: string | null;
+  effectiveFileName: string | null;
+}
+
+interface ShouldReuseResolvedMjcfViewerRuntimeInput {
+  currentSelectedFile: Pick<RobotFile, 'name' | 'format' | 'content'> | null;
+  nextFile: Pick<RobotFile, 'name' | 'format' | 'content'>;
+  currentResolvedSource: ResolvedMjcfViewerSourceLike | null;
+  nextResolvedSource: ResolvedMjcfViewerSourceLike | null;
 }
 
 function hashStringList(values: string[]): string {
@@ -146,6 +166,11 @@ export function preserveDocumentLoadProgressForSameFile<
   currentState,
   nextState,
 }: PreserveDocumentLoadProgressInput<TDocumentLoadState>): TDocumentLoadState {
+  const currentPhase = currentState.phase ?? null;
+  const nextPhase = nextState.phase ?? null;
+  const currentPhaseIsBootstrap =
+    currentPhase === 'checking-path' || currentPhase === 'preparing-scene';
+  const nextPhaseIsBootstrap = nextPhase === 'checking-path' || nextPhase === 'preparing-scene';
   const currentStateIsActive =
     currentState.status === 'loading' || currentState.status === 'hydrating';
   const nextStateIsActive = nextState.status === 'loading' || nextState.status === 'hydrating';
@@ -154,11 +179,12 @@ export function preserveDocumentLoadProgressForSameFile<
     currentState.fileName === nextState.fileName &&
     (currentState.format ?? null) === (nextState.format ?? null);
   const currentHasAdvancedProgress =
-    (currentState.phase ?? null) !== 'checking-path' ||
+    !currentPhaseIsBootstrap ||
+    Boolean(currentState.message) ||
     Number(currentState.progressPercent ?? 0) > 0 ||
     Number(currentState.loadedCount ?? 0) > 0;
   const nextStateWouldResetBootstrapProgress =
-    (nextState.phase ?? null) === 'checking-path' &&
+    nextPhaseIsBootstrap &&
     !nextState.message &&
     !Number.isFinite(nextState.progressPercent) &&
     !Number.isFinite(nextState.loadedCount) &&
@@ -194,4 +220,60 @@ export function shouldIgnoreViewerLoadRegressionAfterReadySameFile<
     (currentState.format ?? null) === (nextState.format ?? null);
 
   return sameFile && currentState.status === 'ready' && nextState.status === 'loading';
+}
+
+export function resolveRuntimeRobotReadyDocumentLoadState<
+  TDocumentLoadState extends DocumentLoadStateLike,
+>({
+  activeFile,
+  currentState,
+}: RuntimeRobotReadyDocumentLoadStateInput<TDocumentLoadState>): TDocumentLoadState | null {
+  if (!activeFile || activeFile.format === 'usd') {
+    return null;
+  }
+
+  const sameFile =
+    currentState.fileName === activeFile.name &&
+    (currentState.format ?? null) === (activeFile.format ?? null);
+  const currentStateIsActive =
+    currentState.status === 'loading' || currentState.status === 'hydrating';
+
+  if (!sameFile || !currentStateIsActive) {
+    return null;
+  }
+
+  return {
+    ...currentState,
+    status: 'ready',
+    fileName: activeFile.name,
+    format: activeFile.format,
+    error: null,
+    phase: 'ready',
+    message: null,
+    progressMode: 'percent',
+    progressPercent: 100,
+    loadedCount: null,
+    totalCount: null,
+  };
+}
+
+export function shouldReuseResolvedMjcfViewerRuntime({
+  currentSelectedFile,
+  nextFile,
+  currentResolvedSource,
+  nextResolvedSource,
+}: ShouldReuseResolvedMjcfViewerRuntimeInput): boolean {
+  if (!currentSelectedFile || currentSelectedFile.format !== 'mjcf' || nextFile.format !== 'mjcf') {
+    return false;
+  }
+
+  const currentEffectiveFileName =
+    currentResolvedSource?.effectiveFileName ?? currentSelectedFile.name;
+  const nextEffectiveFileName = nextResolvedSource?.effectiveFileName ?? nextFile.name;
+  const currentViewerContent = currentResolvedSource?.content ?? currentSelectedFile.content;
+  const nextViewerContent = nextResolvedSource?.content ?? nextFile.content;
+
+  return (
+    currentEffectiveFileName === nextEffectiveFileName && currentViewerContent === nextViewerContent
+  );
 }

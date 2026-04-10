@@ -86,10 +86,18 @@ async function ensureSite() {
   throw new Error(`Timed out waiting for preview at ${SITE_BASE_URL}`);
 }
 
+function hasResolvedRobotData(result) {
+  return (
+    result?.workerResolveEntry?.status === 'resolved' ||
+    result?.runtimeResolveEntry?.status === 'resolved'
+  );
+}
+
 function validateResult(result) {
   return Boolean(
     result?.loaded === true &&
     result?.runtimePresent === true &&
+    hasResolvedRobotData(result) &&
     result?.stageReady === true &&
     result?.stagePreparationMode === 'worker' &&
     result?.metadataSourcePass === true,
@@ -103,6 +111,8 @@ function summarizeFailures(report) {
       sampleId: result.sampleId,
       loaded: result.loaded,
       runtimePresent: result.runtimePresent,
+      workerResolveStatus: result.workerResolveEntry?.status ?? null,
+      runtimeResolveStatus: result.runtimeResolveEntry?.status ?? null,
       stageReady: result.stageReady,
       stagePreparationMode: result.stagePreparationMode,
       metadataSource: result.metadataSource,

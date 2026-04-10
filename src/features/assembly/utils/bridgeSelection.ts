@@ -1,5 +1,6 @@
 import type { AssemblyComponent, AssemblyState } from '@/types';
 import type { Selection } from '@/store/selectionStore';
+import { resolveAssemblyRootComponentSelection } from '@/shared/utils/assembly/transformSelection';
 
 export type BridgePickTarget = 'parent' | 'child';
 
@@ -16,10 +17,7 @@ export interface BridgeInteractionState {
   childComponentId: string;
 }
 
-function resolveComponentLinkSelection(
-  component: AssemblyComponent,
-  selectionId: string,
-) {
+function resolveComponentLinkSelection(component: AssemblyComponent, selectionId: string) {
   const directMatch = component.robot.links[selectionId];
   if (directMatch) {
     return directMatch;
@@ -28,10 +26,7 @@ function resolveComponentLinkSelection(
   return Object.values(component.robot.links).find((link) => link.name === selectionId) ?? null;
 }
 
-function resolveComponentJointSelection(
-  component: AssemblyComponent,
-  selectionId: string,
-) {
+function resolveComponentJointSelection(component: AssemblyComponent, selectionId: string) {
   const directMatch = component.robot.joints[selectionId];
   if (directMatch) {
     return directMatch;
@@ -94,7 +89,7 @@ export function resolveAssemblyViewerComponentSelection(
     return null;
   }
 
-  return resolveAssemblySelection(assemblyState, selection)?.componentId ?? null;
+  return resolveAssemblyRootComponentSelection(assemblyState, selection)?.componentId ?? null;
 }
 
 export function resolveBlockedBridgeComponentId({

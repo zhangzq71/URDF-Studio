@@ -68,6 +68,36 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       joint?.limit && Number.isFinite(joint.limit.lower) && Number.isFinite(joint.limit.upper),
     );
 
+  const normalizeExportRelativePath = (filePath: string): string => {
+    const normalized = String(filePath || '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, '')
+      .replace(/^(\.\/)+/, '');
+
+    if (!normalized) {
+      return '';
+    }
+
+    const segments = normalized.split('/');
+    const collapsed: string[] = [];
+    for (const segment of segments) {
+      if (!segment || segment === '.') {
+        continue;
+      }
+      if (segment === '..') {
+        if (collapsed.length > 0) {
+          collapsed.pop();
+        }
+        continue;
+      }
+      collapsed.push(segment);
+    }
+
+    return collapsed.join('/');
+  };
+
   // Helper to convert hex color to rgba string
   const hexToRgba = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})?$/i.exec(
@@ -80,6 +110,24 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
     const a = result[4] ? parseInt(result[4], 16) / 255 : 1;
     return `${formatNumberWithMaxDecimals(r, 4)} ${formatNumberWithMaxDecimals(g, 4)} ${formatNumberWithMaxDecimals(b, 4)} ${formatNumberWithMaxDecimals(a, 4)}`;
   };
+
+  const escapeXmlAttribute = (value: string) =>
+    value.replace(/[<>&"']/g, (char) => {
+      switch (char) {
+        case '<':
+          return '&lt;';
+        case '>':
+          return '&gt;';
+        case '&':
+          return '&amp;';
+        case '"':
+          return '&quot;';
+        case "'":
+          return '&apos;';
+        default:
+          return char;
+      }
+    });
 
   type MeshScaleTuple = [number, number, number];
   type MeshRefPosTuple = [number, number, number];
@@ -179,7 +227,7 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
       return normalizedPath;
     }
 
-    return normalizeMeshPathForExport(overridePath) || overridePath;
+    return normalizeExportRelativePath(overridePath) || overridePath;
   };
 
   const meshAssets = new Map<string, MeshAssetEntry>();
@@ -1097,6 +1145,10 @@ export const generateMujocoXML = (robot: RobotState, options: MujocoExportOption
         cPos = vecStr(c.origin.xyz);
       }
       let cGeomAttrs = `pos="${cPos}"${quatAttr(c.origin?.rpy)} rgba="${hexToRgba(c.color || DEFAULT_LINK.collision.color)}" group="3" contype="1" conaffinity="1"`;
+      const collisionName = c.name?.trim();
+      if (collisionName) {
+        cGeomAttrs += ` name="${escapeXmlAttribute(collisionName)}"`;
+      }
 
       if (c.type === GeometryType.BOX) {
         cGeomAttrs += ` type="box" size="${formatScalar(c.dimensions.x / 2)} ${formatScalar(c.dimensions.y / 2)} ${formatScalar(c.dimensions.z / 2)}"`;

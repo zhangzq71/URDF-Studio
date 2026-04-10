@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import puppeteer from 'puppeteer';
 
-const DEFAULT_SITE_URL = 'http://127.0.0.1:3000';
+const DEFAULT_SITE_URL = 'http://127.0.0.1:4173';
 const DEFAULT_SITE_TIMEOUT_MS = 120_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 240_000;
 const DEFAULT_OUTPUT_PATH = path.resolve('tmp/regression/unitree_ros_usd_export_benchmark.json');
@@ -256,13 +256,33 @@ function deriveStartCommand(siteUrl, explicitCommand) {
   }
   const url = new URL(siteUrl);
   const host = url.hostname || '127.0.0.1';
-  const port = url.port || '3000';
+  const port = url.port || '4173';
   return DEFAULT_START_COMMAND(host, port);
+}
+
+async function isSourceImportsReachable(siteUrl, timeoutMs) {
+  try {
+    const probeUrl = new URL(
+      '/src/features/file-io/utils/usdExportCoordinator.ts',
+      siteUrl,
+    ).toString();
+    const response = await fetchWithTimeout(probeUrl, Math.min(timeoutMs, 10_000));
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureSiteAvailable(options) {
   if (await isSiteReachable(options.siteUrl, options.siteTimeoutMs)) {
-    return { startedProcess: null };
+    if (await isSourceImportsReachable(options.siteUrl, options.siteTimeoutMs)) {
+      return { startedProcess: null };
+    }
+
+    fail(
+      `Site is reachable but does not expose direct /src module imports: ${options.siteUrl}. ` +
+        'Use a Vite dev server, not preview.',
+    );
   }
 
   if (options.noStart) {
@@ -287,6 +307,14 @@ async function ensureSiteAvailable(options) {
   if (!ready) {
     child.kill('SIGTERM');
     fail(`Timed out waiting for site to become reachable: ${options.siteUrl}`);
+  }
+
+  if (!(await isSourceImportsReachable(options.siteUrl, options.siteTimeoutMs))) {
+    child.kill('SIGTERM');
+    fail(
+      `Started site but direct /src module imports are still unavailable: ${options.siteUrl}. ` +
+        'This benchmark requires a Vite dev server.',
+    );
   }
 
   return { startedProcess: child };
@@ -385,12 +413,32 @@ async function resolveSamples(options) {
 }
 
 async function openFreshPage(browser, siteUrl, timeoutMs) {
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1440, height: 1024, deviceScaleFactor: 1 });
-  await page.setCacheEnabled(false);
-  page.setDefaultTimeout(timeoutMs);
-  await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-  return page;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1440, height: 1024, deviceScaleFactor: 1 });
+    await page.setCacheEnabled(false);
+    page.setDefaultTimeout(timeoutMs);
+
+    try {
+      await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+      await delay(500);
+      return page;
+    } catch (error) {
+      lastError = error;
+      await page.close().catch(() => {});
+
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/frame got detached|Navigating frame was detached/i.test(message) || attempt === 2) {
+        throw error;
+      }
+
+      await delay(750);
+    }
+  }
+
+  throw lastError ?? new Error(`Unable to open benchmark page: ${siteUrl}`);
 }
 
 async function assertSourceImportsAvailable(page) {
@@ -411,6 +459,46 @@ async function assertSourceImportsAvailable(page) {
       `The target site does not support direct /src module imports. Use a Vite dev server, not preview. Details: ${probe?.message || 'unknown error'}`,
     );
   }
+}
+
+function isRetryableRuntimeError(value) {
+  const message = String(value || '');
+  return /Execution context was destroyed|frame got detached|Navigating frame was detached/i.test(
+    message,
+  );
+}
+
+async function warmupSourceImports(browser, siteUrl, timeoutMs) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const page = await openFreshPage(browser, siteUrl, timeoutMs);
+    try {
+      await page.evaluate(async () => {
+        await Promise.all([
+          import('/src/core/parsers/urdf/parser/index.ts'),
+          import('/src/features/file-io/utils/usdExportCoordinator.ts'),
+          import('/src/core/robot/assemblyComponentPreparation.ts'),
+          import('/src/core/robot/assemblyTransforms.ts'),
+        ]);
+        return true;
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableRuntimeError(error instanceof Error ? error.message : String(error)) ||
+        attempt === 2
+      ) {
+        throw error;
+      }
+      await delay(750);
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  throw lastError ?? new Error('Unable to warm up source imports for USD export benchmark.');
 }
 
 function createRingBuffer(limit = 100) {
@@ -727,61 +815,74 @@ async function main() {
   const results = [];
 
   try {
+    await warmupSourceImports(browser, options.siteUrl, options.timeoutMs);
+
     for (const sample of samples) {
       process.stdout.write(`[usd-export-bench] sample=${sample.id}\n`);
-      const page = await openFreshPage(browser, options.siteUrl, options.timeoutMs);
-      const consoleErrors = createRingBuffer(50);
+      let result = null;
 
-      page.on('console', (message) => {
-        if (message.type() === 'error') {
-          consoleErrors.push(message.text());
-        }
-      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const page = await openFreshPage(browser, options.siteUrl, options.timeoutMs);
+        const consoleErrors = createRingBuffer(50);
 
-      try {
-        await assertSourceImportsAvailable(page);
+        page.on('console', (message) => {
+          if (message.type() === 'error') {
+            consoleErrors.push(message.text());
+          }
+        });
 
-        let benchmark;
-        benchmark = await benchmarkSample(page, sample);
-        const result = buildSampleResult(sample, benchmark, consoleErrors.snapshot());
-        if (benchmark.runtimeError) {
-          result.failures.unshift(`runtime error: ${benchmark.runtimeError}`);
+        try {
+          await assertSourceImportsAvailable(page);
+
+          const benchmark = await benchmarkSample(page, sample);
+          result = buildSampleResult(sample, benchmark, consoleErrors.snapshot());
+          if (benchmark.runtimeError) {
+            result.failures.unshift(`runtime error: ${benchmark.runtimeError}`);
+            result.pass = false;
+          }
+        } catch (error) {
+          result = buildSampleResult(
+            sample,
+            {
+              totalMs: NaN,
+              phaseMs: {},
+              progressEventCount: 0,
+              archiveFileCount: 0,
+              rootLayerPath: null,
+              contentLength: 0,
+              linkCount: 0,
+              jointCount: 0,
+              inputModelCount: sample.inputs.length,
+              uniqueMeshCount: 0,
+              assetFileCount: sample.inputs.reduce(
+                (count, input) => count + input.assetDescriptors.length,
+                0,
+              ),
+              runtimeError: error instanceof Error ? error.message : String(error),
+            },
+            consoleErrors.snapshot(),
+          );
+          result.failures.unshift(`runtime error: ${result.runtimeError}`);
           result.pass = false;
+
+          if (!isRetryableRuntimeError(result.runtimeError) || attempt === 1) {
+            break;
+          }
+
+          await delay(750);
+          continue;
+        } finally {
+          await page.close().catch(() => {});
         }
 
-        results.push(result);
-        process.stdout.write(
-          `[usd-export-bench]   total=${result.totalMs}ms scene=${result.phaseMs?.scene ?? 'n/a'}ms pass=${result.pass}\n`,
-        );
-      } catch (error) {
-        const result = buildSampleResult(
-          sample,
-          {
-            totalMs: NaN,
-            phaseMs: {},
-            progressEventCount: 0,
-            archiveFileCount: 0,
-            rootLayerPath: null,
-            contentLength: 0,
-            linkCount: 0,
-            jointCount: 0,
-            inputModelCount: sample.inputs.length,
-            uniqueMeshCount: 0,
-            assetFileCount: sample.inputs.reduce(
-              (count, input) => count + input.assetDescriptors.length,
-              0,
-            ),
-            runtimeError: error instanceof Error ? error.message : String(error),
-          },
-          consoleErrors.snapshot(),
-        );
-        result.failures.unshift(`runtime error: ${result.runtimeError}`);
-        result.pass = false;
-        results.push(result);
-        process.stdout.write(`[usd-export-bench]   total=n/a scene=n/a pass=false\n`);
-      } finally {
-        await page.close().catch(() => {});
+        break;
       }
+
+      results.push(result);
+      process.stdout.write(
+        `[usd-export-bench]   total=${Number.isFinite(result.totalMs) ? result.totalMs : 'n/a'}ms ` +
+          `scene=${result.phaseMs?.scene ?? 'n/a'}ms pass=${result.pass}\n`,
+      );
     }
   } finally {
     await browser.close().catch(() => {});

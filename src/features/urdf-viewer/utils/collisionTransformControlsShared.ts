@@ -1,6 +1,9 @@
 import type { ToolMode } from '../types';
 
-export type CollisionTransformMode = Extract<ToolMode, 'select' | 'translate' | 'rotate' | 'universal'>;
+export type CollisionTransformMode = Extract<
+  ToolMode,
+  'select' | 'translate' | 'rotate' | 'universal'
+>;
 
 export interface DraggingControlLike {
   dragging?: boolean;
@@ -38,6 +41,13 @@ export function resolveActiveCollisionDraggingControls<T extends DraggingControl
   }
 
   return activeControls ?? null;
+}
+
+export function resolveCurrentCollisionDraggingControls<T extends DraggingControlLike>(
+  translateControls: T | null | undefined,
+  rotateControls: T | null | undefined,
+): T | null {
+  return resolveActiveCollisionDraggingControls(translateControls, rotateControls, null);
 }
 
 export function canRenderCollisionTransformControls(

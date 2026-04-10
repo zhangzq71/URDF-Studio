@@ -1,4 +1,4 @@
-import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/urdf-viewer';
+import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/editor';
 import type { RobotFile, RobotMaterialState, UrdfLink } from '@/types';
 
 interface UnifiedViewerFilePreview {
@@ -15,10 +15,7 @@ interface BuildUnifiedViewerResourceScopesArgs {
   availableFiles: RobotFile[];
   viewerRobotLinks?: Record<string, UrdfLink>;
   viewerRobotMaterials?: Record<string, RobotMaterialState>;
-  visualizerRobotLinks?: Record<string, UrdfLink>;
-  visualizerRobotMaterials?: Record<string, RobotMaterialState>;
   previousViewerResourceScope: ViewerResourceScope | null;
-  previousVisualizerResourceScope: ViewerResourceScope | null;
 }
 
 export interface UnifiedViewerResourceScopesState {
@@ -27,7 +24,6 @@ export interface UnifiedViewerResourceScopesState {
   effectiveSourceFile: RobotFile | null | undefined;
   activeViewportFileName: string | null;
   viewerResourceScope: ViewerResourceScope;
-  visualizerResourceScope: ViewerResourceScope;
 }
 
 export function buildUnifiedViewerResourceScopes({
@@ -39,10 +35,7 @@ export function buildUnifiedViewerResourceScopes({
   availableFiles,
   viewerRobotLinks,
   viewerRobotMaterials,
-  visualizerRobotLinks,
-  visualizerRobotMaterials,
   previousViewerResourceScope,
-  previousVisualizerResourceScope,
 }: BuildUnifiedViewerResourceScopesArgs): UnifiedViewerResourceScopesState {
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
   const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
@@ -59,21 +52,11 @@ export function buildUnifiedViewerResourceScopes({
     robotMaterials: viewerRobotMaterials,
   });
 
-  const visualizerResourceScope = createStableViewerResourceScope(previousVisualizerResourceScope, {
-    assets,
-    availableFiles,
-    sourceFile,
-    sourceFilePath,
-    robotLinks: visualizerRobotLinks,
-    robotMaterials: visualizerRobotMaterials,
-  });
-
   return {
     effectiveUrdfContent,
     effectiveSourceFilePath,
     effectiveSourceFile,
     activeViewportFileName,
     viewerResourceScope,
-    visualizerResourceScope,
   };
 }

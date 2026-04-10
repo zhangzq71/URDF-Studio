@@ -55,14 +55,10 @@ test('pickPreferredImportFile reuses a provided resolver across MJCF preference 
   const filePool = [urdfFile, mjcfFile, meshFile];
   const resolveCounts = new Map<string, number>();
 
-  const preferredFile = pickPreferredImportFile(
-    filePool,
-    filePool,
-    (file) => {
-      resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
-      return resolveRobotFileData(file, { availableFiles: filePool });
-    },
-  );
+  const preferredFile = pickPreferredImportFile(filePool, filePool, (file) => {
+    resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
+    return resolveRobotFileData(file, { availableFiles: filePool });
+  });
 
   assert.equal(preferredFile?.name, 'demo_description/urdf/demo.urdf');
   assert.equal(resolveCounts.get('demo_description/urdf/demo.urdf'), 1);
@@ -110,19 +106,62 @@ test('pickPreferredMjcfImportFile stops resolving once the best-ranked parseable
   const filePool = [sceneMjcf, primaryMjcf, fallbackMjcf];
   const resolveCounts = new Map<string, number>();
 
-  const preferredFile = pickPreferredMjcfImportFile(
-    filePool,
-    filePool,
-    (file) => {
-      resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
-      return resolveRobotFileData(file, { availableFiles: filePool });
-    },
-  );
+  const preferredFile = pickPreferredMjcfImportFile(filePool, filePool, (file) => {
+    resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
+    return resolveRobotFileData(file, { availableFiles: filePool });
+  });
 
   assert.equal(preferredFile?.name, 'demo_description/xml/demo.xml');
   assert.equal(resolveCounts.get('demo_description/xml/demo.xml'), 1);
   assert.equal(resolveCounts.get('demo_description/xml/scene.xml'), undefined);
   assert.equal(resolveCounts.get('demo_description/xml/fallback.xml'), undefined);
+});
+
+test('pickPreferredMjcfImportFile prefers standalone robots over include-based scene wrappers', () => {
+  const stretchMjcf = createRobotFile(
+    'hello_robot_stretch/stretch.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="stretch">
+  <worldbody>
+    <body name="base_link">
+      <geom name="base_geom" type="box" size="0.1 0.1 0.1" />
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="lift_motor" joint="lift_joint" />
+  </actuator>
+</mujoco>`,
+  );
+  const sceneMjcf = createRobotFile(
+    'hello_robot_stretch/scene.xml',
+    'mjcf',
+    `<?xml version="1.0"?>
+<mujoco model="stretch_scene">
+  <include file="stretch.xml" />
+  <worldbody>
+    <light name="key" pos="0 0 1.5" />
+    <body name="table">
+      <geom type="box" size="0.6 0.5 0.24" />
+    </body>
+    <body name="object">
+      <freejoint />
+      <geom type="box" size="0.02 0.04 0.04" />
+    </body>
+  </worldbody>
+</mujoco>`,
+  );
+  const filePool = [sceneMjcf, stretchMjcf];
+  const resolveCounts = new Map<string, number>();
+
+  const preferredFile = pickPreferredMjcfImportFile(filePool, filePool, (file) => {
+    resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
+    return resolveRobotFileData(file, { availableFiles: filePool });
+  });
+
+  assert.equal(preferredFile?.name, 'hello_robot_stretch/stretch.xml');
+  assert.equal(resolveCounts.get('hello_robot_stretch/stretch.xml'), 1);
+  assert.equal(resolveCounts.get('hello_robot_stretch/scene.xml'), undefined);
 });
 
 test('pickPreferredImportFile skips resolving lower-priority accessory URDF variants once a canonical tier succeeds', () => {
@@ -186,18 +225,17 @@ test('pickPreferredImportFile skips resolving lower-priority accessory URDF vari
   const filePool = [canonicalUrdf, revisionUrdf, handUrdf, ftpHandUrdf, meshFile];
   const resolveCounts = new Map<string, number>();
 
-  const preferredFile = pickPreferredImportFile(
-    filePool,
-    filePool,
-    (file) => {
-      resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
-      return resolveRobotFileData(file, { availableFiles: filePool });
-    },
-  );
+  const preferredFile = pickPreferredImportFile(filePool, filePool, (file) => {
+    resolveCounts.set(file.name, (resolveCounts.get(file.name) ?? 0) + 1);
+    return resolveRobotFileData(file, { availableFiles: filePool });
+  });
 
   assert.match(preferredFile?.name ?? '', /g1_description\/g1_29dof(?:_rev_1_0)?\.urdf$/);
   assert.equal(resolveCounts.get('g1_description/g1_29dof.urdf'), 1);
   assert.equal(resolveCounts.get('g1_description/g1_29dof_rev_1_0.urdf'), 1);
   assert.equal(resolveCounts.get('g1_description/g1_29dof_with_hand.urdf'), undefined);
-  assert.equal(resolveCounts.get('g1_description/g1_29dof_rev_1_0_with_inspire_hand_FTP.urdf'), undefined);
+  assert.equal(
+    resolveCounts.get('g1_description/g1_29dof_rev_1_0_with_inspire_hand_FTP.urdf'),
+    undefined,
+  );
 });

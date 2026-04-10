@@ -102,6 +102,23 @@ function createRobotWithCenterOfMassHelper() {
   return { robot, centerOfMassHelperRoot, inertiaHelperRoot, robotLinks };
 }
 
+function createRobotWithJointOwnedOriginAxes() {
+  const robot = new THREE.Group();
+
+  const joint = new THREE.Group() as THREE.Group & { isURDFJoint?: boolean };
+  joint.isURDFJoint = true;
+  joint.name = 'hip_joint';
+
+  const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
+  link.isURDFLink = true;
+  link.name = 'child_link';
+
+  joint.add(link);
+  robot.add(joint);
+
+  return { robot, link };
+}
+
 test('helper-only selection changes still refresh helper interaction state for the same link', async () => {
   const { dom, root } = createComponentRoot();
   const { robot, centerOfMassHelperRoot, inertiaHelperRoot, robotLinks } =
@@ -153,6 +170,7 @@ function VisualizationEffectsProbe({
   showCenterOfMass = false,
   showInertia = false,
   showIkHandles = false,
+  showOrigins = false,
   showMjcfSites = false,
   robotLinks,
   linkMeshMapRef,
@@ -180,6 +198,7 @@ function VisualizationEffectsProbe({
   showCenterOfMass?: boolean;
   showInertia?: boolean;
   showIkHandles?: boolean;
+  showOrigins?: boolean;
   showMjcfSites?: boolean;
   robotLinks?: Record<string, any>;
   linkMeshMapRef?: React.RefObject<Map<string, THREE.Mesh[]>>;
@@ -203,8 +222,8 @@ function VisualizationEffectsProbe({
     showCenterOfMass,
     showCoMOverlay: true,
     centerOfMassSize: 0.01,
-    showOrigins: false,
-    showOriginsOverlay: false,
+    showOrigins,
+    showOriginsOverlay: true,
     originSize: 1,
     showMjcfSites,
     showJointAxes: false,
@@ -243,6 +262,7 @@ function Harness({
   showCenterOfMass = false,
   showInertia = false,
   showIkHandles = false,
+  showOrigins = false,
   showMjcfSites = false,
   robotLinks,
   linkMeshMapRef,
@@ -270,6 +290,7 @@ function Harness({
         showCenterOfMass,
         showInertia,
         showIkHandles,
+        showOrigins,
         showMjcfSites,
         robotLinks,
         linkMeshMapRef,
@@ -343,6 +364,36 @@ test('helper hover keeps helper interaction active without re-highlighting link 
   });
 
   assert.deepEqual(highlightCalls, []);
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('joint-owned origin-axis hover activates the child link helper highlight', async () => {
+  const { dom, root } = createComponentRoot();
+  const { robot, link } = createRobotWithJointOwnedOriginAxes();
+
+  await renderHarness(root, robot, {
+    showOrigins: true,
+    hoveredSelection: {
+      type: 'joint',
+      id: 'hip_joint',
+      helperKind: 'origin-axes',
+    },
+  });
+
+  const originAxes = link.userData.__originAxes as THREE.Object3D | undefined;
+  assert.ok(originAxes, 'origin axes helper should be created for the child link');
+  const originMesh = originAxes.children.find((child: any) => child.isMesh) as THREE.Mesh;
+  assert.ok(originMesh, 'origin axes helper should include a mesh child');
+  assert.notEqual(
+    (originMesh.material as THREE.MeshBasicMaterial).color.getHex(),
+    0xef4444,
+    'joint-owned origin axes should still receive hover highlight on the child link helper',
+  );
+  assert.equal(originAxes.scale.x, 1, 'origin-axis hover should keep helper scale stable');
 
   await act(async () => {
     root.unmount();

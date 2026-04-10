@@ -1,13 +1,14 @@
-# URDF Viewer 模块入口
+# Editor 几何/碰撞/测量子域入口
 
 本文件改为轻量入口，完整上下文已并入 `docs/prompts/CLAUDE.md` 第 8 节。
+说明：`urdf-viewer` 是 `Editor` 内部子域目录名，不是独立运行模式。
 
 ## 快速定位
 
-- 主组件：`src/features/urdf-viewer/components/URDFViewer.tsx`
-- 场景编排：`src/features/urdf-viewer/components/URDFViewerScene.tsx`
-- 面板编排：`src/features/urdf-viewer/components/URDFViewerPanels.tsx`
-- 画布层：`src/features/urdf-viewer/components/URDFViewerCanvas.tsx`
+- 主入口：`src/app/components/unified-viewer/ViewerSceneConnector.tsx`
+- 场景编排：`src/features/urdf-viewer/components/ViewerScene.tsx`
+- 面板编排：`src/features/urdf-viewer/components/ViewerPanels.tsx`
+- 画布层：`src/features/urdf-viewer/components/ViewerCanvas.tsx`
 - 工具条：`src/features/urdf-viewer/components/ViewerToolbar.tsx`
 - Loading HUD：`src/features/urdf-viewer/components/ViewerLoadingHud.tsx`
 - USD 嵌入入口：`src/features/urdf-viewer/components/UsdWasmStage.tsx`

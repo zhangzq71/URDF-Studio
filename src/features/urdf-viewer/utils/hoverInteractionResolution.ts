@@ -16,6 +16,8 @@ export interface HoverInteractionResolution {
 const SUPPORT_SURFACE_HOVER_PENALTY = 10_000_000;
 const SUPPORT_SURFACE_FOREGROUND_DISTANCE_EPSILON = 1e-3;
 const GEOMETRY_DISTANCE_TIE_EPSILON = 1e-3;
+const HIDDEN_HELPER_DISTANCE_EPSILON = 1e-3;
+const MIN_VISIBLE_MATERIAL_OPACITY = 1e-3;
 
 function resolveCandidateLayer(
   candidate: ResolvedHoverInteractionCandidate,
@@ -56,12 +58,37 @@ function getStableObjectId(candidate: ResolvedHoverInteractionCandidate): number
   return getCandidateObject(candidate)?.id ?? 0;
 }
 
+function isPickOnlyMesh(object: THREE.Object3D | null): boolean {
+  if (!(object as THREE.Mesh | null)?.isMesh) {
+    return false;
+  }
+
+  const material = (object as THREE.Mesh).material;
+  const materials = Array.isArray(material) ? material : [material];
+  if (materials.length === 0) {
+    return false;
+  }
+
+  return materials.every((entry) => {
+    if (!entry || entry.visible === false) {
+      return true;
+    }
+
+    const opacity = typeof entry.opacity === 'number' ? entry.opacity : 1;
+    return entry.colorWrite === false || opacity <= MIN_VISIBLE_MATERIAL_OPACITY;
+  });
+}
+
 function getEffectiveRenderOrder(object: THREE.Object3D | null): number {
   let current: THREE.Object3D | null = object;
   let renderOrder = 0;
 
   while (current) {
-    if (typeof current.renderOrder === 'number' && current.renderOrder > renderOrder) {
+    if (
+      !isPickOnlyMesh(current) &&
+      typeof current.renderOrder === 'number' &&
+      current.renderOrder > renderOrder
+    ) {
       renderOrder = current.renderOrder;
     }
 
@@ -75,11 +102,15 @@ function hasOverlayPresentation(object: THREE.Object3D | null): boolean {
   let current: THREE.Object3D | null = object;
 
   while (current) {
-    if (typeof current.renderOrder === 'number' && current.renderOrder > 0) {
+    if (
+      !isPickOnlyMesh(current) &&
+      typeof current.renderOrder === 'number' &&
+      current.renderOrder > 0
+    ) {
       return true;
     }
 
-    if ((current as THREE.Mesh).isMesh) {
+    if ((current as THREE.Mesh).isMesh && !isPickOnlyMesh(current)) {
       const material = (current as THREE.Mesh).material;
       const materials = Array.isArray(material) ? material : [material];
       if (materials.some((entry) => entry && entry.depthTest === false)) {
@@ -151,6 +182,25 @@ function isHelperCandidate(candidate: ResolvedHoverInteractionCandidate): boolea
   return candidate.targetKind === 'helper';
 }
 
+function shouldYieldHelperToGeometry(
+  helperCandidate: ResolvedHoverInteractionCandidate,
+  geometryCandidate: ResolvedHoverInteractionCandidate,
+): boolean {
+  if (!isHelperCandidate(helperCandidate) || isHelperCandidate(geometryCandidate)) {
+    return false;
+  }
+
+  if (helperCandidate.screenSpaceProjected) {
+    return true;
+  }
+
+  if (hasOverlayPresentation(getCandidateObject(helperCandidate))) {
+    return false;
+  }
+
+  return geometryCandidate.distance + HIDDEN_HELPER_DISTANCE_EPSILON < helperCandidate.distance;
+}
+
 function getCandidateSortDistance(
   candidate: ResolvedHoverInteractionCandidate,
   candidates: readonly ResolvedHoverInteractionCandidate[],
@@ -167,14 +217,23 @@ export function resolveHoverInteractionResolution(
   interactionLayerPriority?: readonly ViewerInteractiveLayer[],
 ): HoverInteractionResolution {
   const sortedCandidates = [...candidates].sort((left, right) => {
-    const leftIsHelper = isHelperCandidate(left);
-    const rightIsHelper = isHelperCandidate(right);
-
     if (left.screenSpaceProjected !== right.screenSpaceProjected) {
+      const otherCandidate = left.screenSpaceProjected ? right : left;
+      if (otherCandidate.targetKind === 'geometry') {
+        return left.screenSpaceProjected ? 1 : -1;
+      }
       return left.screenSpaceProjected ? -1 : 1;
     }
 
+    const leftIsHelper = isHelperCandidate(left);
+    const rightIsHelper = isHelperCandidate(right);
+
     if (leftIsHelper !== rightIsHelper) {
+      const helperCandidate = leftIsHelper ? left : right;
+      const geometryCandidate = leftIsHelper ? right : left;
+      if (shouldYieldHelperToGeometry(helperCandidate, geometryCandidate)) {
+        return leftIsHelper ? 1 : -1;
+      }
       return leftIsHelper ? -1 : 1;
     }
 

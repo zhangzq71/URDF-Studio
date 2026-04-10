@@ -20,10 +20,10 @@ import {
   InlineInputGroup,
   CollapsibleSection,
   NumberInput,
+  PropertyEditorSelect,
   Vec3InlineInput,
   PROPERTY_EDITOR_INPUT_CLASS,
   PROPERTY_EDITOR_LINK_CLASS,
-  PROPERTY_EDITOR_SELECT_CLASS,
   type Vec3Value,
 } from './FormControls';
 import { useMotorConfig } from '../hooks/useMotorConfig';
@@ -189,19 +189,17 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
 
   const renderJointTypeField = () => (
     <InlineInputGroup label={t.type} labelWidthClassName="w-11">
-      <select
+      <PropertyEditorSelect
         value={jointType}
-        onChange={(event) => handleJointTypeChange(event.target.value as JointType)}
-        className={`${PROPERTY_EDITOR_SELECT_CLASS} disabled:cursor-not-allowed disabled:opacity-60`}
+        onChange={(event) => handleJointTypeChange(event.currentTarget.value as JointType)}
         aria-label={t.type}
         disabled={jointTypeLocked}
-      >
-        {JOINT_TYPE_OPTIONS.map((option) => (
-          <option key={option} value={option}>
-            {getJointTypeLabel(option, t)}
-          </option>
-        ))}
-      </select>
+        options={JOINT_TYPE_OPTIONS.map((option) => ({
+          value: option,
+          label: getJointTypeLabel(option, t),
+        }))}
+        className="disabled:cursor-not-allowed disabled:opacity-60"
+      />
     </InlineInputGroup>
   );
 
@@ -260,15 +258,15 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
               label={t.motorSource}
               labelWidthClassName={sectionWideInlineLabelWidthClassName}
             >
-              <select
+              <PropertyEditorSelect
                 value={motorSource}
-                onChange={(e) => handleSourceChange(e.target.value)}
-                className={PROPERTY_EDITOR_SELECT_CLASS}
-              >
-                <option value="None">{t.none}</option>
-                <option value="Library">{t.library}</option>
-                <option value="Custom">{t.custom}</option>
-              </select>
+                onChange={(event) => handleSourceChange(event.currentTarget.value)}
+                options={[
+                  { value: 'None', label: t.none },
+                  { value: 'Library', label: t.library },
+                  { value: 'Custom', label: t.custom },
+                ]}
+              />
             </InlineInputGroup>
 
             {motorSource === 'Library' && (
@@ -278,34 +276,28 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                   className="mb-0"
                   labelWidthClassName={sectionInlineLabelWidthClassName}
                 >
-                  <select
+                  <PropertyEditorSelect
                     value={motorBrand}
-                    onChange={(e) => handleBrandChange(e.target.value)}
-                    className={PROPERTY_EDITOR_SELECT_CLASS}
-                  >
-                    {Object.keys(motorLibrary).map((brand) => (
-                      <option key={brand} value={brand}>
-                        {brand}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(event) => handleBrandChange(event.currentTarget.value)}
+                    options={Object.keys(motorLibrary).map((brand) => ({
+                      value: brand,
+                      label: brand,
+                    }))}
+                  />
                 </InlineInputGroup>
                 <InlineInputGroup
                   label={t.model}
                   className="mb-0"
                   labelWidthClassName={sectionInlineLabelWidthClassName}
                 >
-                  <select
+                  <PropertyEditorSelect
                     value={currentMotorType}
-                    onChange={(e) => handleLibraryMotorChange(e.target.value)}
-                    className={PROPERTY_EDITOR_SELECT_CLASS}
-                  >
-                    {motorLibrary[motorBrand]?.map((m) => (
-                      <option key={m.name} value={m.name}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(event) => handleLibraryMotorChange(event.currentTarget.value)}
+                    options={(motorLibrary[motorBrand] ?? []).map((motor) => ({
+                      value: motor.name,
+                      label: motor.name,
+                    }))}
+                  />
                 </InlineInputGroup>
 
                 {currentLibMotor && currentLibMotor.url && (
@@ -367,21 +359,21 @@ export const JointProperties: React.FC<JointPropertiesProps> = ({
                     className="min-w-0 mb-0"
                     labelWidthClassName={sectionCompactInlineLabelWidthClassName}
                   >
-                    <select
-                      value={data.hardware?.motorDirection || 1}
-                      onChange={(e) =>
+                    <PropertyEditorSelect
+                      value={String(data.hardware?.motorDirection || 1)}
+                      onChange={(event) =>
                         updateJoint({
                           hardware: {
                             ...data.hardware,
-                            motorDirection: parseInt(e.target.value, 10),
+                            motorDirection: parseInt(event.currentTarget.value, 10),
                           },
                         })
                       }
-                      className={PROPERTY_EDITOR_SELECT_CLASS}
-                    >
-                      <option value={1}>1 ({t.normal})</option>
-                      <option value={-1}>-1 ({t.inverted})</option>
-                    </select>
+                      options={[
+                        { value: '1', label: `1 (${t.normal})` },
+                        { value: '-1', label: `-1 (${t.inverted})` },
+                      ]}
+                    />
                   </InlineInputGroup>
                 </div>
 

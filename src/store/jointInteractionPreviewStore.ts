@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 import type { JointQuaternion, UrdfJoint } from '@/types';
 
-export type JointInteractionPreviewSource = 'visualizer' | 'urdf-viewer';
+export type JointInteractionPreviewSource = 'viewer';
 
 export interface JointInteractionPreviewSnapshot {
   source: JointInteractionPreviewSource | null;

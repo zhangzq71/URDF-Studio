@@ -41,8 +41,10 @@ class FakeWorker {
 
 test('OBJ parse worker failures reject instead of silently reparsing on the main thread', async () => {
   const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
   let fetchCount = 0;
   const fakeWorker = new FakeWorker();
+  const consoleErrors: unknown[][] = [];
 
   globalThis.fetch = (async () => {
     fetchCount += 1;
@@ -53,6 +55,9 @@ test('OBJ parse worker failures reject instead of silently reparsing on the main
       text: async () => 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n',
     } as Response;
   }) as typeof fetch;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args);
+  };
 
   try {
     const client = createObjParseWorkerPoolClient({
@@ -69,8 +74,12 @@ test('OBJ parse worker failures reject instead of silently reparsing on the main
     await assert.rejects(resultPromise, /obj worker exploded/i);
     await assert.rejects(client.load('/demo.obj'), /OBJ parse worker is unavailable/);
     assert.equal(fetchCount, 0);
+    assert.equal(consoleErrors.length, 1);
+    assert.match(String(consoleErrors[0]?.[0] || ''), /OBJ parse worker crashed/i);
+    assert.match(String(consoleErrors[0]?.[1] || ''), /obj worker exploded/i);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
   }
 });
 

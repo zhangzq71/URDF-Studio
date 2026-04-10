@@ -7,7 +7,7 @@ import {
   resolveUnifiedViewerSessionState,
 } from './unifiedViewerMountState.ts';
 
-test('starts with only the viewer mounted when appMode is `editor`', () => {
+test('starts with the viewer mounted when appMode is `editor`', () => {
   assert.deepEqual(
     createInitialUnifiedViewerMountState({
       mode: 'editor',
@@ -15,7 +15,6 @@ test('starts with only the viewer mounted when appMode is `editor`', () => {
     }),
     {
       viewerMounted: true,
-      visualizerMounted: false,
     },
   );
 });
@@ -32,7 +31,6 @@ test('keeps the viewer mounted across repeated editor sessions', () => {
 
   assert.deepEqual(nextState, {
     viewerMounted: true,
-    visualizerMounted: false,
   });
 });
 
@@ -49,7 +47,6 @@ test('treats standalone file preview as a viewer session for keep-alive purposes
     }),
     {
       viewerMounted: true,
-      visualizerMounted: false,
     },
   );
 });
@@ -83,7 +80,6 @@ test('keeps the viewer mounted when an editor session forces the viewer open', (
     }),
     {
       viewerMounted: true,
-      visualizerMounted: false,
     },
   );
 });

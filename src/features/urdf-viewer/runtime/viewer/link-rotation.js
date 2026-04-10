@@ -1242,8 +1242,9 @@ export class LinkRotationController {
             return;
         let timeoutHandle = null;
         const timeoutToken = Symbol("joint-catalog-timeout");
+        let waitResult = null;
         try {
-            await Promise.race([
+            waitResult = await Promise.race([
                 buildPromise.then(() => null),
                 new Promise((resolve) => {
                     timeoutHandle = window.setTimeout(() => resolve(timeoutToken), maxWaitMs);
@@ -1254,6 +1255,14 @@ export class LinkRotationController {
             if (timeoutHandle !== null) {
                 window.clearTimeout(timeoutHandle);
             }
+        }
+        if (waitResult === timeoutToken) {
+            console.warn("[link-rotation] Joint catalog readiness wait timed out; continuing with partial joint data.", {
+                waitedMs: maxWaitMs,
+                jointCatalogStatus: this.jointCatalogStatus,
+                jointCatalogError: this.jointCatalogError,
+                stageSourcePath: this.stageSourcePath,
+            });
         }
     }
     startJointCatalogBuildIfNeeded() {
@@ -1286,6 +1295,7 @@ export class LinkRotationController {
             });
         }
         catch (error) {
+            console.error("[link-rotation] Failed to read cached render robot metadata snapshot for joint catalog build.", error);
             const errorText = String(error?.message || error || "").trim() || "joint-catalog-build-failed";
             this.setJointCatalogStatus("error", errorText);
             const buildPromise = Promise.reject(error).finally(() => {

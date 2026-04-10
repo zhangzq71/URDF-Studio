@@ -30,10 +30,6 @@ interface ViewerOptionsPanelProps {
   setShowVisual: (show: boolean) => void;
   showCollision: boolean;
   setShowCollision: (show: boolean) => void;
-  showIkHandles: boolean;
-  setShowIkHandles: (show: boolean) => void;
-  showIkHandlesAlwaysOnTop: boolean;
-  setShowIkHandlesAlwaysOnTop: (show: boolean) => void;
   showCollisionAlwaysOnTop: boolean;
   setShowCollisionAlwaysOnTop: (show: boolean) => void;
   modelOpacity: number;
@@ -178,10 +174,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
   setShowVisual,
   showCollision,
   setShowCollision,
-  showIkHandles,
-  setShowIkHandles,
-  showIkHandlesAlwaysOnTop,
-  setShowIkHandlesAlwaysOnTop,
   showCollisionAlwaysOnTop,
   setShowCollisionAlwaysOnTop,
   modelOpacity,
@@ -260,6 +252,7 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
           isCollapsed={isOptionsCollapsed}
           onToggleCollapse={toggleOptionsCollapsed}
           onClose={() => setShowOptionsPanel && setShowOptionsPanel(false)}
+          showDragGrip={false}
           onMouseDown={onMouseDown}
         />
 
@@ -277,22 +270,6 @@ export const ViewerOptionsPanel: React.FC<ViewerOptionsPanelProps> = ({
                     active={showCollisionAlwaysOnTop}
                     label={t.alwaysOnTop}
                     onClick={() => setShowCollisionAlwaysOnTop(!showCollisionAlwaysOnTop)}
-                  />
-                ) : undefined
-              }
-            />
-
-            <ToggleSliderOption
-              checked={showIkHandles}
-              onChange={setShowIkHandles}
-              label={t.showIkHandles}
-              rowClassName="pr-1"
-              trailingControl={
-                showIkHandles ? (
-                  <OverlayToggleButton
-                    active={showIkHandlesAlwaysOnTop}
-                    label={t.alwaysOnTop}
-                    onClick={() => setShowIkHandlesAlwaysOnTop(!showIkHandlesAlwaysOnTop)}
                   />
                 ) : undefined
               }

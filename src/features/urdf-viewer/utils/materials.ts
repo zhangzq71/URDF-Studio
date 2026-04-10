@@ -9,27 +9,34 @@ export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFac
 export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
 import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
 import {
+  COLLISION_STANDARD_RENDER_ORDER,
   COLLISION_OVERLAY_RENDER_ORDER,
   collisionBaseMaterial,
   configureCollisionOverlayMaterial,
   createCollisionOverlayMaterial,
 } from '@/core/utils/three/collisionOverlayMaterial';
 export {
+  COLLISION_STANDARD_RENDER_ORDER,
   COLLISION_OVERLAY_RENDER_ORDER,
   collisionBaseMaterial,
   configureCollisionOverlayMaterial,
   createCollisionOverlayMaterial,
 } from '@/core/utils/three/collisionOverlayMaterial';
-
-export const COLLISION_STANDARD_RENDER_ORDER = 0;
+const COLLISION_WITH_VISUAL_OPACITY = 0.35;
+const COLLISION_ONLY_OPACITY = 0.72;
 
 export function resolveCollisionRenderOrder(alwaysOnTop: boolean): number {
   return alwaysOnTop ? COLLISION_OVERLAY_RENDER_ORDER : COLLISION_STANDARD_RENDER_ORDER;
 }
 
-export function syncCollisionBaseMaterialPriority(alwaysOnTop: boolean): void {
+export function syncCollisionBaseMaterialPriority(
+  alwaysOnTop: boolean,
+  showVisual: boolean = true,
+): boolean {
   const nextDepthTest = !alwaysOnTop;
   const nextDepthWrite = false;
+  const nextOpacity = showVisual ? COLLISION_WITH_VISUAL_OPACITY : COLLISION_ONLY_OPACITY;
+  let changed = false;
 
   if (
     collisionBaseMaterial.depthTest !== nextDepthTest ||
@@ -38,7 +45,17 @@ export function syncCollisionBaseMaterialPriority(alwaysOnTop: boolean): void {
     collisionBaseMaterial.depthTest = nextDepthTest;
     collisionBaseMaterial.depthWrite = nextDepthWrite;
     collisionBaseMaterial.needsUpdate = true;
+    changed = true;
   }
+
+  if (Math.abs(collisionBaseMaterial.opacity - nextOpacity) > 1e-6) {
+    collisionBaseMaterial.opacity = nextOpacity;
+    collisionBaseMaterial.transparent = nextOpacity < 1;
+    collisionBaseMaterial.needsUpdate = true;
+    changed = true;
+  }
+
+  return changed;
 }
 
 /**

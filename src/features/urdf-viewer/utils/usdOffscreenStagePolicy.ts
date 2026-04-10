@@ -1,5 +1,5 @@
 import type { RobotFile } from '@/types';
-import type { ToolMode, URDFViewerProps } from '../types';
+import type { ToolMode, ViewerProps } from '../types';
 import { supportsUsdWorkerRenderer } from './usdWorkerRendererSupport.ts';
 import { collectUsdStageOpenRelevantVirtualPaths, toVirtualUsdPath } from './usdPreloadSources.ts';
 import { hasBlobBackedLargeUsdaInStageScope } from './usdBlobBackedUsda.ts';
@@ -8,8 +8,8 @@ type OffscreenUsdFileLike = Pick<RobotFile, 'name' | 'content' | 'format' | 'blo
 
 interface ShouldUseUsdOffscreenStageOptions {
   toolMode: ToolMode;
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  selection?: ViewerProps['selection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   focusTarget?: string | null;
   sourceFile?: OffscreenUsdFileLike | null;
   availableFiles?: OffscreenUsdFileLike[];

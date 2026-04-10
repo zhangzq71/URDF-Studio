@@ -49,6 +49,7 @@ export interface SyncCollisionGroupVisibilityOptions {
   collider: THREE.Object3D;
   linkData?: UrdfLink;
   showCollision: boolean;
+  showVisual?: boolean;
   showCollisionAlwaysOnTop?: boolean;
   respectLinkVisibility?: boolean;
   highlightedMeshes?: ReadonlyMap<THREE.Mesh, unknown>;
@@ -75,6 +76,7 @@ export function syncCollisionGroupVisibility({
   collider,
   linkData,
   showCollision,
+  showVisual = true,
   showCollisionAlwaysOnTop = true,
   respectLinkVisibility = true,
   highlightedMeshes,
@@ -88,14 +90,7 @@ export function syncCollisionGroupVisibility({
   );
   let changed = collider.visible !== isVisible;
   const disposedMaterials = new Set<THREE.Material>();
-  const previousCollisionDepthTest = collisionBaseMaterial.depthTest;
-  const previousCollisionDepthWrite = collisionBaseMaterial.depthWrite;
-
-  syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
-  if (
-    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
-    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
-  ) {
+  if (syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop, showVisual)) {
     changed = true;
   }
 

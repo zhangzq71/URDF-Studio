@@ -13,8 +13,8 @@ import {
 
 interface UnifiedVisualizerOptionsPanelProps {
   lang: Language;
-  showGeometry: boolean;
-  setShowGeometry: (show: boolean) => void;
+  showVisual: boolean;
+  setShowVisual: (show: boolean) => void;
   showOrigin: boolean;
   setShowOrigin: (show: boolean) => void;
   frameSize: number;
@@ -29,8 +29,8 @@ interface UnifiedVisualizerOptionsPanelProps {
   setJointAxisSize: (size: number) => void;
   showCollision: boolean;
   setShowCollision: (show: boolean) => void;
-  showIkHandles: boolean;
-  setShowIkHandles: (show: boolean) => void;
+  showCollisionAlwaysOnTop: boolean;
+  setShowCollisionAlwaysOnTop: (show: boolean) => void;
   showInertia: boolean;
   setShowInertia: (show: boolean) => void;
   showCenterOfMass: boolean;
@@ -48,6 +48,34 @@ interface UnifiedVisualizerOptionsPanelProps {
   setGroundPlaneOffset: (value: number) => void;
 }
 
+interface OverlayToggleButtonProps {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}
+
+function OverlayToggleButton({ active, label, onClick }: OverlayToggleButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`rounded p-0.5 transition-colors ${active ? 'bg-system-blue/10 text-system-blue dark:bg-system-blue/20' : 'text-text-tertiary hover:text-text-secondary'}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+    >
+      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+        />
+      </svg>
+    </button>
+  );
+}
+
 export const UnifiedVisualizerOptionsPanel = forwardRef<
   HTMLDivElement,
   UnifiedVisualizerOptionsPanelProps
@@ -55,8 +83,8 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<
   (
     {
       lang,
-      showGeometry,
-      setShowGeometry,
+      showVisual,
+      setShowVisual,
       showOrigin,
       setShowOrigin,
       frameSize,
@@ -71,8 +99,8 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<
       setJointAxisSize,
       showCollision,
       setShowCollision,
-      showIkHandles,
-      setShowIkHandles,
+      showCollisionAlwaysOnTop,
+      setShowCollisionAlwaysOnTop,
       showInertia,
       setShowInertia,
       showCenterOfMass,
@@ -126,30 +154,34 @@ export const UnifiedVisualizerOptionsPanel = forwardRef<
               toggleCollapsed();
             }}
             onClose={onClose}
+            showDragGrip={false}
             onMouseDown={onMouseDown}
           />
 
           <OptionsPanelContent isCollapsed={isCollapsed}>
             <div className="px-2 py-2 space-y-2">
               <CheckboxOption
-                checked={showGeometry}
-                onChange={setShowGeometry}
-                label={t.showGeometry}
+                checked={showVisual}
+                onChange={setShowVisual}
+                label={t.showVisual}
                 labelClassName={englishCheckboxLabelClassName}
               />
 
-              <CheckboxOption
+              <ToggleSliderOption
                 checked={showCollision}
                 onChange={setShowCollision}
                 label={t.showCollision}
                 labelClassName={englishCheckboxLabelClassName}
-              />
-
-              <CheckboxOption
-                checked={showIkHandles}
-                onChange={setShowIkHandles}
-                label={t.showIkHandles}
-                labelClassName={englishCheckboxLabelClassName}
+                rowClassName="pr-1"
+                trailingControl={
+                  showCollision ? (
+                    <OverlayToggleButton
+                      active={showCollisionAlwaysOnTop}
+                      label={t.alwaysOnTop}
+                      onClick={() => setShowCollisionAlwaysOnTop(!showCollisionAlwaysOnTop)}
+                    />
+                  ) : undefined
+                }
               />
 
               <ToggleSliderOption

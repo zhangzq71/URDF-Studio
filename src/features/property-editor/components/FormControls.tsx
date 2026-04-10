@@ -4,6 +4,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
+import { PanelSelect, type SelectOption } from '@/shared/components/ui';
 import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
@@ -31,7 +32,6 @@ export const PROPERTY_EDITOR_HELPER_TEXT_CLASS = 'text-[9px] leading-4 text-text
 export const PROPERTY_EDITOR_INPUT_CLASS =
   'h-[22px] w-full rounded-md border border-border-strong bg-input-bg px-1.5 text-[10px] leading-4 text-text-primary focus:outline-none focus:border-system-blue focus:ring-2 focus:ring-system-blue/25';
 export const PROPERTY_EDITOR_READONLY_VALUE_CLASS = `${PROPERTY_EDITOR_INPUT_CLASS} flex items-center bg-element-bg/60`;
-export const PROPERTY_EDITOR_SELECT_CLASS = `${PROPERTY_EDITOR_INPUT_CLASS} pr-7`;
 export const PROPERTY_EDITOR_COMPACT_INPUT_CLASS =
   'h-6 w-full rounded-md border border-border-strong bg-input-bg px-1.5 text-[10px] leading-4 text-text-primary focus:outline-none focus:border-system-blue focus:ring-2 focus:ring-system-blue/25';
 export const PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS =
@@ -115,6 +115,21 @@ export const ReadonlyValueField = ({
   children: React.ReactNode;
   className?: string;
 }) => <div className={`${PROPERTY_EDITOR_READONLY_VALUE_CLASS} ${className}`}>{children}</div>;
+
+interface PropertyEditorSelectProps extends Omit<
+  React.ComponentProps<typeof PanelSelect>,
+  'options' | 'variant'
+> {
+  options: readonly SelectOption[];
+}
+
+export function PropertyEditorSelect({
+  options,
+  className = '',
+  ...props
+}: PropertyEditorSelectProps) {
+  return <PanelSelect options={options} variant="property" className={className} {...props} />;
+}
 
 export const ReadonlyStatField = ({
   label,

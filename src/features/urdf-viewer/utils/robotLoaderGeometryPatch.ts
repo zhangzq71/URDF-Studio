@@ -8,6 +8,7 @@ import {
   hasGeometryMeshMaterialGroups,
   getVisualGeometryEntries,
 } from '@/core/robot';
+import { getCollisionBoxDisplayCylinderTransform } from '@/core/utils/collisionBoxDisplay';
 import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
 import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import {
@@ -30,6 +31,7 @@ import {
 import {
   applyOriginToGroup,
   clearGroupChildren,
+  disposeReplacedMaterials,
   findRobotLinkObject,
   markCollisionObject,
   markVisualObject,
@@ -39,6 +41,7 @@ import {
 } from './robotLoaderPatchUtils';
 import { createViewerMeshLoader } from './createViewerMeshLoader';
 import { applyURDFMaterials, collectURDFMaterialsFromVisualGeometry } from './urdfMaterials';
+import { getSyntheticGeomParentName, resolveRuntimeGeometryRoot } from './runtimeGeometrySelection';
 
 interface PatchCategoryOptions {
   robotModel: THREE.Object3D;
@@ -142,6 +145,16 @@ function patchGeometryCategory({
   }
 
   if (geometry.type === GeometryType.BOX) {
+    if (isCollision) {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 30), collisionBaseMaterial);
+      const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dims);
+      mesh.scale.set(...scale);
+      mesh.rotation.set(...rotation);
+      addPrimitive(mesh);
+      applyPrimitiveVisualOverride(mesh);
+      return;
+    }
+
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
       isCollision
@@ -152,7 +165,7 @@ function patchGeometryCategory({
               {
                 fallbackColor: geometry.color,
                 manager: createLoadingManager(assets, sourceFileDir ?? ''),
-                label: 'URDFViewer:patch-box-face-material',
+                label: 'EditorViewer:patch-box-face-material',
               },
             )
           : createVisualMaterial(),
@@ -224,7 +237,7 @@ function patchGeometryCategory({
       }
 
       if (err) {
-        console.error('[URDFViewer] Failed to patch mesh geometry:', err);
+        console.error('[EditorViewer] Failed to patch mesh geometry:', err);
       }
 
       if (isCollision) {
@@ -623,6 +636,7 @@ function findFirstMeshInObject(object: THREE.Object3D): THREE.Mesh | null {
 function patchPrimitiveDimensionsInPlace(
   targetGroup: THREE.Object3D,
   geometry: LinkGeometry,
+  isCollision: boolean,
 ): boolean {
   const mesh = findFirstMeshInObject(targetGroup);
   if (!mesh) return false;
@@ -631,7 +645,24 @@ function patchPrimitiveDimensionsInPlace(
 
   switch (geometry.type) {
     case GeometryType.BOX:
+      if (isCollision) {
+        if (
+          !(mesh.geometry instanceof THREE.CylinderGeometry) &&
+          mesh.geometry.type !== 'CylinderGeometry'
+        ) {
+          const previousMeshGeometry = mesh.geometry;
+          mesh.geometry = new THREE.CylinderGeometry(1, 1, 1, 30);
+          previousMeshGeometry?.dispose?.();
+        }
+
+        const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dims);
+        mesh.scale.set(...scale);
+        mesh.rotation.set(...rotation);
+        return true;
+      }
+
       mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
+      mesh.rotation.set(0, 0, 0);
       return true;
     case GeometryType.PLANE:
       mesh.scale.set(dims.x || 1, dims.y || 1, 1);
@@ -731,7 +762,7 @@ function patchGeometryGroupInPlace({
     });
   }
 
-  if (dimensionsChanged && !patchPrimitiveDimensionsInPlace(targetGroup, geometry)) {
+  if (dimensionsChanged && !patchPrimitiveDimensionsInPlace(targetGroup, geometry, isCollision)) {
     return false;
   }
 
@@ -820,6 +851,90 @@ interface ApplyGeometryPatchOptions {
   isPatchTargetValid?: () => boolean;
 }
 
+interface ResolvedPatchTarget {
+  linkObject: THREE.Object3D;
+  visualTargetGroup?: THREE.Object3D;
+  collisionTargetGroup?: THREE.Object3D;
+  usesSyntheticAttachmentMapping: boolean;
+}
+
+function getSyntheticGeomOrdinal(linkName: string): number | null {
+  const match = linkName.trim().match(/^(.*)_geom_(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const numeric = Number(match[2]);
+  return Number.isInteger(numeric) && numeric >= 1 ? numeric : null;
+}
+
+function resolveSyntheticAttachmentTargetGroup(
+  linkObject: THREE.Object3D,
+  linkName: string,
+  category: 'visual' | 'collision',
+): THREE.Object3D | undefined {
+  const resolvedByMetadata = resolveRuntimeGeometryRoot(linkObject, linkName, category, 0);
+  if (resolvedByMetadata) {
+    return resolvedByMetadata;
+  }
+
+  const ordinal = getSyntheticGeomOrdinal(linkName);
+  if (ordinal === null) {
+    return undefined;
+  }
+
+  const directGroups =
+    category === 'collision'
+      ? getDirectCollisionGroups(linkObject)
+      : getDirectVisualGroups(linkObject);
+  return directGroups[ordinal];
+}
+
+function resolvePatchTarget(
+  robotModel: THREE.Object3D,
+  linkName: string,
+): ResolvedPatchTarget | null {
+  const directLinkObject = findRobotLinkObject(robotModel, linkName);
+  if (directLinkObject) {
+    return {
+      linkObject: directLinkObject,
+      usesSyntheticAttachmentMapping: false,
+    };
+  }
+
+  const syntheticParentName = getSyntheticGeomParentName(linkName);
+  if (!syntheticParentName) {
+    return null;
+  }
+
+  const parentLinkObject = findRobotLinkObject(robotModel, syntheticParentName);
+  if (!parentLinkObject) {
+    return null;
+  }
+
+  const visualTargetGroup = resolveSyntheticAttachmentTargetGroup(
+    parentLinkObject,
+    linkName,
+    'visual',
+  );
+  const collisionTargetGroup = resolveSyntheticAttachmentTargetGroup(
+    parentLinkObject,
+    linkName,
+    'collision',
+  );
+
+  if (!visualTargetGroup && !collisionTargetGroup) {
+    return null;
+  }
+
+  return {
+    linkObject: parentLinkObject,
+    visualTargetGroup,
+    collisionTargetGroup,
+    usesSyntheticAttachmentMapping: true,
+  };
+}
+
 export function applyGeometryPatchInPlace({
   robotModel,
   patch,
@@ -832,27 +947,69 @@ export function applyGeometryPatchInPlace({
   invalidate,
   isPatchTargetValid,
 }: ApplyGeometryPatchOptions): boolean {
-  const linkObject = findRobotLinkObject(robotModel, patch.linkName);
-  if (!linkObject) return false;
+  const resolvedPatchTarget = resolvePatchTarget(robotModel, patch.linkName);
+  if (!resolvedPatchTarget) return false;
+
+  const { linkObject, visualTargetGroup, collisionTargetGroup, usesSyntheticAttachmentMapping } =
+    resolvedPatchTarget;
 
   if (patch.visualChanged || patch.visualBodiesChanged) {
-    const visualPatched = patchVisualEntriesInPlace({
-      robotModel,
-      linkObject,
-      linkName: patch.linkName,
-      previousLinkData: patch.previousLinkData,
-      nextLinkData: patch.linkData,
-      assets,
-      sourceFileDir,
-      colladaRootNormalizationHints,
-      showVisual,
-      showCollision,
-      linkMeshMapRef,
-      invalidate,
-      isPatchTargetValid,
-    });
+    let visualPatched = false;
 
-    if (!visualPatched) {
+    if (!usesSyntheticAttachmentMapping) {
+      visualPatched = patchVisualEntriesInPlace({
+        robotModel,
+        linkObject,
+        linkName: patch.linkName,
+        previousLinkData: patch.previousLinkData,
+        nextLinkData: patch.linkData,
+        assets,
+        sourceFileDir,
+        colladaRootNormalizationHints,
+        showVisual,
+        showCollision,
+        linkMeshMapRef,
+        invalidate,
+        isPatchTargetValid,
+      });
+    }
+
+    if (!visualPatched && usesSyntheticAttachmentMapping && visualTargetGroup) {
+      visualPatched = patchGeometryGroupInPlace({
+        robotModel,
+        linkObject,
+        category: 'visual',
+        linkData: patch.linkData,
+        previousGeometry: patch.previousLinkData.visual,
+        geometry: patch.linkData.visual,
+        showVisual,
+        showCollision,
+        invalidate,
+        targetGroup: visualTargetGroup,
+      });
+
+      if (!visualPatched) {
+        patchGeometryCategory({
+          robotModel,
+          linkObject,
+          linkName: patch.linkName,
+          category: 'visual',
+          geometry: patch.linkData.visual,
+          assets,
+          sourceFileDir,
+          colladaRootNormalizationHints,
+          showVisual,
+          showCollision,
+          linkMeshMapRef,
+          invalidate,
+          isPatchTargetValid,
+          targetGroup: visualTargetGroup,
+        });
+        visualPatched = true;
+      }
+    }
+
+    if (!visualPatched && !usesSyntheticAttachmentMapping) {
       if (
         !patchGeometryGroupInPlace({
           robotModel,
@@ -886,23 +1043,62 @@ export function applyGeometryPatchInPlace({
   }
 
   if (patch.collisionChanged || patch.collisionBodiesChanged) {
-    const collisionPatched = patchCollisionEntriesInPlace({
-      robotModel,
-      linkObject,
-      linkName: patch.linkName,
-      previousLinkData: patch.previousLinkData,
-      nextLinkData: patch.linkData,
-      assets,
-      sourceFileDir,
-      colladaRootNormalizationHints,
-      showVisual,
-      showCollision,
-      linkMeshMapRef,
-      invalidate,
-      isPatchTargetValid,
-    });
+    let collisionPatched = false;
 
-    if (!collisionPatched) {
+    if (!usesSyntheticAttachmentMapping) {
+      collisionPatched = patchCollisionEntriesInPlace({
+        robotModel,
+        linkObject,
+        linkName: patch.linkName,
+        previousLinkData: patch.previousLinkData,
+        nextLinkData: patch.linkData,
+        assets,
+        sourceFileDir,
+        colladaRootNormalizationHints,
+        showVisual,
+        showCollision,
+        linkMeshMapRef,
+        invalidate,
+        isPatchTargetValid,
+      });
+    }
+
+    if (!collisionPatched && usesSyntheticAttachmentMapping && collisionTargetGroup) {
+      collisionPatched = patchGeometryGroupInPlace({
+        robotModel,
+        linkObject,
+        category: 'collision',
+        linkData: patch.linkData,
+        previousGeometry: patch.previousLinkData.collision,
+        geometry: patch.linkData.collision,
+        showVisual,
+        showCollision,
+        invalidate,
+        targetGroup: collisionTargetGroup,
+      });
+
+      if (!collisionPatched) {
+        patchGeometryCategory({
+          robotModel,
+          linkObject,
+          linkName: patch.linkName,
+          category: 'collision',
+          geometry: patch.linkData.collision,
+          assets,
+          sourceFileDir,
+          colladaRootNormalizationHints,
+          showVisual,
+          showCollision,
+          linkMeshMapRef,
+          invalidate,
+          isPatchTargetValid,
+          targetGroup: collisionTargetGroup,
+        });
+        collisionPatched = true;
+      }
+    }
+
+    if (!collisionPatched && !usesSyntheticAttachmentMapping) {
       if (
         !patchGeometryGroupInPlace({
           robotModel,

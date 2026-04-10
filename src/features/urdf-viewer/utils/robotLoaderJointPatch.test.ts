@@ -66,25 +66,21 @@ test('patchJointInPlace preserves MJCF scalar joint values and initializes missi
   const robot = new THREE.Group() as THREE.Group & {
     joints?: Record<string, RuntimeURDFJoint>;
   };
-  const joint = new THREE.Group() as RuntimeURDFJoint & {
-    angle?: number;
-    axis?: THREE.Vector3;
-    jointValue?: number;
-    jointType?: string;
-    limit?: { lower: number; upper: number; effort?: number; velocity?: number };
+  const joint = new RuntimeURDFJoint() as RuntimeURDFJoint & {
     lastSetValue?: number;
-    setJointValue: (value: number) => void;
   };
   joint.name = 'joint_1';
   joint.jointType = JointType.REVOLUTE;
   joint.axis = new THREE.Vector3(0, 0, 1);
-  joint.jointValue = 0.42;
-  joint.angle = 0.42;
-  joint.setJointValue = function setJointValue(value: number) {
-    this.jointValue = value;
-    this.angle = value;
+  joint.jointValue = [0.42];
+  joint.origPosition = joint.position.clone();
+  joint.origQuaternion = joint.quaternion.clone();
+  joint.setJointValue = function setJointValue(...values: Array<number | null>) {
+    const value = typeof values[0] === 'number' ? values[0] : 0;
+    RuntimeURDFJoint.prototype.setJointValue.call(this, value);
     this.lastSetValue = value;
-  };
+    return true;
+  } as RuntimeURDFJoint['setJointValue'];
   robot.joints = { joint_1: joint };
 
   const patch = {
@@ -94,7 +90,7 @@ test('patchJointInPlace preserves MJCF scalar joint values and initializes missi
       axis: { x: 0, y: 1, z: 0 },
       origin: {
         xyz: { x: 0, y: 0, z: 0.2 },
-        rpy: { r: 0, p: 0, y: 0 },
+        rpy: { r: 0.2, p: -0.15, y: 0.05 },
       },
     }),
   };
@@ -111,6 +107,10 @@ test('patchJointInPlace preserves MJCF scalar joint values and initializes missi
   assert.equal(joint.limit?.upper, 0);
   assert.equal(joint.ignoreLimits, true);
   assert.equal(joint.position.z, 0.2);
+  const expectedQuaternion = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(0.2, -0.15, 0.05, 'ZYX'))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.42));
+  assert.ok(joint.quaternion.angleTo(expectedQuaternion) < 1e-6);
   assert.equal(invalidations.length, 1);
 });
 

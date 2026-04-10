@@ -368,7 +368,7 @@ export function syncLoadedRobotScene({
   sourceFormat,
   showCollision,
   showVisual,
-  showMjcfWorldLink = true,
+  showMjcfWorldLink = false,
   showCollisionAlwaysOnTop = true,
   urdfMaterials,
   robotLinks: robotLinkData,
@@ -394,14 +394,7 @@ export function syncLoadedRobotScene({
   const collisionObjectIndexByGeometryRoot = new WeakMap<THREE.Object3D, number>();
   const nextVisualObjectIndexBySemanticLink = new Map<string, number>();
   const nextCollisionObjectIndexBySemanticLink = new Map<string, number>();
-  const previousCollisionDepthTest = collisionBaseMaterial.depthTest;
-  const previousCollisionDepthWrite = collisionBaseMaterial.depthWrite;
-
-  syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
-  if (
-    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
-    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
-  ) {
+  if (syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop, showVisual)) {
     changed = true;
   }
 
@@ -622,9 +615,8 @@ export function syncLoadedRobotScene({
         node.userData.runtimeParentLinkName = nextParentLink.name;
       }
 
-      if (!colliderVisible) {
-        return;
-      }
+      // Keep traversing hidden collider subtrees so collision meshes still receive
+      // stable metadata (link ownership, object index, semantic tags).
     }
 
     if ((node as THREE.Mesh).isMesh) {

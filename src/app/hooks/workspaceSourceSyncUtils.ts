@@ -36,7 +36,7 @@ import {
   type UrdfJoint,
   type UrdfLink,
 } from '@/types';
-import { collectURDFMaterialsFromLinks } from '@/features/urdf-viewer';
+import { collectURDFMaterialsFromLinks } from '@/features/editor';
 import { parseEditableRobotSourceWithWorker } from './robotImportWorkerBridge';
 
 type JsonLike = null | boolean | number | string | JsonLike[] | { [key: string]: JsonLike };

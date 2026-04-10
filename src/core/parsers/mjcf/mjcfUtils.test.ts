@@ -200,6 +200,40 @@ test('inherits texture-backed material defaults from asset declarations', () => 
   });
 });
 
+test('parses builtin texture metadata needed for MuJoCo scene materials', () => {
+  const doc = parseXmlDocument(`
+        <mujoco model="builtin-texture">
+          <asset>
+            <texture
+              name="groundplane"
+              type="2d"
+              builtin="checker"
+              rgb1="0.2 0.3 0.4"
+              rgb2="0.1 0.2 0.3"
+              mark="edge"
+              markrgb="0.8 0.8 0.8"
+              width="300"
+              height="300"
+            />
+          </asset>
+        </mujoco>
+    `);
+
+  const textures = parseTextureAssets(doc);
+
+  assert.deepEqual(textures.get('groundplane'), {
+    name: 'groundplane',
+    type: '2d',
+    builtin: 'checker',
+    rgb1: [0.2, 0.3, 0.4],
+    rgb2: [0.1, 0.2, 0.3],
+    mark: 'edge',
+    markrgb: [0.8, 0.8, 0.8],
+    width: 300,
+    height: 300,
+  });
+});
+
 test('parses mesh asset refquat and refpos metadata', () => {
   const doc = parseXmlDocument(`
         <mujoco model="mesh-refs">

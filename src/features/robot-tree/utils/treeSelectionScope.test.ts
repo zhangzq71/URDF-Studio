@@ -9,6 +9,7 @@ import {
   buildParentLinkByChild,
   getTreeNodeSelectionScope,
   resolveDirectChildBranchLinkId,
+  resolveTreeSelectionIdentity,
 } from './treeSelectionScope.ts';
 
 const joints: Record<string, UrdfJoint> = {
@@ -53,6 +54,25 @@ test('does not mark a direct child branch for a joint selected on the current li
       parentLinkByChild,
     ),
     null,
+  );
+});
+
+test('resolves joint selections addressed by joint name back to the canonical joint id', () => {
+  assert.deepEqual(
+    resolveTreeSelectionIdentity(
+      { type: 'joint', id: 'elbow' },
+      {
+        links: {},
+        joints: {
+          elbow_joint_id: {
+            ...joints.elbow,
+            id: 'elbow_joint_id',
+            name: 'elbow',
+          },
+        },
+      },
+    ),
+    { type: 'joint', id: 'elbow_joint_id' },
   );
 });
 

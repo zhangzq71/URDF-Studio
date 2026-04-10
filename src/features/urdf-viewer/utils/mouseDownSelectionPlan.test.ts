@@ -47,3 +47,19 @@ test('editor mode keeps collision mesh selection metadata when no joint exists',
     shouldSyncMeshSelection: true,
   });
 });
+
+test('preferred IK handle selection skips geometry mesh sync and highlights', () => {
+  const result = resolveMouseDownSelectionPlan({
+    mode: 'editor',
+    linkName: 'wrist_link',
+    jointName: 'wrist_joint',
+    subType: 'visual',
+    preferredIkHandleLinkId: 'tool_tip',
+  });
+
+  assert.deepEqual(result, {
+    selectTarget: { type: 'link', id: 'tool_tip', helperKind: 'ik-handle' },
+    shouldApplyImmediateGeometryHighlight: false,
+    shouldSyncMeshSelection: false,
+  });
+});

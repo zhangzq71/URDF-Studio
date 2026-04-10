@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { GeometryType, type RobotData } from '@/types';
-import { syncRobotVisualColorsFromMaterials } from './materials';
+import { syncRobotMaterialsForLinkUpdate, syncRobotVisualColorsFromMaterials } from './materials';
 
 test('syncRobotVisualColorsFromMaterials preserves additional visual body colors and collision bodies', () => {
   const robot: RobotData = {
@@ -113,4 +113,90 @@ test('syncRobotVisualColorsFromMaterials still syncs the primary visual color fr
   const normalized = syncRobotVisualColorsFromMaterials(robot);
 
   assert.equal(normalized.links.base_link.visual.color, '#123456');
+});
+
+test('syncRobotMaterialsForLinkUpdate promotes primary visual texture edits into robot materials', () => {
+  const nextMaterials = syncRobotMaterialsForLinkUpdate(
+    {
+      base_link: {
+        color: '#0e0e10',
+        texture: 'textures/legacy.png',
+        usdMaterial: {
+          mapPath: 'textures/legacy.png',
+          roughness: 0.6,
+        },
+      },
+    },
+    {
+      id: 'base_link',
+      name: 'base_link',
+      visual: {
+        type: GeometryType.MESH,
+        meshPath: 'meshes/base_link.stl',
+        dimensions: { x: 1, y: 1, z: 1 },
+        color: '#0e0e10',
+        authoredMaterials: [{ texture: 'textures/updated.png' }],
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+      collision: {
+        type: GeometryType.NONE,
+        dimensions: { x: 0, y: 0, z: 0 },
+        color: '#000000',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(nextMaterials, {
+    base_link: {
+      color: '#0e0e10',
+      texture: 'textures/updated.png',
+    },
+  });
+});
+
+test('syncRobotMaterialsForLinkUpdate clears stale textures when a primary visual falls back to color-only material', () => {
+  const nextMaterials = syncRobotMaterialsForLinkUpdate(
+    {
+      base_link: {
+        color: '#0e0e10',
+        texture: 'textures/stale.png',
+      },
+    },
+    {
+      id: 'base_link',
+      name: 'base_link',
+      visual: {
+        type: GeometryType.MESH,
+        meshPath: 'meshes/base_link.stl',
+        dimensions: { x: 1, y: 1, z: 1 },
+        color: '#12ab34',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+      collision: {
+        type: GeometryType.NONE,
+        dimensions: { x: 0, y: 0, z: 0 },
+        color: '#000000',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(nextMaterials, {
+    base_link: {
+      color: '#12ab34',
+    },
+  });
 });

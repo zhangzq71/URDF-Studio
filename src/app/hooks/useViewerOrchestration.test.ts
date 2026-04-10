@@ -21,6 +21,7 @@ function resetUiStore() {
   const store = useUIStore.getState();
   store.setAppMode('editor');
   store.setDetailLinkTab('visual');
+  store.setViewOption('showCollision', false);
   store.setPanelSection('property_editor_link_inertial', true);
   store.setPanelSection('kinematics', true);
 }
@@ -75,6 +76,24 @@ test('handleSelect preserves the selected collision body index for the same link
   });
 });
 
+test('handleSelect enables collision visibility when selecting collision geometry', () => {
+  resetSelectionStore();
+  resetUiStore();
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleSelect('link', 'arm_link', 'collision');
+
+  assert.equal(useUIStore.getState().viewOptions.showCollision, true);
+});
+
 test('handleViewerSelect preserves collision objectIndex when re-selecting the same link', () => {
   resetSelectionStore();
   resetUiStore();
@@ -108,6 +127,24 @@ test('handleViewerSelect preserves collision objectIndex when re-selecting the s
     objectIndex: 1,
   });
   assert.deepEqual(pulsedSelection, nextSelection);
+});
+
+test('handleViewerSelect enables collision visibility when selecting collision geometry', () => {
+  resetSelectionStore();
+  resetUiStore();
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerSelect('link', 'arm_link', 'collision');
+
+  assert.equal(useUIStore.getState().viewOptions.showCollision, true);
 });
 
 test('handleViewerSelect does not pin hover for regular selection clicks', () => {
@@ -177,6 +214,7 @@ test('handleViewerMeshSelect seeds the detail tab from visual mesh clicks while 
   hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'visual');
 
   assert.equal(useUIStore.getState().detailLinkTab, 'visual');
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
 });
 
 test('handleSelectGeometry pulses the selected link geometry so the tree can relocate it', () => {
@@ -206,6 +244,51 @@ test('handleSelectGeometry pulses the selected link geometry so the tree can rel
     objectIndex: 2,
   });
   assert.deepEqual(pulsedSelection, nextSelection);
+});
+
+test('handleSelectGeometry enables collision visibility when selecting collision geometry', () => {
+  resetSelectionStore();
+  resetUiStore();
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleSelectGeometry('arm_link', 'collision', 1);
+
+  assert.equal(useUIStore.getState().viewOptions.showCollision, true);
+});
+
+test('handleSelectGeometry can skip auto-revealing collision visibility for property-panel edits', () => {
+  resetSelectionStore();
+  resetUiStore();
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
+
+  let nextSelection: RobotState['selection'] | null = null;
+  const hook = renderHook({
+    setSelection: (selection) => {
+      nextSelection = selection;
+    },
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleSelectGeometry('arm_link', 'collision', 1, true, true);
+
+  assert.deepEqual(nextSelection, {
+    type: 'link',
+    id: 'arm_link',
+    subType: 'collision',
+    objectIndex: 1,
+  });
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
 });
 
 test('handleSelectGeometry can skip relocation pulses for in-tree geometry clicks', () => {
@@ -255,6 +338,24 @@ test('handleViewerMeshSelect does not pin hover while selecting a body', () => {
   hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'collision');
 
   assert.equal(nextHoveredSelection, null);
+});
+
+test('handleViewerMeshSelect enables collision visibility for collision mesh picks', () => {
+  resetSelectionStore();
+  resetUiStore();
+  assert.equal(useUIStore.getState().viewOptions.showCollision, false);
+
+  const hook = renderHook({
+    setSelection: () => {},
+    pulseSelection: () => {},
+    setHoveredSelection: () => {},
+    focusOn: () => {},
+    transformPendingRef: { current: false },
+  });
+
+  hook.handleViewerMeshSelect('arm_link', 'shoulder_joint', 0, 'collision');
+
+  assert.equal(useUIStore.getState().viewOptions.showCollision, true);
 });
 
 test('handleViewerSelect routes inertial helpers to the physics tab without pinning hover', () => {

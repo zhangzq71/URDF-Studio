@@ -1399,6 +1399,7 @@ function mjcfToRobotState(
       const colGeo = processGeometry(mainPair.collision, linkFrameOffsetLocal);
       collision = {
         ...collision,
+        ...(mainPair.collision.name?.trim() ? { name: mainPair.collision.name.trim() } : {}),
         type: colGeo.type,
         dimensions: colGeo.dimensions,
         origin: colGeo.origin,
@@ -1569,6 +1570,7 @@ function mjcfToRobotState(
         const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
         const extraCollision: UrdfLink['collision'] = {
           ...DEFAULT_LINK.collision,
+          ...(pair.collision.name?.trim() ? { name: pair.collision.name.trim() } : {}),
           type: colGeo.type,
           dimensions: colGeo.dimensions,
           origin: colGeo.origin,
@@ -1604,6 +1606,7 @@ function mjcfToRobotState(
         const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
         subCollision = {
           ...subCollision,
+          ...(pair.collision.name?.trim() ? { name: pair.collision.name.trim() } : {}),
           type: colGeo.type,
           dimensions: colGeo.dimensions,
           origin: colGeo.origin,

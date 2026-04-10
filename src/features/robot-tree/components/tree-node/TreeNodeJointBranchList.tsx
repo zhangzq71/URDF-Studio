@@ -118,6 +118,11 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
                 },
               )}`}
               onClick={readOnly ? undefined : () => onSelect('joint', joint.id)}
+              onDoubleClick={
+                readOnly
+                  ? undefined
+                  : (event) => onNameDoubleClick(event, 'joint', joint.id, joint.name)
+              }
               onContextMenu={
                 readOnly
                   ? undefined
@@ -158,6 +163,7 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
                   value={editingTarget?.draft ?? ''}
                   onChange={(event) => onUpdateRenameDraft(event.target.value)}
                   onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={(event) => event.stopPropagation()}
                   onBlur={onCommitRenaming}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
@@ -201,6 +207,7 @@ export const TreeNodeJointBranchList = memo(function TreeNodeJointBranchList({
                       event.stopPropagation();
                       onDelete(joint.childLinkId);
                     }}
+                    onDoubleClick={(event) => event.stopPropagation()}
                     className={`p-0.5 rounded transition-colors ${
                       isJointSelected ? 'hover:bg-panel-bg' : 'hover:bg-element-hover'
                     }`}

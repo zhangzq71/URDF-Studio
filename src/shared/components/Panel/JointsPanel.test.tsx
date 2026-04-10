@@ -22,16 +22,21 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent = dom.window.PointerEvent ?? dom.window.MouseEvent;
+  (globalThis as { PointerEvent?: typeof PointerEvent }).PointerEvent =
+    dom.window.PointerEvent ?? dom.window.MouseEvent;
   (globalThis as { FocusEvent?: typeof FocusEvent }).FocusEvent = dom.window.FocusEvent;
   (globalThis as { KeyboardEvent?: typeof KeyboardEvent }).KeyboardEvent = dom.window.KeyboardEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   if (!('attachEvent' in dom.window.HTMLElement.prototype)) {
@@ -59,7 +64,10 @@ function createComponentRoot() {
   return { dom, container, root };
 }
 
-function renderJointsPanel(root: Root, onHover?: (type: 'link' | 'joint' | null, id: string | null) => void) {
+function renderJointsPanel(
+  root: Root,
+  onHover?: (type: 'link' | 'joint' | null, id: string | null) => void,
+) {
   const jointPanelStore = createJointPanelStore({
     jointAngles: { R_thigh_joint: 0 },
   });
@@ -139,6 +147,63 @@ test('entering the joints panel clears global hover and joint row hover stays lo
   assert.ok(
     hoverCalls.every((call) => call.type === null && call.id === null),
     'joint row hover should not write a joint hover back into global selection state',
+  );
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+});
+
+test('fixed-only robots keep the joints panel hidden even when the preference stays enabled', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const jointPanelStore = createJointPanelStore({
+    jointAngles: {},
+  });
+
+  await act(async () => {
+    root.render(
+      React.createElement(JointsPanel, {
+        showJointPanel: true,
+        robot: {
+          joints: {
+            fixed_joint: {
+              id: 'fixed_joint',
+              name: 'fixed_joint',
+              jointType: 'fixed',
+            },
+          },
+        },
+        jointPanelRef: createRef<HTMLDivElement>(),
+        jointPanelPos: null,
+        defaultPosition: { top: '0px', left: '0px' },
+        onMouseDown: () => {},
+        t: {
+          joints: 'Joints',
+          resize: 'Resize',
+          resetJoints: 'Reset joints',
+          advanced: 'Advanced',
+          switchUnit: 'Switch unit',
+          reset: 'Reset',
+        },
+        handleResetJoints: () => {},
+        angleUnit: 'rad',
+        setAngleUnit: () => {},
+        isJointsCollapsed: false,
+        toggleJointsCollapsed: () => {},
+        setShowJointPanel: () => {},
+        jointPanelStore,
+        setActiveJoint: () => {},
+        handleJointAngleChange: () => {},
+        handleJointChangeCommit: () => {},
+      }),
+    );
+  });
+
+  assert.equal(
+    container.querySelector('.urdf-joint-panel'),
+    null,
+    'fixed-only robots should not render the joints panel shell',
   );
 
   await act(async () => {

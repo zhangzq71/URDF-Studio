@@ -606,30 +606,34 @@ export function createInertiaBox(
 }
 
 /**
- * Create a link IK handle visualization.
+ * Create a link IK handle anchor. Keep the object raycastable for explicit
+ * helper selection, but do not render a visible sphere in the scene.
  */
 export function createLinkIkHandle(radius: number): THREE.Group {
   const ikHandle = new THREE.Group();
   ikHandle.name = '__ik_handle__';
   ikHandle.userData = createSelectableHelperUserData({
     viewerHelperKind: 'ik-handle',
-    ikHandleStyleVersion: 2,
+    ikHandleStyleVersion: 3,
+    radius,
   });
 
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x16a34a,
+  const pickGeometry = new THREE.SphereGeometry(radius, 16, 12);
+  const pickMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
     transparent: true,
-    opacity: 0.68,
+    opacity: 0,
+    colorWrite: false,
     depthTest: false,
     depthWrite: false,
   });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 18, 18), material);
-  mesh.userData = createSelectableHelperUserData({
+  const pickTarget = new THREE.Mesh(pickGeometry, pickMaterial);
+  pickTarget.name = '__ik_handle_pick_target__';
+  pickTarget.userData = createSelectableHelperUserData({
     viewerHelperKind: 'ik-handle',
-    ikHandleStyleVersion: 2,
   });
-  mesh.renderOrder = 10030;
-  ikHandle.add(mesh);
+  pickTarget.renderOrder = 10030;
+  ikHandle.add(pickTarget);
 
   return ikHandle;
 }

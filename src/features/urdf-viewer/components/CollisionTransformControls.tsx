@@ -8,7 +8,7 @@ import { useCollisionTransformDragLifecycle } from '../hooks/useCollisionTransfo
 import { getObjectRPY } from '../utils/collisionTransformMath';
 import {
   canRenderCollisionTransformControls,
-  resolveActiveCollisionDraggingControls,
+  resolveCurrentCollisionDraggingControls,
 } from '../utils/collisionTransformControlsShared';
 
 const COLLISION_TRANSLATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE;
@@ -44,10 +44,13 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   const proxyLocalPositionRef = useRef(new THREE.Vector3());
   const proxyParentQuaternionRef = useRef(new THREE.Quaternion());
 
-  const resolveSelectionLinkId = useCallback((identity: string | null | undefined) => {
-    if (!identity) return null;
-    return resolveLinkKey(robotLinks || {}, identity) ?? identity;
-  }, [robotLinks]);
+  const resolveSelectionLinkId = useCallback(
+    (identity: string | null | undefined) => {
+      if (!identity) return null;
+      return resolveLinkKey(robotLinks || {}, identity) ?? identity;
+    },
+    [robotLinks],
+  );
 
   const hasTransformChanged = useCallback((object: THREE.Object3D) => {
     const positionChanged = originalPositionRef.current.distanceToSquared(object.position) > 1e-8;
@@ -67,24 +70,27 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     onTransformEndRef.current = onTransformEnd;
   }, [onTransformEnd]);
 
-  const syncTranslateProxy = useCallback((proxyTarget: THREE.Object3D | null, object = targetObjectRef.current) => {
-    if (!proxyTarget || !object) return;
+  const syncTranslateProxy = useCallback(
+    (proxyTarget: THREE.Object3D | null, object = targetObjectRef.current) => {
+      if (!proxyTarget || !object) return;
 
-    object.updateMatrixWorld(true);
-    object.getWorldPosition(proxyWorldPositionRef.current);
-    proxyTarget.position.copy(proxyWorldPositionRef.current);
+      object.updateMatrixWorld(true);
+      object.getWorldPosition(proxyWorldPositionRef.current);
+      proxyTarget.position.copy(proxyWorldPositionRef.current);
 
-    const parent = object.parent;
-    if (parent) {
-      parent.getWorldQuaternion(proxyParentQuaternionRef.current);
-      proxyTarget.quaternion.copy(proxyParentQuaternionRef.current);
-    } else {
-      proxyTarget.quaternion.identity();
-    }
+      const parent = object.parent;
+      if (parent) {
+        parent.getWorldQuaternion(proxyParentQuaternionRef.current);
+        proxyTarget.quaternion.copy(proxyParentQuaternionRef.current);
+      } else {
+        proxyTarget.quaternion.identity();
+      }
 
-    proxyTarget.scale.setScalar(1);
-    proxyTarget.updateMatrixWorld(true);
-  }, []);
+      proxyTarget.scale.setScalar(1);
+      proxyTarget.updateMatrixWorld(true);
+    },
+    [],
+  );
 
   const applyTranslateProxyToTarget = useCallback(() => {
     const proxy = translateProxyRef.current;
@@ -104,11 +110,14 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
     object.updateMatrixWorld(true);
   }, []);
 
-  const handleTranslateProxyRef = useCallback((proxy: THREE.Group | null) => {
-    translateProxyRef.current = proxy;
-    setTranslateProxy(proxy);
-    syncTranslateProxy(proxy);
-  }, [syncTranslateProxy]);
+  const handleTranslateProxyRef = useCallback(
+    (proxy: THREE.Group | null) => {
+      translateProxyRef.current = proxy;
+      setTranslateProxy(proxy);
+      syncTranslateProxy(proxy);
+    },
+    [syncTranslateProxy],
+  );
 
   useEffect(() => {
     if (selection?.id && selection.subType === 'collision') {
@@ -142,7 +151,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       activeSelection.id,
       { x: position.x, y: position.y, z: position.z },
       rotation,
-      activeSelection.objectIndex
+      activeSelection.objectIndex,
     );
 
     originalPositionRef.current.copy(activeTargetObject.position);
@@ -166,7 +175,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
       activeSelection.id,
       { x: position.x, y: position.y, z: position.z },
       rotation,
-      activeSelection.objectIndex
+      activeSelection.objectIndex,
     );
   }, []);
 
@@ -250,7 +259,12 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   });
 
   useEffect(() => {
-    if (!robot || !selection?.id || selection.subType !== 'collision' || transformMode === 'select') {
+    if (
+      !robot ||
+      !selection?.id ||
+      selection.subType !== 'collision' ||
+      transformMode === 'select'
+    ) {
       if (isDraggingRef.current) {
         cancelActiveDrag();
       }
@@ -326,10 +340,9 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
   }, [syncTranslateProxy, targetObject]);
 
   useFrame(() => {
-    const draggingControls = resolveActiveCollisionDraggingControls(
+    const draggingControls = resolveCurrentCollisionDraggingControls(
       transformRef.current,
       rotateTransformRef.current,
-      activeControlsRef.current,
     );
 
     if (draggingControls) {
@@ -362,7 +375,7 @@ export const CollisionTransformControls: React.FC<CollisionTransformControlsProp
           ref={transformRef}
           rotateRef={rotateTransformRef}
           object={targetObject}
-          translateObject={shouldUseTranslateProxy ? translateProxy ?? undefined : undefined}
+          translateObject={shouldUseTranslateProxy ? (translateProxy ?? undefined) : undefined}
           mode={controlMode}
           size={COLLISION_TRANSLATE_GIZMO_SIZE}
           rotateSize={COLLISION_ROTATE_GIZMO_SIZE}

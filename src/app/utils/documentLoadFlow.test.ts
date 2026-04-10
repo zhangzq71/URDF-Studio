@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
   buildRobotLoadSupportContextKey,
   preserveDocumentLoadProgressForSameFile,
+  resolveRuntimeRobotReadyDocumentLoadState,
+  shouldReuseResolvedMjcfViewerRuntime,
   shouldCommitResolvedRobotSelection,
   shouldIgnoreViewerLoadRegressionAfterReadySameFile,
   shouldIgnoreStaleViewerDocumentLoadEvent,
@@ -155,6 +157,45 @@ test('preserveDocumentLoadProgressForSameFile keeps advanced same-file USD progr
   );
 });
 
+test('preserveDocumentLoadProgressForSameFile keeps advanced same-file robot import progress from regressing back to preparing-scene', () => {
+  assert.deepEqual(
+    preserveDocumentLoadProgressForSameFile({
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/demo/demo.urdf',
+        format: 'urdf',
+        phase: 'preparing-scene',
+        message: 'Parsing URDF',
+        progressMode: 'percent',
+        progressPercent: 28,
+        loadedCount: null,
+        totalCount: null,
+      },
+      nextState: {
+        status: 'loading',
+        fileName: 'robots/demo/demo.urdf',
+        format: 'urdf',
+        phase: 'preparing-scene',
+        message: null,
+        progressPercent: null,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }),
+    {
+      status: 'loading',
+      fileName: 'robots/demo/demo.urdf',
+      format: 'urdf',
+      phase: 'preparing-scene',
+      message: 'Parsing URDF',
+      progressMode: 'percent',
+      progressPercent: 28,
+      loadedCount: null,
+      totalCount: null,
+    },
+  );
+});
+
 test('preserveDocumentLoadProgressForSameFile leaves unrelated files unchanged', () => {
   assert.deepEqual(
     preserveDocumentLoadProgressForSameFile({
@@ -240,6 +281,123 @@ test('shouldIgnoreViewerLoadRegressionAfterReadySameFile ignores hidden same-fil
         progressPercent: 0,
         loadedCount: null,
         totalCount: null,
+      },
+    }),
+    false,
+  );
+});
+
+test('resolveRuntimeRobotReadyDocumentLoadState marks same-file MJCF runtime loads as ready', () => {
+  assert.deepEqual(
+    resolveRuntimeRobotReadyDocumentLoadState({
+      activeFile: {
+        name: 'robots/demo/scene.xml',
+        format: 'mjcf',
+      },
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/demo/scene.xml',
+        format: 'mjcf',
+        error: null,
+        phase: 'preparing-scene',
+        message: null,
+        progressMode: 'percent',
+        progressPercent: 40,
+        loadedCount: null,
+        totalCount: null,
+      },
+    }),
+    {
+      status: 'ready',
+      fileName: 'robots/demo/scene.xml',
+      format: 'mjcf',
+      error: null,
+      phase: 'ready',
+      message: null,
+      progressMode: 'percent',
+      progressPercent: 100,
+      loadedCount: null,
+      totalCount: null,
+    },
+  );
+});
+
+test('resolveRuntimeRobotReadyDocumentLoadState ignores USD and mismatched files', () => {
+  assert.equal(
+    resolveRuntimeRobotReadyDocumentLoadState({
+      activeFile: {
+        name: 'robots/demo/world.usd',
+        format: 'usd',
+      },
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/demo/world.usd',
+        format: 'usd',
+      },
+    }),
+    null,
+  );
+
+  assert.equal(
+    resolveRuntimeRobotReadyDocumentLoadState({
+      activeFile: {
+        name: 'robots/demo/scene.xml',
+        format: 'mjcf',
+      },
+      currentState: {
+        status: 'loading',
+        fileName: 'robots/demo/other.xml',
+        format: 'mjcf',
+      },
+    }),
+    null,
+  );
+});
+
+test('shouldReuseResolvedMjcfViewerRuntime keeps the current runtime when MJCF wrappers resolve to the same effective source', () => {
+  assert.equal(
+    shouldReuseResolvedMjcfViewerRuntime({
+      currentSelectedFile: {
+        name: 'robots/demo/b2.xml',
+        format: 'mjcf',
+        content: '<mujoco model=\"b2\" />',
+      },
+      nextFile: {
+        name: 'robots/demo/scene.xml',
+        format: 'mjcf',
+        content: '<mujoco><include file=\"b2.xml\" /></mujoco>',
+      },
+      currentResolvedSource: {
+        effectiveFileName: 'robots/demo/b2.xml',
+        content: '<mujoco model=\"b2\" />',
+      },
+      nextResolvedSource: {
+        effectiveFileName: 'robots/demo/b2.xml',
+        content: '<mujoco model=\"b2\" />',
+      },
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldReuseResolvedMjcfViewerRuntime({
+      currentSelectedFile: {
+        name: 'robots/demo/b2.xml',
+        format: 'mjcf',
+        content: '<mujoco model=\"b2\" />',
+      },
+      nextFile: {
+        name: 'robots/demo/scene.xml',
+        format: 'mjcf',
+        content: '<mujoco><include file=\"b2.xml\" /></mujoco>',
+      },
+      currentResolvedSource: {
+        effectiveFileName: 'robots/demo/b2.xml',
+        content: '<mujoco model=\"b2\" />',
+      },
+      nextResolvedSource: {
+        effectiveFileName: 'robots/demo/scene.xml',
+        content: '<mujoco><include file=\"b2.xml\" /></mujoco>',
       },
     }),
     false,

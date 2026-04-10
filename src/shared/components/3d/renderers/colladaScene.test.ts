@@ -78,7 +78,10 @@ test('cloneColladaScenePreservingRootTransform applies shared coplanar shell fix
   const meshPath = 'test/unitree_ros/robots/b2_description/meshes/base_link.dae';
   const colladaText = fs.readFileSync(meshPath, 'utf8');
   const loader = new ColladaLoader();
-  const dae = loader.parse(normalizeColladaUpAxis(colladaText).content, THREE.LoaderUtils.extractUrlBase(meshPath));
+  const dae = loader.parse(
+    normalizeColladaUpAxis(colladaText).content,
+    THREE.LoaderUtils.extractUrlBase(meshPath),
+  );
 
   const { clone } = cloneColladaScenePreservingRootTransform(dae.scene);
   let firstMesh: THREE.Mesh | null = null;
@@ -119,13 +122,32 @@ test('cloneColladaScenePreservingRootTransform skips override mesh collection wh
   assert.equal(preservedClone.overrideMeshes.length, 0);
 });
 
+test('cloneColladaScenePreservingRootTransform still collects textured meshes for explicit preview overrides', () => {
+  const root = new THREE.Group();
+  const texturedMaterial = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#ffffff'),
+    map: new THREE.Texture(),
+  });
+  const texturedMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), texturedMaterial);
+  root.add(texturedMesh);
+
+  const defaultClone = cloneColladaScenePreservingRootTransform(root);
+  const preservedClone = cloneColladaScenePreservingRootTransform(root, false, true);
+
+  assert.equal(defaultClone.overrideMeshes.length, 1);
+  assert.equal((defaultClone.overrideMeshes[0] as THREE.Mesh).isMesh, true);
+  assert.equal(preservedClone.overrideMeshes.length, 0);
+});
+
 test('cloneColladaScenePreservingRootTransform removes embedded Collada lights from preview clones', () => {
   const root = new THREE.Group();
   root.add(new THREE.PointLight(0xffffff, 1));
-  root.add(new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x999999 }),
-  ));
+  root.add(
+    new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x999999 }),
+    ),
+  );
 
   const { clone } = cloneColladaScenePreservingRootTransform(root);
 

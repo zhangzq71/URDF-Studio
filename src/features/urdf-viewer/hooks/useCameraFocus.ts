@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { URDFViewerProps, ViewerSceneMode } from '../types';
+import type { ViewerProps, ViewerSceneMode } from '../types';
 import {
   resolveCameraAutoFrameScopeKey,
   shouldAutoFrameRobotChange,
@@ -20,7 +20,7 @@ import { scheduleStabilizedAutoFrame } from '../utils/stabilizedAutoFrame';
 export interface UseCameraFocusOptions {
   robot: THREE.Object3D | null;
   focusTarget: string | null | undefined;
-  selection?: URDFViewerProps['selection'];
+  selection?: ViewerProps['selection'];
   mode?: ViewerSceneMode;
   autoFrameOnRobotChange?: boolean;
   autoFrameScopeKey?: string | null;
@@ -54,7 +54,7 @@ function collectLinkBodies(
 function resolveFocusObject(
   robot: THREE.Object3D,
   focusTarget: string,
-  selection?: URDFViewerProps['selection'],
+  selection?: ViewerProps['selection'],
 ): THREE.Object3D | null {
   if (selection?.type === 'link' && selection.id === focusTarget && selection.subType) {
     const runtimeLinkCandidates = [selection.id, getSyntheticGeomParentName(selection.id)].filter(

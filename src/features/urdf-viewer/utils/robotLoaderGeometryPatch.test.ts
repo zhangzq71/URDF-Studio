@@ -4,16 +4,22 @@ import fs from 'node:fs';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 
-import { URDFVisual } from '@/core/parsers/urdf/loader';
+import { URDFCollider, URDFLink, URDFVisual } from '@/core/parsers/urdf/loader';
 import {
   buildColladaRootNormalizationHints,
   createLoadingManager,
   createMeshLoader,
 } from '@/core/loaders';
 import { parseURDF } from '@/core/parsers/urdf/parser';
-import { GeometryType, type UrdfLink, type UrdfVisual as LinkGeometry } from '@/types';
+import {
+  DEFAULT_LINK,
+  GeometryType,
+  type UrdfLink,
+  type UrdfVisual as LinkGeometry,
+} from '@/types';
 
 import { applyGeometryPatchInPlace } from './robotLoaderGeometryPatch';
+import { syncLoadedRobotScene } from './loadedRobotSceneSync';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -316,6 +322,116 @@ test('applyGeometryPatchInPlace updates MJCF visual colors in place through runt
   assert.equal((visualMesh.material as THREE.MeshStandardMaterial).userData.urdfColorApplied, true);
 });
 
+test('applyGeometryPatchInPlace updates folded MJCF synthetic link colors through the parent runtime link metadata', () => {
+  const robotModel = new THREE.Group() as THREE.Group & {
+    links?: Record<string, THREE.Object3D>;
+  };
+  const runtimeParentLink = new URDFLink();
+  runtimeParentLink.name = 'base_link';
+
+  const primaryVisual = new URDFVisual();
+  primaryVisual.name = 'base_link_geom_0';
+  primaryVisual.userData.visualOrder = 0;
+  const primaryMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#808080'),
+      name: 'base_primary',
+    }),
+  );
+  primaryVisual.add(primaryMesh);
+
+  const foldedAttachmentVisual = new URDFVisual();
+  foldedAttachmentVisual.name = 'base_link_geom_1';
+  foldedAttachmentVisual.userData.visualOrder = 1;
+  const attachmentMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#999999'),
+      name: 'base_attachment',
+    }),
+  );
+  foldedAttachmentVisual.add(attachmentMesh);
+
+  runtimeParentLink.add(primaryVisual);
+  runtimeParentLink.add(foldedAttachmentVisual);
+  robotModel.add(runtimeParentLink);
+  robotModel.links = { base_link: runtimeParentLink };
+
+  syncLoadedRobotScene({
+    robot: robotModel,
+    sourceFormat: 'mjcf',
+    showCollision: false,
+    showVisual: true,
+    urdfMaterials: null,
+    robotLinks: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          color: '#808080',
+        },
+      },
+      base_link_geom_1: {
+        ...DEFAULT_LINK,
+        id: 'base_link_geom_1',
+        name: 'base_link_geom_1',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.BOX,
+          color: '#999999',
+        },
+      },
+    },
+  });
+
+  const previousLinkData = makeLink({
+    id: 'base_link_geom_1',
+    name: 'base_link_geom_1',
+    visual: makeGeometry({
+      color: '#999999',
+    }),
+  });
+  const linkData = makeLink({
+    id: 'base_link_geom_1',
+    name: 'base_link_geom_1',
+    visual: makeGeometry({
+      color: '#12ab34',
+    }),
+  });
+
+  const applied = applyGeometryPatchInPlace({
+    robotModel,
+    patch: {
+      linkName: 'base_link_geom_1',
+      previousLinkData,
+      linkData,
+      visualChanged: true,
+      visualBodiesChanged: false,
+      collisionChanged: false,
+      collisionBodiesChanged: false,
+      inertialChanged: false,
+      visibilityChanged: false,
+    },
+    assets: {},
+    showVisual: true,
+    showCollision: false,
+    linkMeshMapRef: { current: new Map<string, THREE.Mesh[]>() },
+    invalidate: () => {},
+  });
+
+  assert.equal(applied, true);
+  assert.equal((primaryMesh.material as THREE.MeshStandardMaterial).color.getHexString(), '808080');
+  assert.equal(
+    (attachmentMesh.material as THREE.MeshStandardMaterial).color.getHexString(),
+    '12ab34',
+  );
+  assert.equal(attachmentMesh.userData.parentLinkName, 'base_link_geom_1');
+});
+
 test('applyGeometryPatchInPlace rebuilds visual meshes when authored material textures change', () => {
   const originalTextureLoad = THREE.TextureLoader.prototype.load;
   const appliedTexture = new THREE.Texture();
@@ -399,6 +515,69 @@ test('applyGeometryPatchInPlace rebuilds visual meshes when authored material te
   } finally {
     THREE.TextureLoader.prototype.load = originalTextureLoad;
   }
+});
+
+test('applyGeometryPatchInPlace keeps collision boxes rendered as cylinders during in-place updates', () => {
+  const robotModel = new THREE.Group() as THREE.Group & {
+    links?: Record<string, THREE.Object3D>;
+  };
+  const linkObject = new URDFLink();
+  linkObject.name = 'base_link';
+
+  const collisionGroup = new URDFCollider();
+  const collisionMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffffff') }),
+  );
+  collisionGroup.add(collisionMesh);
+  linkObject.add(collisionGroup);
+  robotModel.add(linkObject);
+  robotModel.links = { base_link: linkObject };
+
+  const previousLinkData = makeLink({
+    id: 'base_link',
+    name: 'base_link',
+    collision: makeGeometry({
+      dimensions: { x: 0.4, y: 0.2, z: 0.2 },
+    }),
+  });
+  const linkData = makeLink({
+    id: 'base_link',
+    name: 'base_link',
+    collision: makeGeometry({
+      dimensions: { x: 1.2, y: 0.4, z: 0.2 },
+    }),
+  });
+
+  const applied = applyGeometryPatchInPlace({
+    robotModel,
+    patch: {
+      linkName: 'base_link',
+      previousLinkData,
+      linkData,
+      visualChanged: false,
+      visualBodiesChanged: false,
+      collisionChanged: true,
+      collisionBodiesChanged: false,
+      inertialChanged: false,
+      visibilityChanged: false,
+    },
+    assets: {},
+    showVisual: true,
+    showCollision: true,
+    linkMeshMapRef: { current: new Map<string, THREE.Mesh[]>() },
+    invalidate: () => {},
+  });
+
+  assert.equal(applied, true);
+  assert.equal(collisionMesh.geometry.type, 'CylinderGeometry');
+  assert.deepEqual(
+    collisionMesh.scale.toArray().map((value) => Number(value.toFixed(4))),
+    [0.2, 1.2, 0.1],
+  );
+  assert.equal(Number(collisionMesh.rotation.x.toFixed(4)), 0);
+  assert.equal(Number(collisionMesh.rotation.y.toFixed(4)), 0);
+  assert.equal(Number(collisionMesh.rotation.z.toFixed(4)), Number((Math.PI / 2).toFixed(4)));
 });
 
 test('applyGeometryPatchInPlace updates selected auxiliary visual bodies in place', () => {

@@ -12,9 +12,11 @@ export {
   generateLinkId,
   generateJointId,
   createLink,
+  createAttachedChildLink,
   createJoint,
   createEmptyRobot,
   addChildToRobot,
+  resolveDefaultChildJointOrigin,
   cloneLink,
   cloneJoint,
 } from './builders';
@@ -99,6 +101,10 @@ export {
 } from './kinematics';
 
 export { resolveMimicJointAngleTargets } from './mimic';
+export {
+  clampJointInteractionValue,
+  normalizeJointInteractionLimits,
+} from './jointInteractionLimits.js';
 
 export {
   createRobotClosedLoopConstraint,
@@ -131,8 +137,10 @@ export {
 } from './assemblyPlacement';
 
 export {
+  resolveDirectManipulableLinkIkDescriptor,
   resolveLinkIkHandleDescriptor,
   resolveLinkIkHandleDescriptors,
+  resolveSelectableIkHandleLinkId,
   solveLinkIkPositionTarget,
 } from './linkIk';
 export type {

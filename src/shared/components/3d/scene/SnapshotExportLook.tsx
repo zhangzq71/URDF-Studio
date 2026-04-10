@@ -9,6 +9,7 @@ import {
   SNAPSHOT_ENVIRONMENT_PRESET_SETTINGS,
   SNAPSHOT_GROUND_STYLE_SETTINGS,
 } from './snapshotSceneQuality';
+import { GroundShadowPlane } from './GroundShadowPlane';
 import { resolveGroundPlaneLayout } from './groundPlaneSizing';
 import { NeutralStudioEnvironment } from './NeutralStudioEnvironment';
 import { SnapshotContactShadows } from './SnapshotContactShadows';
@@ -22,11 +23,7 @@ interface SnapshotExportLookProps {
 
 const ignoreRaycast = (_raycaster: THREE.Raycaster, _intersects: THREE.Intersection[]) => undefined;
 
-export function SnapshotExportLook({
-  options,
-  theme,
-  groundOffset = 0,
-}: SnapshotExportLookProps) {
+export function SnapshotExportLook({ options, theme, groundOffset = 0 }: SnapshotExportLookProps) {
   const scene = useThree((state) => state.scene);
   const effectiveTheme = resolveEffectiveTheme(theme);
   const environmentSettings = SNAPSHOT_ENVIRONMENT_PRESET_SETTINGS[options.environmentPreset];
@@ -43,13 +40,17 @@ export function SnapshotExportLook({
   const contactSize = Math.max(10, Math.min(160, layout.size * 0.78));
   const floorSize = Math.max(18, Math.min(280, layout.size * 1.12));
   const contactShadowColor = effectiveTheme === 'light' ? '#111827' : '#000000';
-  const reflectorColor = effectiveTheme === 'light' ? '#f8fbff' : '#141b25';
+  const reflectorColor = effectiveTheme === 'light' ? '#edf3fa' : '#101720';
+  const reflectorResolution =
+    options.detailLevel === 'ultra' ? 1024 : options.detailLevel === 'high' ? 896 : 768;
 
   return (
     <>
       <Suspense fallback={null}>
         {environmentSettings.kind === 'studio' ? (
-          <NeutralStudioEnvironment intensity={environmentSettings.environmentIntensity[effectiveTheme]} />
+          <NeutralStudioEnvironment
+            intensity={environmentSettings.environmentIntensity[effectiveTheme]}
+          />
         ) : null}
         {environmentSettings.kind === 'hdri' ? (
           <Environment
@@ -79,6 +80,17 @@ export function SnapshotExportLook({
         />
       ) : null}
 
+      {options.groundStyle === 'shadow' ? (
+        <GroundShadowPlane
+          name="SnapshotGroundShadowPlane"
+          theme={theme}
+          groundOffset={groundOffset}
+          centerX={layout.centerX}
+          centerY={layout.centerY}
+          size={floorSize}
+        />
+      ) : null}
+
       {options.groundStyle === 'reflective' ? (
         <mesh
           name="SnapshotReflectiveFloor"
@@ -93,17 +105,17 @@ export function SnapshotExportLook({
           <MeshReflectorMaterial
             color={reflectorColor}
             roughness={groundSettings.reflectorRoughness}
-            metalness={0.08}
+            metalness={0.18}
             blur={groundSettings.reflectorBlur}
-            resolution={768}
-            mixBlur={groundSettings.reflectorStrength}
+            resolution={reflectorResolution}
+            mixBlur={groundSettings.reflectorStrength * 0.72}
             mixStrength={groundSettings.reflectorStrength}
-            mixContrast={1.2}
+            mixContrast={1.45}
             mirror={groundSettings.reflectorMirror}
-            depthScale={0.18}
-            minDepthThreshold={0.82}
-            maxDepthThreshold={1}
-            depthToBlurRatioBias={0.18}
+            depthScale={0.26}
+            minDepthThreshold={0.78}
+            maxDepthThreshold={1.02}
+            depthToBlurRatioBias={0.22}
             reflectorOffset={0.01}
           />
         </mesh>

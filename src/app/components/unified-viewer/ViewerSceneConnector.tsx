@@ -1,22 +1,29 @@
 import React from 'react';
 
-import type { InteractionSelection, RobotFile, RobotState } from '@/types';
-import type { URDFViewerController } from '@/features/urdf-viewer/hooks/useURDFViewerController';
 import type {
+  AssemblyState,
+  InteractionSelection,
+  RobotFile,
+  RobotState,
+  UrdfOrigin,
+} from '@/types';
+import type {
+  ViewerController,
   ViewerDocumentLoadEvent,
   ViewerHelperKind,
+  ViewerRobotDataResolution,
   ViewerRobotSourceFormat,
-} from '@/features/urdf-viewer/types';
-import type { ViewerRobotDataResolution } from '@/features/urdf-viewer/utils/viewerRobotData';
-import type { ViewerResourceScope } from '@/features/urdf-viewer/utils/viewerResourceScope';
-import { URDFViewerScene } from '@/features/urdf-viewer/components/URDFViewerScene';
+  ViewerResourceScope,
+} from '@/features/editor';
+import { ViewerScene } from '@/features/editor';
 import { useSelectionStore } from '@/store/selectionStore';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
 
 import { buildUnifiedViewerSceneProps } from '@/app/utils/unifiedViewerSceneProps';
 import type { FilePreviewState } from './types';
 
 interface ViewerSceneConnectorProps {
-  controller: URDFViewerController;
+  controller: ViewerController;
   active: boolean;
   activePreview?: FilePreviewState;
   viewerResourceScope: ViewerResourceScope;
@@ -66,7 +73,23 @@ interface ViewerSceneConnectorProps {
     objectIndex?: number,
   ) => void;
   isMeshPreview?: boolean;
+  ikDragActive?: boolean;
   viewerReloadKey?: number;
+  assemblyState?: AssemblyState | null;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  }) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: {
+      position: { x: number; y: number; z: number };
+      rotation: { r: number; p: number; y: number };
+    },
+    options?: import('@/types/viewer').UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (bridgeId: string, origin: UrdfOrigin) => void;
   sourceSceneAssemblyComponentId?: string | null;
   sourceSceneAssemblyComponentTransform?: {
     position: { x: number; y: number; z: number };
@@ -107,7 +130,13 @@ export const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
   onCollisionTransformPreview,
   onCollisionTransform,
   isMeshPreview = false,
+  ikDragActive = false,
   viewerReloadKey = 0,
+  assemblyState = null,
+  assemblySelection,
+  onAssemblyTransform,
+  onComponentTransform,
+  onBridgeTransform,
   sourceSceneAssemblyComponentId = null,
   sourceSceneAssemblyComponentTransform = null,
   showSourceSceneAssemblyComponentControls = false,
@@ -145,12 +174,18 @@ export const ViewerSceneConnector = React.memo(function ViewerSceneConnector({
     onCollisionTransformPreview,
     onCollisionTransform,
     isMeshPreview,
+    ikDragActive,
     viewerReloadKey,
+    assemblyState,
+    assemblySelection,
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
     sourceSceneAssemblyComponentId,
     sourceSceneAssemblyComponentTransform,
     showSourceSceneAssemblyComponentControls,
     onSourceSceneAssemblyComponentTransform,
   });
 
-  return <URDFViewerScene {...sceneProps} t={t} />;
+  return <ViewerScene {...sceneProps} t={t} />;
 });
