@@ -64,6 +64,10 @@ export interface AppExtensionConfig {
 export interface AppExposedActions {
   importFiles: (files: FileList | File[]) => void;
   openLibraryExport: (file: RobotFile) => void;
+  openAIInspection: () => void;
+  openAIConversation: () => void;
+  openIkTool: () => void;
+  openCollisionOptimizer: () => void;
 }
 
 interface AppContentProps {
@@ -1170,10 +1174,19 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
   );
 
   // Expose internal actions to external consumers (ref keeps the reference fresh)
+  const layoutActionsRef = useRef<{
+    openIkTool: () => void;
+    openCollisionOptimizer: () => void;
+  }>({ openIkTool: () => {}, openCollisionOptimizer: () => {} });
+
   const exposedActionsRef = useRef<AppExposedActions | null>(null);
   exposedActionsRef.current = {
     importFiles: handleImport,
     openLibraryExport: handleOpenLibraryExportDialog,
+    openAIInspection: handleOpenAIInspection,
+    openAIConversation: handleOpenAIConversation,
+    openIkTool: () => layoutActionsRef.current.openIkTool(),
+    openCollisionOptimizer: () => layoutActionsRef.current.openCollisionOptimizer(),
   };
 
   useEffect(() => {
@@ -1251,6 +1264,9 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         importPreparationOverlay={importPreparationOverlay}
         headerQuickAction={extensions?.config?.headerQuickAction}
         headerSecondaryAction={extensions?.config?.headerSecondaryAction}
+        onExposeLayoutActions={(actions) => {
+          layoutActionsRef.current = actions;
+        }}
       />
 
       {/* Modals */}

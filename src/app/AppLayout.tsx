@@ -108,6 +108,11 @@ interface AppLayoutProps {
   onLoadRobot: (file: RobotFile) => void;
   viewerReloadKey: number;
   importPreparationOverlay?: ImportPreparationOverlayState | null;
+  /** Called once layout handlers are ready, so the parent can expose them externally */
+  onExposeLayoutActions?: (actions: {
+    openIkTool: () => void;
+    openCollisionOptimizer: () => void;
+  }) => void;
 }
 
 export function AppLayout({
@@ -130,6 +135,7 @@ export function AppLayout({
   onLoadRobot,
   viewerReloadKey,
   importPreparationOverlay = null,
+  onExposeLayoutActions,
 }: AppLayoutProps) {
   // UI Store (grouped with useShallow to reduce subscriptions)
   const {
@@ -780,6 +786,14 @@ export function AppLayout({
     handleSetIkDragActive(true);
     setIsIkToolPanelOpen(true);
   }, [handleSetIkDragActive, setViewConfig]);
+
+  // Expose layout-level handlers to the parent
+  useEffect(() => {
+    onExposeLayoutActions?.({
+      openIkTool: handleOpenIkTool,
+      openCollisionOptimizer: handleOpenCollisionOptimizer,
+    });
+  }, [onExposeLayoutActions, handleOpenIkTool, handleOpenCollisionOptimizer]);
 
   const handleSetDetailOptionsPanelVisibility = useCallback(
     (show: boolean) => {
