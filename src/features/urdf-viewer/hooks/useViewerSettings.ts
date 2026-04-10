@@ -311,11 +311,15 @@ export function useViewerSettings(): ViewerSettings {
       setViewOption('showCollision', resolvedValue);
       if (resolvedValue) {
         bumpInteractionLayer('collision');
+        if (!showCollisionAlwaysOnTop && activeOverlayLayer === null) {
+          setActiveOverlayLayerState('collision');
+        }
       } else if (showCollisionAlwaysOnTop) {
         setActiveOverlayLayer(null);
       }
     },
     [
+      activeOverlayLayer,
       bumpInteractionLayer,
       setActiveOverlayLayer,
       setViewOption,

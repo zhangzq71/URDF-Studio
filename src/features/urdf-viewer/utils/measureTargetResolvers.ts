@@ -4,10 +4,13 @@ import type { InteractionHelperKind, UrdfLink } from '@/types';
 import type { MeasureAnchorMode, MeasureTarget } from './measurements.ts';
 import {
   createMeasureTarget,
+  createRigidWorldPoseMatrix,
   getLinkCenterOfMassLocal,
   getLinkMeasurePoint,
   getLinkFrameWorldPoint,
+  getObjectWorldPoseMatrix,
   getObjectWorldCenter,
+  getPoseMatrixFromPointAndObjectOrientation,
 } from './measurements.ts';
 import type { ViewerRobotDataResolution } from './viewerRobotData.ts';
 import { getSyntheticGeomParentName, resolveRuntimeGeometryRoot } from './runtimeGeometrySelection';
@@ -279,6 +282,7 @@ export function resolveRobotMeasureTargetFromSelection(
       objectType: 'visual',
       objectIndex: 0,
       point: getLinkFrameWorldPoint(jointObject),
+      poseWorldMatrix: getObjectWorldPoseMatrix(jointObject),
     });
   }
 
@@ -305,11 +309,16 @@ export function resolveRobotMeasureTargetFromSelection(
       objectIndex,
     );
     if (targetGeometryRoot) {
+      const targetPoint = getObjectWorldCenter(targetGeometryRoot);
       return createMeasureTarget({
         linkName: effectiveSelection.id,
         objectType,
         objectIndex,
-        point: getObjectWorldCenter(targetGeometryRoot),
+        point: targetPoint,
+        poseWorldMatrix: getPoseMatrixFromPointAndObjectOrientation(
+          targetPoint,
+          targetGeometryRoot,
+        ),
       });
     }
   }
@@ -322,21 +331,24 @@ export function resolveRobotMeasureTargetFromSelection(
         objectType,
         objectIndex,
         point: ikHandlePoint,
+        poseWorldMatrix: getObjectWorldPoseMatrix(linkObject.userData.__ikHandle),
       });
     }
   }
 
+  const targetPoint = getLinkMeasurePoint(
+    linkObject,
+    resolvedLinkData,
+    resolvedAnchorMode,
+    objectType,
+    objectIndex,
+  );
   return createMeasureTarget({
     linkName: effectiveSelection.id,
     objectType,
     objectIndex,
-    point: getLinkMeasurePoint(
-      linkObject,
-      resolvedLinkData,
-      resolvedAnchorMode,
-      objectType,
-      objectIndex,
-    ),
+    point: targetPoint,
+    poseWorldMatrix: getPoseMatrixFromPointAndObjectOrientation(targetPoint, linkObject),
   });
 }
 
@@ -367,25 +379,39 @@ export function resolveUsdMeasureTargetFromSelection(
   const linkFramePoint = linkWorldMatrix
     ? new THREE.Vector3().setFromMatrixPosition(linkWorldMatrix)
     : null;
+  const linkWorldQuaternion = linkWorldMatrix
+    ? new THREE.Quaternion().setFromRotationMatrix(linkWorldMatrix)
+    : null;
 
   if (resolvedAnchorMode === 'centerOfMass' && linkWorldMatrix) {
     const centerOfMassLocal = getLinkCenterOfMassLocal(linkData);
     if (centerOfMassLocal) {
+      const targetPoint = centerOfMassLocal.applyMatrix4(linkWorldMatrix);
       return createMeasureTarget({
         linkName: linkId,
         objectType,
         objectIndex,
-        point: centerOfMassLocal.applyMatrix4(linkWorldMatrix),
+        point: targetPoint,
+        poseWorldMatrix: linkWorldQuaternion
+          ? createRigidWorldPoseMatrix(targetPoint, linkWorldQuaternion)
+          : null,
       });
     }
+
+    return null;
   }
 
-  if ((resolvedAnchorMode === 'frame' || resolvedAnchorMode === 'centerOfMass') && linkFramePoint) {
+  if (resolvedAnchorMode === 'centerOfMass') {
+    return null;
+  }
+
+  if (resolvedAnchorMode === 'frame' && linkFramePoint) {
     return createMeasureTarget({
       linkName: linkId,
       objectType,
       objectIndex,
       point: linkFramePoint,
+      poseWorldMatrix: linkWorldMatrix,
     });
   }
 
@@ -393,22 +419,17 @@ export function resolveUsdMeasureTargetFromSelection(
     const meshes = options.meshesByLinkKey.get(`${linkPath}:${objectType}`) || [];
     const targetMesh = pickUsdMeasureMesh(meshes, objectIndex);
     if (targetMesh) {
+      const targetPoint = getObjectWorldCenter(targetMesh);
       return createMeasureTarget({
         linkName: linkId,
         objectType,
         objectIndex,
-        point: getObjectWorldCenter(targetMesh),
+        point: targetPoint,
+        poseWorldMatrix: getPoseMatrixFromPointAndObjectOrientation(targetPoint, targetMesh),
       });
     }
-  }
 
-  if (linkFramePoint) {
-    return createMeasureTarget({
-      linkName: linkId,
-      objectType,
-      objectIndex,
-      point: linkFramePoint,
-    });
+    return null;
   }
 
   return null;

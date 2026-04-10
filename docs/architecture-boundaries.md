@@ -19,8 +19,8 @@ Rules for new code:
 
 ### Feature Public APIs
 
-- `visualizer` exposes controller + scene/panel surface through `src/features/visualizer/index.ts`
-- `urdf-viewer` exposes controller + scene/panel surface through `src/features/urdf-viewer/index.ts`
+- `editor`（统一 Editor 公开入口）exposes controller + scene/panel surface through `src/features/editor/index.ts`
+- `urdf-viewer`（Editor 实现子目录）retains runtime/components/utils internals through `src/features/urdf-viewer/index.ts`
 - `file-io` exposes import/export entry points through `src/features/file-io/index.ts`
 
 ### Canonical Data Sources

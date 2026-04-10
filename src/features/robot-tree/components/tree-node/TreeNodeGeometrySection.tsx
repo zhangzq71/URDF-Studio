@@ -3,12 +3,18 @@ import { Eye, EyeOff, Shapes, Shield } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
 import { matchesSelection, type Selection } from '@/store/selectionStore';
 import { GeometryType, type RobotState } from '@/types';
-import type { TreeNodeContextMenuTarget, VisibleCollisionBody } from './types';
+import type {
+  TreeNodeContextMenuTarget,
+  TreeNodeEditingTarget,
+  VisibleCollisionBody,
+} from './types';
 import {
   getGeometryVisibilityButtonClass,
   getTreeConnectorElbowClass,
   getTreeConnectorElbowStyle,
   resolveTreeRowStateClass,
+  TREE_LINK_NAME_TEXT_CLASS,
+  TREE_RENAME_INPUT_BASE_CLASS,
 } from './presentation';
 
 interface TreeNodeGeometrySectionProps {
@@ -17,6 +23,8 @@ interface TreeNodeGeometrySectionProps {
   robotSelection: RobotState['selection'];
   hoveredSelection: Selection;
   attentionSelection: Selection;
+  editingTarget: TreeNodeEditingTarget | null;
+  renameInputRef: RefObject<HTMLInputElement | null>;
   visualRowRef: RefObject<HTMLDivElement | null>;
   primaryCollisionRowRef: RefObject<HTMLDivElement | null>;
   collisionBodyRowRefs: RefObject<Record<number, HTMLDivElement | null>>;
@@ -26,6 +34,9 @@ interface TreeNodeGeometrySectionProps {
   isLinkSelected: boolean;
   selectedObjectIndex: number;
   t: TranslationKeys;
+  onUpdateRenameDraft: (value: string) => void;
+  onCommitRenaming: () => void;
+  onCancelRenaming: () => void;
   onSetHoveredSelection: (selection: Selection) => void;
   onClearHover: () => void;
   onOpenContextMenu: (event: MouseEvent<HTMLDivElement>, target: TreeNodeContextMenuTarget) => void;
@@ -44,6 +55,8 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
   robotSelection,
   hoveredSelection,
   attentionSelection,
+  editingTarget,
+  renameInputRef,
   visualRowRef,
   primaryCollisionRowRef,
   collisionBodyRowRefs,
@@ -53,6 +66,9 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
   isLinkSelected,
   selectedObjectIndex,
   t,
+  onUpdateRenameDraft,
+  onCommitRenaming,
+  onCancelRenaming,
   onSetHoveredSelection,
   onClearHover,
   onOpenContextMenu,
@@ -64,6 +80,8 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
   onToggleCollisionBodyVisibility,
   readOnly,
 }: TreeNodeGeometrySectionProps) {
+  const getGeometryDisplayName = (name: string | undefined, fallbackLabel: string) =>
+    name?.trim() || fallbackLabel;
   const isVisualSelected =
     isLinkSelected &&
     robotSelection.subType === 'visual' &&
@@ -97,6 +115,18 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
   const isLinkVisible = link.visible !== false;
   const isVisualVisible = link.visual.visible !== false;
   const isPrimaryCollisionVisible = link.collision.visible !== false;
+  const visualLabel = getGeometryDisplayName(link.visual.name, t.visualGeometry);
+  const primaryCollisionLabel = getGeometryDisplayName(link.collision.name, t.collision);
+  const isEditingVisual =
+    editingTarget?.type === 'geometry' &&
+    editingTarget.linkId === linkId &&
+    editingTarget.subType === 'visual' &&
+    editingTarget.objectIndex === 0;
+  const isEditingPrimaryCollision =
+    editingTarget?.type === 'geometry' &&
+    editingTarget.linkId === linkId &&
+    editingTarget.subType === 'collision' &&
+    editingTarget.objectIndex === 0;
   const isVisualInheritedHidden = !isLinkVisible && isVisualVisible;
   const isVisualEffectivelyVisible = isLinkVisible && isVisualVisible;
   const isPrimaryCollisionInheritedHidden = !isLinkVisible && isPrimaryCollisionVisible;
@@ -115,7 +145,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
               isAttentionHighlighted: isVisualAttentionHighlighted,
             },
           )}`}
-          onClick={readOnly ? undefined : onSelectVisual}
+          onClick={readOnly || isEditingVisual ? undefined : onSelectVisual}
           onContextMenu={
             readOnly
               ? undefined
@@ -125,6 +155,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
                     linkId,
                     subType: 'visual',
                     objectIndex: 0,
+                    name: link.visual.name?.trim() || '',
                   });
                 }
           }
@@ -141,7 +172,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
           }
           onMouseLeave={readOnly ? undefined : onClearHover}
           style={{ marginLeft: `${geometryRowIndentPx}px` }}
-          title={t.visualGeometry}
+          title={visualLabel}
         >
           <div
             className={getTreeConnectorElbowClass(
@@ -161,9 +192,25 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
               }
             />
           </div>
-          <span className="text-[10px] font-medium truncate flex-1 min-w-0">
-            {t.visualGeometry}
-          </span>
+          {isEditingVisual ? (
+            <input
+              ref={renameInputRef}
+              value={editingTarget.draft}
+              onChange={(event) => onUpdateRenameDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onBlur={onCommitRenaming}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  onCommitRenaming();
+                } else if (event.key === 'Escape') {
+                  onCancelRenaming();
+                }
+              }}
+              className={`${TREE_LINK_NAME_TEXT_CLASS} ${TREE_RENAME_INPUT_BASE_CLASS} flex-1 bg-input-bg border-border-strong text-text-primary focus:border-system-blue`}
+            />
+          ) : (
+            <span className="text-[10px] font-medium truncate flex-1 min-w-0">{visualLabel}</span>
+          )}
           {!readOnly && (
             <button
               type="button"
@@ -192,7 +239,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
               isAttentionHighlighted: isPrimaryCollisionAttentionHighlighted,
             },
           )}`}
-          onClick={readOnly ? undefined : onSelectPrimaryCollision}
+          onClick={readOnly || isEditingPrimaryCollision ? undefined : onSelectPrimaryCollision}
           onContextMenu={
             readOnly
               ? undefined
@@ -202,6 +249,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
                     linkId,
                     subType: 'collision',
                     objectIndex: 0,
+                    name: link.collision.name?.trim() || '',
                   });
                 }
           }
@@ -218,7 +266,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
           }
           onMouseLeave={readOnly ? undefined : onClearHover}
           style={{ marginLeft: `${geometryRowIndentPx}px` }}
-          title={t.collision}
+          title={primaryCollisionLabel}
         >
           <div
             className={getTreeConnectorElbowClass(
@@ -242,7 +290,27 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
               }
             />
           </div>
-          <span className="text-[10px] font-medium truncate flex-1 min-w-0">{t.collision}</span>
+          {isEditingPrimaryCollision ? (
+            <input
+              ref={renameInputRef}
+              value={editingTarget.draft}
+              onChange={(event) => onUpdateRenameDraft(event.target.value)}
+              onClick={(event) => event.stopPropagation()}
+              onBlur={onCommitRenaming}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  onCommitRenaming();
+                } else if (event.key === 'Escape') {
+                  onCancelRenaming();
+                }
+              }}
+              className={`${TREE_LINK_NAME_TEXT_CLASS} ${TREE_RENAME_INPUT_BASE_CLASS} flex-1 bg-input-bg border-border-strong text-text-primary focus:border-system-blue`}
+            />
+          ) : (
+            <span className="text-[10px] font-medium truncate flex-1 min-w-0">
+              {primaryCollisionLabel}
+            </span>
+          )}
           {!readOnly && (
             <button
               type="button"
@@ -261,6 +329,8 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
       )}
 
       {visibleCollisionBodies.map(({ body, bodyIndex, objectIndex }, index) => {
+        const collisionFallbackLabel = `${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`;
+        const collisionBodyLabel = getGeometryDisplayName(body.name, collisionFallbackLabel);
         const isCollisionBodyHovered = matchesSelection(hoveredSelection, {
           type: 'link',
           id: linkId,
@@ -280,6 +350,11 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
         const isCollisionBodyVisible = body.visible !== false;
         const isCollisionBodyInheritedHidden = !isLinkVisible && isCollisionBodyVisible;
         const isCollisionBodyEffectivelyVisible = isLinkVisible && isCollisionBodyVisible;
+        const isEditingCollisionBody =
+          editingTarget?.type === 'geometry' &&
+          editingTarget.linkId === linkId &&
+          editingTarget.subType === 'collision' &&
+          editingTarget.objectIndex === objectIndex;
 
         return (
           <div
@@ -295,7 +370,11 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
                 isAttentionHighlighted: isCollisionBodyAttentionHighlighted,
               },
             )}`}
-            onClick={readOnly ? undefined : () => onSelectCollisionBody(objectIndex)}
+            onClick={
+              readOnly || isEditingCollisionBody
+                ? undefined
+                : () => onSelectCollisionBody(objectIndex)
+            }
             onContextMenu={
               readOnly
                 ? undefined
@@ -305,6 +384,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
                       linkId,
                       subType: 'collision',
                       objectIndex,
+                      name: body.name?.trim() || '',
                     });
                   }
             }
@@ -321,7 +401,7 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
             }
             onMouseLeave={readOnly ? undefined : onClearHover}
             style={{ marginLeft: `${geometryRowIndentPx}px` }}
-            title={`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
+            title={collisionBodyLabel}
           >
             <div
               className={getTreeConnectorElbowClass(
@@ -351,9 +431,27 @@ export const TreeNodeGeometrySection = memo(function TreeNodeGeometrySection({
                 }
               />
             </div>
-            <span className="text-[10px] font-medium truncate flex-1 min-w-0">
-              {`${t.collision} ${index + (hasPrimaryCollision ? 2 : 1)}`}
-            </span>
+            {isEditingCollisionBody ? (
+              <input
+                ref={renameInputRef}
+                value={editingTarget.draft}
+                onChange={(event) => onUpdateRenameDraft(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onBlur={onCommitRenaming}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    onCommitRenaming();
+                  } else if (event.key === 'Escape') {
+                    onCancelRenaming();
+                  }
+                }}
+                className={`${TREE_LINK_NAME_TEXT_CLASS} ${TREE_RENAME_INPUT_BASE_CLASS} flex-1 bg-input-bg border-border-strong text-text-primary focus:border-system-blue`}
+              />
+            ) : (
+              <span className="text-[10px] font-medium truncate flex-1 min-w-0">
+                {collisionBodyLabel}
+              </span>
+            )}
             {!readOnly && (
               <button
                 type="button"

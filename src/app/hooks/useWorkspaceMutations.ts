@@ -25,6 +25,14 @@ import type {
 } from '@/types';
 import type { UpdateCommitMode, UpdateCommitOptions } from '@/types/viewer';
 import { usePendingHistoryCoordinator } from './usePendingHistoryCoordinator';
+import { areAssemblyTransformsEqual } from './workspace-mutations/assemblyTransforms';
+import { applyAssemblyUpdate } from './workspace-mutations/assemblyUpdate';
+import {
+  findAddedCollisionGeometryPatch,
+  findRemovedCollisionGeometryObjectIndex,
+  findUpdatedCollisionGeometryPatch,
+} from './workspace-mutations/collisionGeometryDiff';
+import { renameComponentRobotRoot } from './workspace-mutations/renameComponentRobotRoot';
 import type { MJCFRenameOperation } from '../utils/mjcfEditableSourcePatch';
 
 interface UseWorkspaceMutationsParams {
@@ -140,171 +148,6 @@ export function useWorkspaceMutations({
   clearPendingCollisionTransform,
   handleTransformPendingChange,
 }: UseWorkspaceMutationsParams) {
-  const areAssemblyTransformsEqual = useCallback(
-    (left?: AssemblyTransform | null, right?: AssemblyTransform | null) => {
-      const normalizedLeft = cloneAssemblyTransform(left);
-      const normalizedRight = cloneAssemblyTransform(right);
-      return (
-        normalizedLeft.position.x === normalizedRight.position.x &&
-        normalizedLeft.position.y === normalizedRight.position.y &&
-        normalizedLeft.position.z === normalizedRight.position.z &&
-        normalizedLeft.rotation.r === normalizedRight.rotation.r &&
-        normalizedLeft.rotation.p === normalizedRight.rotation.p &&
-        normalizedLeft.rotation.y === normalizedRight.rotation.y
-      );
-    },
-    [],
-  );
-
-  const createCollisionGeometrySignature = useCallback(
-    (geometry: UrdfLink['collision']): string => {
-      return JSON.stringify({
-        type: geometry.type,
-        dimensions: geometry.dimensions,
-        color: geometry.color,
-        meshPath: geometry.meshPath ?? null,
-        assetRef: geometry.assetRef ?? null,
-        visible: geometry.visible ?? null,
-        origin: geometry.origin,
-        mjcfHfield: geometry.mjcfHfield
-          ? {
-              name: geometry.mjcfHfield.name ?? null,
-              file: geometry.mjcfHfield.file ?? null,
-              nrow: geometry.mjcfHfield.nrow ?? null,
-              ncol: geometry.mjcfHfield.ncol ?? null,
-            }
-          : null,
-      });
-    },
-    [],
-  );
-
-  const findRemovedCollisionGeometryObjectIndex = useCallback(
-    (currentLink: UrdfLink, nextLink: UrdfLink): number | null => {
-      const currentEntries = getCollisionGeometryEntries(currentLink);
-      const nextEntries = getCollisionGeometryEntries(nextLink);
-
-      if (currentEntries.length !== nextEntries.length + 1) {
-        return null;
-      }
-
-      const nextSignatures = nextEntries.map((entry) =>
-        createCollisionGeometrySignature(entry.geometry),
-      );
-      for (let removeIndex = 0; removeIndex < currentEntries.length; removeIndex += 1) {
-        const candidateSignatures = currentEntries
-          .filter((_entry, index) => index !== removeIndex)
-          .map((entry) => createCollisionGeometrySignature(entry.geometry));
-
-        if (
-          candidateSignatures.length === nextSignatures.length &&
-          candidateSignatures.every((signature, index) => signature === nextSignatures[index])
-        ) {
-          return removeIndex;
-        }
-      }
-
-      return null;
-    },
-    [createCollisionGeometrySignature],
-  );
-
-  const createEditableCollisionGeometrySignature = useCallback(
-    (geometry: UrdfLink['collision']): string => {
-      return JSON.stringify({
-        type: geometry.type,
-        dimensions: geometry.dimensions,
-        color: geometry.color,
-        meshPath: geometry.meshPath ?? null,
-        assetRef: geometry.assetRef ?? null,
-        origin: geometry.origin,
-        mjcfHfield: geometry.mjcfHfield
-          ? {
-              name: geometry.mjcfHfield.name ?? null,
-              file: geometry.mjcfHfield.file ?? null,
-              nrow: geometry.mjcfHfield.nrow ?? null,
-              ncol: geometry.mjcfHfield.ncol ?? null,
-            }
-          : null,
-      });
-    },
-    [],
-  );
-
-  const findAddedCollisionGeometryPatch = useCallback(
-    (
-      currentLink: UrdfLink,
-      nextLink: UrdfLink,
-    ): { objectIndex: number; geometry: UrdfLink['collision'] } | null => {
-      const currentEntries = getCollisionGeometryEntries(currentLink);
-      const nextEntries = getCollisionGeometryEntries(nextLink);
-
-      if (nextEntries.length !== currentEntries.length + 1) {
-        return null;
-      }
-
-      const currentSignatures = currentEntries.map((entry) =>
-        createEditableCollisionGeometrySignature(entry.geometry),
-      );
-      for (let addIndex = 0; addIndex < nextEntries.length; addIndex += 1) {
-        const candidateSignatures = nextEntries
-          .filter((_entry, index) => index !== addIndex)
-          .map((entry) => createEditableCollisionGeometrySignature(entry.geometry));
-
-        if (
-          candidateSignatures.length === currentSignatures.length &&
-          candidateSignatures.every((signature, index) => signature === currentSignatures[index])
-        ) {
-          return {
-            objectIndex: nextEntries[addIndex].objectIndex,
-            geometry: nextEntries[addIndex].geometry,
-          };
-        }
-      }
-
-      return null;
-    },
-    [createEditableCollisionGeometrySignature],
-  );
-
-  const findUpdatedCollisionGeometryPatch = useCallback(
-    (
-      currentLink: UrdfLink,
-      nextLink: UrdfLink,
-    ): { objectIndex: number; geometry: UrdfLink['collision'] } | null => {
-      const currentEntries = getCollisionGeometryEntries(currentLink);
-      const nextEntries = getCollisionGeometryEntries(nextLink);
-
-      if (currentEntries.length !== nextEntries.length) {
-        return null;
-      }
-
-      let changedEntry: { objectIndex: number; geometry: UrdfLink['collision'] } | null = null;
-
-      for (let index = 0; index < currentEntries.length; index += 1) {
-        const currentSignature = createEditableCollisionGeometrySignature(
-          currentEntries[index].geometry,
-        );
-        const nextSignature = createEditableCollisionGeometrySignature(nextEntries[index].geometry);
-        if (currentSignature === nextSignature) {
-          continue;
-        }
-
-        if (changedEntry) {
-          return null;
-        }
-
-        changedEntry = {
-          objectIndex: currentEntries[index].objectIndex,
-          geometry: nextEntries[index].geometry,
-        };
-      }
-
-      return changedEntry;
-    },
-    [createEditableCollisionGeometrySignature],
-  );
-
   const createRobotSnapshot = useCallback(() => {
     const state = useRobotStore.getState();
     return structuredClone({
@@ -351,63 +194,24 @@ export function useWorkspaceMutations({
       nextRootNameRaw: string,
       options?: { skipHistory?: boolean; label?: string },
     ) => {
-      const nextRootName = nextRootNameRaw.trim();
-      if (!nextRootName) return;
-
       const latestAssembly = useAssemblyStore.getState().assemblyState;
       if (!latestAssembly) return;
       const component = latestAssembly.components[componentId];
       if (!component) return;
 
-      const rootId = component.robot.rootLinkId;
-      const rootLink = component.robot.links[rootId];
-      if (!rootLink) return;
+      const renamedRoot = renameComponentRobotRoot(component.robot, nextRootNameRaw);
+      if (!renamedRoot) return;
 
-      const oldRootName = rootLink.name;
-      const oldPrefix = `${oldRootName}_`;
-      const renameOperations: MJCFRenameOperation[] =
-        oldRootName === nextRootName
-          ? []
-          : [{ kind: 'link', currentName: oldRootName, nextName: nextRootName }];
-
-      const nextLinks: Record<string, UrdfLink> = { ...component.robot.links };
-      nextLinks[rootId] = { ...rootLink, name: nextRootName };
-
-      Object.entries(component.robot.links).forEach(([id, currentLink]) => {
-        if (id === rootId || !currentLink.name.startsWith(oldPrefix)) return;
-        const nextName = `${nextRootName}_${currentLink.name.slice(oldPrefix.length)}`;
-        nextLinks[id] = {
-          ...currentLink,
-          name: nextName,
-        };
-        renameOperations.push({
-          kind: 'link',
-          currentName: currentLink.name,
-          nextName,
-        });
-      });
-
-      const nextJoints: Record<string, UrdfJoint> = { ...component.robot.joints };
-      Object.entries(component.robot.joints).forEach(([id, joint]) => {
-        if (!joint.name.startsWith(oldPrefix)) return;
-        const nextName = `${nextRootName}_${joint.name.slice(oldPrefix.length)}`;
-        nextJoints[id] = {
-          ...joint,
-          name: nextName,
-        };
-        renameOperations.push({
-          kind: 'joint',
-          currentName: joint.name,
-          nextName,
-        });
-      });
-
-      updateComponentRobot(componentId, { links: nextLinks, joints: nextJoints }, options);
-      updateComponentName(componentId, nextRootName, options);
-      if (renameOperations.length) {
+      updateComponentRobot(
+        componentId,
+        { links: renamedRoot.nextLinks, joints: renamedRoot.nextJoints },
+        options,
+      );
+      updateComponentName(componentId, renamedRoot.nextRootName, options);
+      if (renamedRoot.renameOperations.length) {
         patchEditableSourceRenameEntities?.({
           sourceFileName: component.sourceFile,
-          operations: renameOperations,
+          operations: renamedRoot.renameOperations,
         });
       }
     },
@@ -426,155 +230,24 @@ export function useWorkspaceMutations({
         sidebarTab === 'workspace' ? useAssemblyStore.getState().assemblyState : null;
 
       if (latestAssemblyState) {
-        for (const comp of Object.values(latestAssemblyState.components)) {
-          const resolvedLinkId = type === 'link' ? resolveLinkKey(comp.robot.links, id) : null;
-          if (type === 'link' && resolvedLinkId) {
-            const currentLink = comp.robot.links[resolvedLinkId];
-            const nextLink = data as UrdfLink;
-            const addedCollisionPatch = findAddedCollisionGeometryPatch(currentLink, nextLink);
-            const removedCollisionObjectIndex = findRemovedCollisionGeometryObjectIndex(
-              currentLink,
-              nextLink,
-            );
-            const updatedCollisionPatch =
-              addedCollisionPatch === null && removedCollisionObjectIndex === null
-                ? findUpdatedCollisionGeometryPatch(currentLink, nextLink)
-                : null;
-            const historyKey =
-              options.historyKey ?? `assembly:component:${comp.id}:link:${resolvedLinkId}`;
-            const historyLabel = options.historyLabel ?? 'Update assembly component';
-            const isRootLink = resolvedLinkId === comp.robot.rootLinkId;
-
-            if (isRootLink && currentLink.name !== nextLink.name) {
-              ensurePendingAssemblyHistory(historyKey, historyLabel);
-              renameComponentRootWithDefaults(comp.id, nextLink.name, {
-                skipHistory: true,
-                label: historyLabel,
-              });
-
-              const latestAssembly = useAssemblyStore.getState().assemblyState;
-              const latestComp = latestAssembly?.components[comp.id];
-              const latestRoot = latestComp?.robot.links[resolvedLinkId];
-              if (latestComp && latestRoot) {
-                updateComponentRobot(
-                  comp.id,
-                  {
-                    links: {
-                      ...latestComp.robot.links,
-                      [resolvedLinkId]: {
-                        ...latestRoot,
-                        ...nextLink,
-                        name: nextLink.name.trim() || latestRoot.name,
-                      },
-                    },
-                  },
-                  {
-                    skipHistory: true,
-                    label: historyLabel,
-                  },
-                );
-              }
-
-              if (commitMode === 'immediate') {
-                commitPendingAssemblyHistory(historyKey);
-              } else if (commitMode !== 'manual') {
-                schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-              }
-              return;
-            }
-
-            ensurePendingAssemblyHistory(historyKey, historyLabel);
-            updateComponentRobot(
-              comp.id,
-              {
-                links: { ...comp.robot.links, [resolvedLinkId]: nextLink },
-              },
-              {
-                skipHistory: true,
-                label: historyLabel,
-              },
-            );
-            if (currentLink.name !== nextLink.name) {
-              patchEditableSourceRenameEntities?.({
-                sourceFileName: comp.sourceFile,
-                operations: [
-                  {
-                    kind: 'link',
-                    currentName: currentLink.name,
-                    nextName: nextLink.name,
-                  },
-                ],
-              });
-            }
-            if (addedCollisionPatch) {
-              patchEditableSourceAddCollisionBody?.({
-                sourceFileName: comp.sourceFile,
-                linkName: currentLink.name,
-                geometry: addedCollisionPatch.geometry,
-              });
-            }
-            if (removedCollisionObjectIndex !== null) {
-              patchEditableSourceDeleteCollisionBody?.({
-                sourceFileName: comp.sourceFile,
-                linkName: currentLink.name,
-                objectIndex: removedCollisionObjectIndex,
-              });
-            }
-            if (updatedCollisionPatch) {
-              patchEditableSourceUpdateCollisionBody?.({
-                sourceFileName: comp.sourceFile,
-                linkName: currentLink.name,
-                objectIndex: updatedCollisionPatch.objectIndex,
-                geometry: updatedCollisionPatch.geometry,
-              });
-            }
-
-            if (commitMode === 'immediate') {
-              commitPendingAssemblyHistory(historyKey);
-            } else if (commitMode !== 'manual') {
-              schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-            }
-            return;
-          }
-
-          const resolvedJointId = type === 'joint' ? resolveJointKey(comp.robot.joints, id) : null;
-          if (type === 'joint' && resolvedJointId) {
-            const currentJoint = comp.robot.joints[resolvedJointId];
-            const historyKey =
-              options.historyKey ?? `assembly:component:${comp.id}:joint:${resolvedJointId}`;
-            const historyLabel = options.historyLabel ?? 'Update assembly component';
-
-            ensurePendingAssemblyHistory(historyKey, historyLabel);
-            updateComponentRobot(
-              comp.id,
-              {
-                joints: { ...comp.robot.joints, [resolvedJointId]: data as UrdfJoint },
-              },
-              {
-                skipHistory: true,
-                label: historyLabel,
-              },
-            );
-            if (currentJoint.name !== (data as UrdfJoint).name) {
-              patchEditableSourceRenameEntities?.({
-                sourceFileName: comp.sourceFile,
-                operations: [
-                  {
-                    kind: 'joint',
-                    currentName: currentJoint.name,
-                    nextName: (data as UrdfJoint).name,
-                  },
-                ],
-              });
-            }
-
-            if (commitMode === 'immediate') {
-              commitPendingAssemblyHistory(historyKey);
-            } else if (commitMode !== 'manual') {
-              schedulePendingAssemblyHistoryCommit(historyKey, options.debounceMs);
-            }
-            return;
-          }
+        const handled = applyAssemblyUpdate({
+          type,
+          id,
+          data,
+          options,
+          latestAssemblyState,
+          commitPendingAssemblyHistory,
+          ensurePendingAssemblyHistory,
+          schedulePendingAssemblyHistoryCommit,
+          updateComponentRobot,
+          updateComponentName,
+          patchEditableSourceAddCollisionBody,
+          patchEditableSourceDeleteCollisionBody,
+          patchEditableSourceUpdateCollisionBody,
+          patchEditableSourceRenameEntities,
+        });
+        if (handled) {
+          return;
         }
 
         if (type === 'joint' && latestAssemblyState.bridges[id]) {

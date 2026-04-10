@@ -27,6 +27,11 @@ export interface UsdSceneMeshDescriptor {
   materialId?: string | null;
   geometry?: {
     materialId?: string | null;
+    geomSubsetSections?: Array<{
+      start?: number | null;
+      length?: number | null;
+      materialId?: string | null;
+    }> | null;
   } | null;
   ranges?: UsdMeshDescriptorRanges | null;
 }

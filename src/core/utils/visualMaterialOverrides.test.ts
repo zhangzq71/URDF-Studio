@@ -70,3 +70,27 @@ test('applyVisualMaterialOverrideToObject applies PBR parameters to generated ma
   assert.equal(appliedMaterial.emissive.getHexString(), '224466');
   assert.ok(Math.abs(appliedMaterial.emissiveIntensity - 0.9) <= 1e-6);
 });
+
+test('applyVisualMaterialOverrideToObject logs when a texture override has no mesh materials to update', () => {
+  const root = new THREE.Group();
+  const originalConsoleWarn = console.warn;
+  const loggedWarnings: unknown[][] = [];
+  console.warn = (...args) => {
+    loggedWarnings.push(args);
+  };
+
+  try {
+    applyVisualMaterialOverrideToObject(root, {
+      texture: 'textures/body.png',
+    });
+  } finally {
+    console.warn = originalConsoleWarn;
+  }
+
+  assert.equal(loggedWarnings.length, 1);
+  assert.match(
+    String(loggedWarnings[0]?.[0] || ''),
+    /Visual texture override requested, but no mesh materials were available to receive it/,
+  );
+  assert.equal(loggedWarnings[0]?.[1], 'textures/body.png');
+});

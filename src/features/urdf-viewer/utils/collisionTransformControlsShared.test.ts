@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   canRenderCollisionTransformControls,
   resolveActiveCollisionDraggingControls,
+  resolveCurrentCollisionDraggingControls,
   resolveCollisionTransformControlMode,
   shouldUseCollisionTranslateProxy,
 } from './collisionTransformControlsShared';
@@ -46,22 +47,37 @@ test('resolveActiveCollisionDraggingControls prefers rotate, then translate, the
   );
 
   assert.equal(
-    resolveActiveCollisionDraggingControls(
-      translateControls,
-      rotateControls,
-      activeControls,
-    )?.kind,
+    resolveActiveCollisionDraggingControls(translateControls, rotateControls, activeControls)?.kind,
     'active',
   );
 
   assert.equal(
-    resolveActiveCollisionDraggingControls(
-      translateControls,
-      rotateControls,
-      null,
-    ),
+    resolveActiveCollisionDraggingControls(translateControls, rotateControls, null),
     null,
   );
+});
+
+test('resolveCurrentCollisionDraggingControls ignores stale active controls once both gizmos stopped dragging', () => {
+  const translateControls = { dragging: false, kind: 'translate' };
+  const rotateControls = { dragging: false, kind: 'rotate' };
+
+  assert.equal(
+    resolveCurrentCollisionDraggingControls(
+      { ...translateControls, dragging: true },
+      rotateControls,
+    )?.kind,
+    'translate',
+  );
+
+  assert.equal(
+    resolveCurrentCollisionDraggingControls(translateControls, {
+      ...rotateControls,
+      dragging: true,
+    })?.kind,
+    'rotate',
+  );
+
+  assert.equal(resolveCurrentCollisionDraggingControls(translateControls, rotateControls), null);
 });
 
 test('canRenderCollisionTransformControls requires a translate proxy only when the active mode needs it', () => {

@@ -73,6 +73,12 @@ test('resolves robot measure targets from the link frame origin even when inerti
 
   assert.ok(target);
   assert.deepEqual(target.point.toArray(), [10, 2, -1]);
+  assert.deepEqual(
+    target.poseWorldMatrix?.elements.map((value) => Number(value.toFixed(6))),
+    new THREE.Matrix4()
+      .makeTranslation(10, 2, -1)
+      .elements.map((value) => Number(value.toFixed(6))),
+  );
 });
 
 test('resolves robot measure targets from the center of mass when anchor mode is centerOfMass', () => {
@@ -453,6 +459,10 @@ test('resolves usd measure targets from the link frame origin when runtime link 
 
   assert.ok(target);
   assert.deepEqual(target.point.toArray(), [3, 4, 5]);
+  assert.deepEqual(
+    target.poseWorldMatrix?.elements.map((value) => Number(value.toFixed(6))),
+    new THREE.Matrix4().makeTranslation(3, 4, 5).elements.map((value) => Number(value.toFixed(6))),
+  );
 });
 
 test('resolves usd measure targets from the transformed center of mass when anchor mode is centerOfMass', () => {
@@ -561,4 +571,89 @@ test('resolves usd measure targets from center-of-mass helpers even when the pan
 
   assert.ok(target);
   assert.deepEqual(target.point.toArray(), [3.4, 4.5, 4.4]);
+});
+
+test('does not fall back to the link frame when a usd center-of-mass target cannot be resolved', () => {
+  const target = resolveUsdMeasureTargetFromSelection(
+    {
+      resolution: {
+        robotData: {
+          name: 'Robot',
+          rootLinkId: 'base_link',
+          links: {
+            base_link: {
+              ...DEFAULT_LINK,
+              id: 'base_link',
+              name: 'base_link',
+              inertial: null,
+            },
+          },
+          joints: {},
+        },
+        stageSourcePath: '/Robot/base_link.usdz',
+        linkIdByPath: {
+          '/Robot/base_link': 'base_link',
+        },
+        linkPathById: {
+          base_link: '/Robot/base_link',
+        },
+        jointPathById: {},
+        childLinkPathByJointId: {},
+        parentLinkPathByJointId: {},
+      },
+      meshesByLinkKey: new Map(),
+      linkWorldTransformResolver: () => new THREE.Matrix4().makeTranslation(3, 4, 5),
+    },
+    {
+      type: 'link',
+      id: 'base_link',
+    },
+    undefined,
+    'centerOfMass',
+  );
+
+  assert.equal(target, null);
+});
+
+test('does not fall back to the link frame when a usd geometry target cannot be resolved', () => {
+  const target = resolveUsdMeasureTargetFromSelection(
+    {
+      resolution: {
+        robotData: {
+          name: 'Robot',
+          rootLinkId: 'base_link',
+          links: {
+            base_link: {
+              ...DEFAULT_LINK,
+              id: 'base_link',
+              name: 'base_link',
+            },
+          },
+          joints: {},
+        },
+        stageSourcePath: '/Robot/base_link.usdz',
+        linkIdByPath: {
+          '/Robot/base_link': 'base_link',
+        },
+        linkPathById: {
+          base_link: '/Robot/base_link',
+        },
+        jointPathById: {},
+        childLinkPathByJointId: {},
+        parentLinkPathByJointId: {},
+      },
+      meshesByLinkKey: new Map(),
+      linkWorldTransformResolver: () => new THREE.Matrix4().makeTranslation(3, 4, 5),
+    },
+    {
+      type: 'link',
+      id: 'base_link',
+      subType: 'visual',
+      objectIndex: 0,
+    },
+    undefined,
+    'geometry',
+  );
+
+  assert.equal(target, null);
 });

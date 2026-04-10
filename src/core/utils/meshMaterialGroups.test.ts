@@ -44,7 +44,10 @@ test('applyVisualMeshMaterialGroupsToObject restores geometry groups and materia
   });
 
   assert.equal(Array.isArray(mesh.material), true);
-  const materials = mesh.material as THREE.Material[];
+  if (!Array.isArray(mesh.material)) {
+    throw new Error('mesh material should be an array after grouped material application');
+  }
+  const materials = mesh.material;
   assert.equal(materials.length, 2);
   const paintedMaterial = materials[1] as THREE.MeshStandardMaterial;
   assert.equal(paintedMaterial.color.getHexString(), '33aa44');

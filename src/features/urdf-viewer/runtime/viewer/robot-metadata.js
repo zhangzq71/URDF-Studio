@@ -277,13 +277,25 @@ export async function warmupRenderRobotMetadataSnapshot(renderInterface, options
             : starter.call(renderInterface, starterOptions);
     }
     catch (error) {
-        throw new Error(`Failed to warm up render robot metadata snapshot for "${stageSourcePath || "active-stage"}".`, {
+        const wrappedError = new Error(`Failed to warm up render robot metadata snapshot for "${stageSourcePath || "active-stage"}".`, {
             cause: error,
         });
+        console.error(`[robot-metadata] ${wrappedError.message}`, error);
+        throw wrappedError;
     }
-    const resolved = (maybePromise && typeof maybePromise.then === "function")
-        ? await maybePromise
-        : maybePromise;
+    let resolved;
+    try {
+        resolved = (maybePromise && typeof maybePromise.then === "function")
+            ? await maybePromise
+            : maybePromise;
+    }
+    catch (error) {
+        const wrappedError = new Error(`Render robot metadata warmup rejected for "${stageSourcePath || "active-stage"}".`, {
+            cause: error,
+        });
+        console.error(`[robot-metadata] ${wrappedError.message}`, error);
+        throw wrappedError;
+    }
     const snapshot = normalizeRenderRobotMetadataSnapshot(resolved)
         || getRenderRobotMetadataSnapshot(renderInterface, stageSourcePath, { strictErrors: true });
     if (!snapshot)

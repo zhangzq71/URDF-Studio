@@ -257,7 +257,7 @@ export const en: TranslationKeys = {
   radiusZ: 'Radius Z',
   totalLength: 'Total Length',
 
-  // Visualizer
+  // Editor interaction
   move: 'Move',
   rotate: 'Rotate',
   urdfFrame: 'URDF',
@@ -277,7 +277,7 @@ export const en: TranslationKeys = {
   showWorldOriginAxes: 'Show world origin axes',
   showMjcfWorldGeometry: 'Show MJCF world geometry',
   showMjcfSites: 'Show MJCF sites',
-  showIkHandles: 'Show IK Handles',
+  showIkHandles: 'Enable IK Drag',
   hideUsageGuide: 'Hide controls hint',
   showUsageGuide: 'Show controls hint',
   clickToSelect: 'Click objects to select.',
@@ -286,7 +286,7 @@ export const en: TranslationKeys = {
   workspaceAssemblyRenderFailedMergedData:
     'Workspace rendering failed because the merged assembly data is unavailable.',
   workspaceAssemblyRenderFailedViewerData:
-    'Workspace rendering failed because the viewer assembly data is unavailable.',
+    'Workspace rendering failed because the Editor assembly data is unavailable.',
   confirmTransformation: 'Confirm Transformation?',
   apply: 'Apply',
 
@@ -394,6 +394,7 @@ export const en: TranslationKeys = {
   toolboxHoverHint: 'Hover a tool to preview it, then click to open.',
   robotRedirect: 'Motion Tracking',
   step2urdf: 'STEP2URDF',
+  robogo: 'RoboGo',
   motrix: 'Motrix Viewer',
   trajectoryEditing: 'Trajectory Editing',
   featureInDevelopment: 'Feature in development',
@@ -405,6 +406,7 @@ export const en: TranslationKeys = {
   viewMode: 'View (Pan/Orbit)',
   faceMode: 'Select Face',
   measureMode: 'Measure',
+  ikTool: 'IK Drag',
   paintMode: 'Paint',
   closeToolbar: 'Close Toolbar',
 
@@ -414,8 +416,16 @@ export const en: TranslationKeys = {
   aiConversationDesc: 'Chat about model edits, report findings, and next fixes.',
   measureToolboxDesc:
     'Open the movable measurement panel and measure distances between selectable link anchors in the 3D viewport',
+  ikToolboxDesc:
+    'Click a draggable non-root link in the viewport to attach the transform controls. Click another link to move the gizmo.',
+  ikToolSelectedLink: 'Selected Link',
+  ikToolNoSelection: 'No IK link selected yet.',
+  ikToolRootLinkNotDraggable: 'Root and base links cannot be dragged with IK.',
+  ikToolNoVariableChain: 'This link has no movable parent joint chain, so IK drag is unavailable.',
   motionTrackingDesc: 'Analyze and follow motion trajectories',
   step2urdfDesc: 'Online STEP and CAD to URDF conversion tool',
+  robogoDesc:
+    'D-Robotics all-in-one cloud robotics platform for cloud IDE, URDF modeling, data labeling, and model training.',
   motrixDesc: 'Online simulator',
   trajectoryEditingDesc: 'Visual motion sequence editor',
   bridgedpEngine: 'BridgeDP Engine',
@@ -520,6 +530,8 @@ export const en: TranslationKeys = {
   light: 'Light',
   dark: 'Dark',
   system: 'System',
+  yes: 'Yes',
+  no: 'No',
   importWarning: 'Import Warning',
   sourceCodeAutoApply: 'Automatically apply valid code edits',
   fontSize: 'Font Size',
@@ -686,6 +698,15 @@ export const en: TranslationKeys = {
   measureDeltaX: 'Delta X',
   measureDeltaY: 'Delta Y',
   measureDeltaZ: 'Delta Z',
+  measureRelativeTransform: 'Relative Transform',
+  measureRelativeTranslation: 'Relative Translation',
+  measureRelativePoseUnavailable: 'The current anchors do not expose a relative pose.',
+  measurePoseMatrix: 'Matrix',
+  measurePoseRpy: 'RPY',
+  measurePoseQuat: 'Quat',
+  measurePoseAxisAngle: 'Axis-Angle',
+  measurePoseAxis: 'Axis',
+  measurePoseAngle: 'Angle',
   measureNoMeasurement: 'No link measurement yet',
   undo: 'Undo',
   redo: 'Redo',
@@ -701,7 +722,7 @@ export const en: TranslationKeys = {
   paintOperationPaint: 'Paint',
   paintOperationErase: 'Erase',
   paintUnsupportedRobotOnly:
-    'Paint mode currently only works in the RobotModel mesh viewer. USD and offscreen stages are not supported.',
+    'Paint mode currently only works on the RobotModel mesh canvas in Editor. USD and offscreen stages are not supported.',
   paintStatusReady: 'Ready to paint the clicked mesh face.',
   paintStatusApplied: 'Paint applied to the selected mesh face.',
   paintStatusRemoved: 'Paint removed from the selected mesh faces.',

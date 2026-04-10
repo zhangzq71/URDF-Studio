@@ -168,6 +168,8 @@ export function MeshAssetNode({
         enableShadows={enableShadows}
         assets={assets}
         assetBaseDir={assetBaseDir}
+        logicalAssetPath={meshPath}
+        preserveOriginalMaterial={preserveOriginalMaterial}
         scale={scale}
         onResolved={onResolved}
       />

@@ -1,19 +1,26 @@
 import React, { useRef, useState, useMemo, useEffect, useCallback } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { UnifiedTransformControls } from '@/shared/components/3d';
+import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import { useSnapshotRenderActive } from '@/shared/components/3d/scene/SnapshotRenderContext';
 import { hasEffectivelyFiniteJointLimits } from '@/shared/utils/jointUnits';
 import {
+  clampJointInteractionValue,
   extractSignedAngleAroundAxis,
   getJointActualAngleFromMotionAngle,
   getJointMotionAngleFromActualAngle,
 } from '@/core/robot';
 import type { JointInteractionProps } from '../types';
+import { resolveJointInteractionControlMode } from '../utils/jointInteractionControlsShared';
+
+const JOINT_TRANSLATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE;
+const JOINT_ROTATE_GIZMO_SIZE = VISUALIZER_UNIFIED_GIZMO_SIZE * 0.84;
+const JOINT_GIZMO_THICKNESS_SCALE = 1.6;
 
 export const JointInteraction: React.FC<JointInteractionProps> = ({
   joint,
   value,
+  transformMode = 'select',
   onChange,
   onCommit,
   setIsDragging,
@@ -21,17 +28,18 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
 }) => {
   const transformRef = useRef<any>(null);
   const dummyRef = useRef<THREE.Object3D>(new THREE.Object3D());
-  const lastRotation = useRef<number>(value);
+  const lastValueRef = useRef<number>(value);
   const isDragging = useRef(false);
   const unlockTimerRef = useRef<number | null>(null);
   const [, forceUpdate] = useState(0);
   const { invalidate } = useThree();
   const snapshotRenderActive = useSnapshotRenderActive();
 
-  if (!joint || snapshotRenderActive) return null;
-
-  // Get joint axis - ensure it's a proper Vector3
   const axisNormalized = useMemo(() => {
+    if (!joint) {
+      return new THREE.Vector3(1, 0, 0);
+    }
+
     const axis = joint.axis;
     if (axis instanceof THREE.Vector3) {
       return axis.clone().normalize();
@@ -41,8 +49,7 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
     return new THREE.Vector3(1, 0, 0);
   }, [joint]);
 
-  // Determine which rotation mode to use based on axis
-  const rotationAxis = useMemo((): 'X' | 'Y' | 'Z' => {
+  const dominantAxis = useMemo((): 'X' | 'Y' | 'Z' => {
     const absX = Math.abs(axisNormalized.x);
     const absY = Math.abs(axisNormalized.y);
     const absZ = Math.abs(axisNormalized.z);
@@ -50,21 +57,34 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
     if (absY >= absX && absY >= absZ) return 'Y';
     return 'Z';
   }, [axisNormalized]);
+
+  const controlMode = useMemo(
+    () => resolveJointInteractionControlMode(transformMode, joint?.jointType ?? joint?.type),
+    [joint?.jointType, joint?.type, transformMode],
+  );
+
+  const controlAxisVector = useMemo(() => {
+    const axis = new THREE.Vector3(1, 0, 0);
+    if (dominantAxis === 'Y') axis.set(0, 1, 0);
+    if (dominantAxis === 'Z') axis.set(0, 0, 1);
+    return axis;
+  }, [dominantAxis]);
+
   const displayedMotionAngle = useMemo(
-    () => getJointMotionAngleFromActualAngle(joint, value),
+    () => (joint ? getJointMotionAngleFromActualAngle(joint, value) : 0),
     [joint, value],
   );
 
-  // Function to update dummy position and orientation
+  if (!joint || snapshotRenderActive || !controlMode) return null;
+
   const updateDummyTransform = useCallback(() => {
     if (dummyRef.current && joint) {
       try {
-        // Copy world position from joint
-        joint.getWorldPosition(dummyRef.current.position);
+        if (!isDragging.current || controlMode === 'rotate') {
+          joint.getWorldPosition(dummyRef.current.position);
+        }
 
-        // Only update orientation if NOT dragging to prevent fighting with controls
         if (!isDragging.current) {
-          // Get parent's world quaternion (so gizmo doesn't spin with joint rotation)
           const parent = joint.parent;
           if (parent) {
             parent.getWorldQuaternion(dummyRef.current.quaternion);
@@ -72,30 +92,32 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
             joint.getWorldQuaternion(dummyRef.current.quaternion);
           }
 
-          // Align the gizmo with the joint axis
-          const alignVector = new THREE.Vector3(1, 0, 0); // Default X
-          if (rotationAxis === 'Y') alignVector.set(0, 1, 0);
-          if (rotationAxis === 'Z') alignVector.set(0, 0, 1);
-
-          const alignQ = new THREE.Quaternion().setFromUnitVectors(alignVector, axisNormalized);
+          const alignQ = new THREE.Quaternion().setFromUnitVectors(
+            controlAxisVector,
+            axisNormalized,
+          );
           dummyRef.current.quaternion.multiply(alignQ);
 
-          // Apply the current joint angle rotation
-          const rotQ = new THREE.Quaternion().setFromAxisAngle(alignVector, displayedMotionAngle);
-          dummyRef.current.quaternion.multiply(rotQ);
+          if (controlMode === 'rotate') {
+            const rotQ = new THREE.Quaternion().setFromAxisAngle(
+              controlAxisVector,
+              displayedMotionAngle,
+            );
+            dummyRef.current.quaternion.multiply(rotQ);
+          }
         }
+
+        dummyRef.current.updateMatrixWorld(true);
       } catch (e) {
-        // Prevent crash on math error
+        console.error('JointInteraction:updateDummyTransform failed', e);
       }
     }
-  }, [axisNormalized, displayedMotionAngle, joint, rotationAxis]);
+  }, [axisNormalized, controlAxisVector, controlMode, displayedMotionAngle, joint]);
 
-  // Force update on mount to ensure TransformControls has the dummy object
   useEffect(() => {
     forceUpdate((n) => n + 1);
   }, []);
 
-  // Update dummy transform when value or joint changes (instead of useFrame)
   useEffect(() => {
     updateDummyTransform();
     invalidate();
@@ -145,50 +167,66 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
     if (!dummyRef.current || !isDragging.current) return;
 
     try {
-      // Calculate the angle from the current quaternion relative to the zero-angle frame
-      const parent = joint.parent;
-      const parentQuat = new THREE.Quaternion();
-      if (parent) {
-        parent.getWorldQuaternion(parentQuat);
+      let newValue: number;
+
+      if (controlMode === 'rotate') {
+        const parent = joint.parent;
+        const parentQuat = new THREE.Quaternion();
+        if (parent) {
+          parent.getWorldQuaternion(parentQuat);
+        } else {
+          joint.getWorldQuaternion(parentQuat);
+        }
+
+        const alignQ = new THREE.Quaternion().setFromUnitVectors(controlAxisVector, axisNormalized);
+        const zeroQuat = parentQuat.clone().multiply(alignQ);
+        const deltaQuat = zeroQuat.clone().invert().multiply(dummyRef.current.quaternion);
+        const motionAngle = extractSignedAngleAroundAxis(deltaQuat, controlAxisVector);
+        newValue = getJointActualAngleFromMotionAngle(joint, motionAngle);
       } else {
-        joint.getWorldQuaternion(parentQuat);
+        const parent = joint.parent;
+        const localPosition = dummyRef.current.position.clone();
+        if (parent) {
+          parent.worldToLocal(localPosition);
+        }
+
+        const localAxis = axisNormalized
+          .clone()
+          .applyQuaternion(
+            joint.origQuaternion instanceof THREE.Quaternion
+              ? joint.origQuaternion
+              : joint.quaternion,
+          )
+          .normalize();
+        const currentActualValue = Number.isFinite(Number(joint.angle ?? joint.jointValue))
+          ? Number(joint.angle ?? joint.jointValue)
+          : value;
+        const currentMotionValue = getJointMotionAngleFromActualAngle(joint, currentActualValue);
+        const originLocalPosition =
+          joint.origPosition instanceof THREE.Vector3
+            ? joint.origPosition.clone()
+            : joint.position.clone().addScaledVector(localAxis, -currentMotionValue);
+        const motionDistance = localPosition.sub(originLocalPosition).dot(localAxis);
+        newValue = getJointActualAngleFromMotionAngle(joint, motionDistance);
       }
 
-      // Re-calculate alignment (same as in updateDummyTransform)
-      const alignVector = new THREE.Vector3(1, 0, 0);
-      if (rotationAxis === 'Y') alignVector.set(0, 1, 0);
-      if (rotationAxis === 'Z') alignVector.set(0, 0, 1);
-
-      const alignQ = new THREE.Quaternion().setFromUnitVectors(alignVector, axisNormalized);
-
-      // Q_zero = Q_parent * Q_align
-      const zeroQuat = parentQuat.clone().multiply(alignQ);
-
-      // Q_delta = Q_zero^-1 * Q_current
-      const deltaQuat = zeroQuat.clone().invert().multiply(dummyRef.current.quaternion);
-
-      const motionAngle = extractSignedAngleAroundAxis(deltaQuat, alignVector);
-      let newValue = getJointActualAngleFromMotionAngle(joint, motionAngle);
-
-      // Apply limits for revolute joints
       const limit = joint.limit;
       const hasFiniteLimit = hasEffectivelyFiniteJointLimits(limit);
-      if (joint.jointType === 'revolute' && hasFiniteLimit) {
-        newValue = Math.max(limit.lower, Math.min(limit.upper, newValue));
+      if ((joint.jointType === 'revolute' || joint.jointType === 'prismatic') && hasFiniteLimit) {
+        newValue = clampJointInteractionValue(newValue, limit.lower, limit.upper);
       }
 
-      if (Math.abs(newValue - lastRotation.current) > 0.001) {
-        lastRotation.current = newValue;
+      if (Math.abs(newValue - lastValueRef.current) > 0.001) {
+        lastValueRef.current = newValue;
         onChange(newValue);
       }
     } catch (e) {
       console.error('Error in JointInteraction handleChange:', e);
     }
-  }, [joint, onChange, rotationAxis, axisNormalized]);
+  }, [axisNormalized, controlAxisVector, controlMode, joint, onChange, value]);
 
-  // Reset lastRotation when value changes externally
   useEffect(() => {
-    lastRotation.current = value;
+    lastValueRef.current = value;
   }, [value]);
 
   return (
@@ -197,14 +235,15 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
       <UnifiedTransformControls
         ref={transformRef}
         object={dummyRef.current}
-        mode="rotate"
-        showX={rotationAxis === 'X'}
-        showY={rotationAxis === 'Y'}
-        showZ={rotationAxis === 'Z'}
-        size={1.2}
+        mode={controlMode}
+        showX={dominantAxis === 'X'}
+        showY={dominantAxis === 'Y'}
+        showZ={dominantAxis === 'Z'}
+        size={controlMode === 'rotate' ? JOINT_ROTATE_GIZMO_SIZE : JOINT_TRANSLATE_GIZMO_SIZE}
         space="local"
         hoverStyle="single-axis"
         displayStyle="thick-primary"
+        displayThicknessScale={JOINT_GIZMO_THICKNESS_SCALE}
         onMouseDown={() => {
           isDragging.current = true;
           lockInteraction();
@@ -214,7 +253,7 @@ export const JointInteraction: React.FC<JointInteractionProps> = ({
           isDragging.current = false;
           setIsDragging?.(false);
           unlockInteraction(true);
-          if (onCommit) onCommit(lastRotation.current);
+          if (onCommit) onCommit(lastValueRef.current);
         }}
         onObjectChange={handleChange}
       />

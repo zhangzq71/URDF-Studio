@@ -484,6 +484,25 @@ test('GeometryEditor reads and updates the selected visual objectIndex instead o
   }
 });
 
+test('GeometryEditor exposes the geometry type selector through the shared combobox trigger', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+
+    await renderGeometryEditor(root, link, () => {});
+
+    const typeCombobox = container.querySelector(
+      'button[role="combobox"][aria-label="Type"]',
+    ) as HTMLButtonElement | null;
+
+    assert.ok(typeCombobox, 'expected the geometry type field to render the shared combobox');
+    assert.match(typeCombobox.className, /\bbg-input-bg\b/);
+    assert.match(typeCombobox.className, /\bborder-border-strong\b/);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('GeometryEditor exposes ellipsoid as a first-class geometry type with per-axis radii controls', async () => {
   const { dom, container, root } = createComponentRoot();
   try {
@@ -1572,6 +1591,88 @@ test('GeometryEditor previews the primary visual legacy texture before promoting
     const nextLink = updates.at(-1);
     assert.ok(nextLink, 'texture selection should emit an updated link');
     assert.equal(nextLink.visual.authoredMaterials?.[0]?.texture, 'textures/updated.png');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor keeps showing the applied texture image inside the material properties', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    link.visual = {
+      ...link.visual,
+      authoredMaterials: [{ texture: 'textures/applied.png' }],
+    };
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+
+    await renderGeometryEditor(root, link, () => {}, robot, 'visual', {
+      assets: {
+        'textures/applied.png': 'blob:applied-texture',
+      },
+    });
+
+    assert.ok(
+      container.querySelector('img[src="blob:applied-texture"]'),
+      'applied textures should continue rendering their preview image in the material properties',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor preserves the effective legacy link material color when promoting a texture into authored materials', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    link.visual = {
+      ...link.visual,
+      color: undefined,
+    };
+
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+    robot.materials = {
+      base_link: {
+        color: '#b2b2b2',
+        texture: 'textures/legacy.png',
+      },
+    };
+
+    const updates: UrdfLink[] = [];
+    await renderGeometryEditor(
+      root,
+      link,
+      (nextLink) => {
+        updates.push(nextLink);
+      },
+      robot,
+      'visual',
+      {
+        assets: {
+          'textures/legacy.png': 'blob:legacy-texture',
+          'textures/updated.png': 'blob:updated-texture',
+        },
+      },
+    );
+
+    const nextTextureButton = container.querySelector('[title="textures/updated.png"]');
+    assert.ok(nextTextureButton, 'updated texture asset should render');
+    await clickElement(nextTextureButton);
+
+    const applyButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Apply',
+    );
+    assert.ok(applyButton, 'preview mode should expose an apply action');
+    await clickElement(applyButton);
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'texture selection should emit an updated link');
+    assert.deepEqual(nextLink.visual.authoredMaterials?.[0], {
+      color: '#b2b2b2',
+      texture: 'textures/updated.png',
+    });
   } finally {
     await destroyComponentRoot(dom, root);
   }

@@ -4,24 +4,20 @@ import {
   wrapContinuousJointAngle,
 } from '@/shared/utils/continuousJointAngle';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
-
-type RuntimeJointInfo =
-  | {
-      angleDeg?: number;
-      lowerLimitDeg?: number;
-      upperLimitDeg?: number;
-    }
-  | null
-  | undefined;
+import {
+  degreesToRadians,
+  resolveUsdRuntimeJointLimitsRadians,
+  type UsdRuntimeJointInfoLike,
+} from './usdRuntimeJointInfo';
 
 type LinkRotationControllerLike = {
   apply: (renderInterface?: unknown, options?: Record<string, unknown>) => unknown;
-  getJointInfoForLink?: (linkPath: string) => RuntimeJointInfo;
+  getJointInfoForLink?: (linkPath: string) => UsdRuntimeJointInfoLike | null | undefined;
   setJointAngleForLink: (
     linkPath: string,
     angleDeg: number,
     options?: { emitSelectionChanged?: boolean },
-  ) => RuntimeJointInfo;
+  ) => UsdRuntimeJointInfoLike | null | undefined;
 };
 
 export interface CreateUsdViewerRuntimeRobotOptions {
@@ -30,22 +26,6 @@ export interface CreateUsdViewerRuntimeRobotOptions {
   requestRender?: () => void;
   resolution: ViewerRobotDataResolution;
   scheduleDecorationRefresh?: () => void;
-}
-
-function degreesToRadians(value: number | null | undefined): number | undefined {
-  return Number.isFinite(Number(value)) ? (Number(value) * Math.PI) / 180 : undefined;
-}
-
-function getResolvedJointLimits(
-  lowerLimitDeg: number | null | undefined,
-  upperLimitDeg: number | null | undefined,
-  fallbackLower: number,
-  fallbackUpper: number,
-) {
-  return {
-    lower: degreesToRadians(lowerLimitDeg) ?? fallbackLower,
-    upper: degreesToRadians(upperLimitDeg) ?? fallbackUpper,
-  };
 }
 
 export function createUsdViewerRuntimeRobot({
@@ -61,12 +41,7 @@ export function createUsdViewerRuntimeRobot({
       const jointInfo = childLinkPath
         ? linkRotationController.getJointInfoForLink?.(childLinkPath)
         : null;
-      const resolvedLimits = getResolvedJointLimits(
-        jointInfo?.lowerLimitDeg,
-        jointInfo?.upperLimitDeg,
-        joint.limit.lower,
-        joint.limit.upper,
-      );
+      const resolvedLimits = resolveUsdRuntimeJointLimitsRadians(jointInfo, joint.limit);
       const initialJointAngle =
         typeof joint.angle === 'number' && Number.isFinite(joint.angle) ? joint.angle : 0;
       const runtimeJointAngle = degreesToRadians(jointInfo?.angleDeg);

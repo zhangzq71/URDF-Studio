@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { RefObject } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -28,6 +28,7 @@ import { resolveURDFMaterialsForScene } from '../utils/urdfMaterials';
 import { syncLoadedRobotScene } from '../utils/loadedRobotSceneSync';
 import { shouldMountRobotBeforeAssetsComplete } from '../utils/loadStrategy';
 import { resolveRobotLoaderSourceMetadata } from '../utils/robotLoaderSourceMetadata';
+import { createViewerRobotLoadInputSignature } from '../utils/robotLoadScope';
 import { resolveViewerRobotSourceFormat } from '../utils/sourceFormat';
 import { createViewerMeshLoader } from '../utils/createViewerMeshLoader';
 import type { RobotLoadingPhase, ViewerDocumentLoadEvent, ViewerRobotSourceFormat } from '../types';
@@ -50,6 +51,23 @@ function waitForLoadingHudPaint(invalidate?: () => void): Promise<void> {
       window.requestAnimationFrame(() => resolve());
     });
   });
+}
+
+function createAssetScopeKey(assets: Record<string, string>): string {
+  const assetEntries = Object.entries(assets).sort(([leftPath], [rightPath]) =>
+    leftPath.localeCompare(rightPath),
+  );
+  let hash = 0x811c9dc5;
+
+  for (const [assetPath, assetUrl] of assetEntries) {
+    const signature = `${assetPath}\u0000${assetUrl}`;
+    for (let index = 0; index < signature.length; index += 1) {
+      hash ^= signature.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+  }
+
+  return `${assetEntries.length}:${(hash >>> 0).toString(36)}`;
 }
 
 interface RobotLoadingProgress {
@@ -138,9 +156,6 @@ export function useRobotLoader({
   const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState<RobotLoadingProgress | null>(null);
   const [robotVersion, setRobotVersion] = useState(0);
-  const [urdfCollisionMeshesRequested, setUrdfCollisionMeshesRequested] = useState(
-    () => resolvedSourceFormat !== 'urdf' || showCollision,
-  );
   const { invalidate } = useThree();
 
   // Ref to track current robot for proper cleanup (avoids stale closure issues)
@@ -155,6 +170,7 @@ export function useRobotLoader({
   const pendingDisposeFrameRef = useRef<number | null>(null);
   const groundAlignTimerRef = useRef<number[]>([]);
   const mountedRobotSourceScopeKeyRef = useRef<string | null>(null);
+  const mountedRobotReloadTokenRef = useRef<number | null>(null);
   const progressDispatchFrameRef = useRef<number | null>(null);
   const pendingLoadingDispatchRef = useRef<PendingLoadingDispatch | null>(null);
   const lastPublishedLoadingDispatchKeyRef = useRef('');
@@ -164,6 +180,8 @@ export function useRobotLoader({
   // Ground offset is a presentation-only adjustment; changing it must not
   // restart the robot load pipeline or re-emit loading HUD phases.
   const groundPlaneOffsetRef = useRef(groundPlaneOffset);
+  const inFlightLoadScopeKeyRef = useRef<string | null>(null);
+  const completedLoadScopeKeyRef = useRef<string | null>(null);
 
   // Refs for visibility state (used in loading callback)
   const showVisualRef = useRef(showVisual);
@@ -182,13 +200,44 @@ export function useRobotLoader({
   // incremental patch. A counter is more robust than strict content matching
   // when robotLinks/robotJoints and urdfContent updates are not perfectly in sync.
   const skipReloadCountRef = useRef(0);
-  const shouldParseCollisionMeshes =
-    resolvedSourceFormat !== 'urdf' || urdfCollisionMeshesRequested;
+  // Force-parse collision meshes for all viewer loads. This removes the
+  // deferred URDF collision stream split and keeps the visibility chain single-path.
+  const shouldParseCollisionMeshes = true;
   const hasStructuredRobotState =
     resolvedSourceFormat === 'urdf' &&
     Boolean(robotLinks && robotJoints) &&
     (Object.keys(robotLinks ?? {}).length > 0 || Object.keys(robotJoints ?? {}).length > 0);
   const currentSourceScopeKey = `${resolvedSourceFormat}:${sourceFilePath ?? '__inline__'}`;
+  const loadInputSignature = useMemo(
+    () =>
+      createViewerRobotLoadInputSignature({
+        urdfContent,
+        hasStructuredRobotState,
+        robotLinks,
+        robotJoints,
+      }),
+    [hasStructuredRobotState, robotJoints, robotLinks, urdfContent],
+  );
+  const assetScopeKey = useMemo(() => createAssetScopeKey(assets), [assets]);
+  const loadScopeKey = useMemo(
+    () =>
+      [
+        currentSourceScopeKey,
+        `reload:${reloadToken}`,
+        `dir:${sourceFileDir ?? '__root__'}`,
+        `input:${loadInputSignature}`,
+        `assets:${assetScopeKey}`,
+        `structured:${hasStructuredRobotState ? '1' : '0'}`,
+      ].join('|'),
+    [
+      assetScopeKey,
+      currentSourceScopeKey,
+      hasStructuredRobotState,
+      loadInputSignature,
+      reloadToken,
+      sourceFileDir,
+    ],
+  );
 
   // Keep refs in sync
   useEffect(() => {
@@ -215,23 +264,6 @@ export function useRobotLoader({
   useEffect(() => {
     groundPlaneOffsetRef.current = groundPlaneOffset;
   }, [groundPlaneOffset]);
-  useEffect(() => {
-    setUrdfCollisionMeshesRequested(resolvedSourceFormat !== 'urdf' || showCollision);
-  }, [resolvedSourceFormat, sourceFilePath, urdfContent]);
-  useEffect(() => {
-    if (resolvedSourceFormat !== 'urdf') {
-      return;
-    }
-
-    if (!showCollision || urdfCollisionMeshesRequested) {
-      return;
-    }
-
-    // Most URDF sessions start with collision overlays hidden. Deferring the
-    // collision mesh stream keeps the first visual load much faster, while a
-    // later "Show Collision" toggle still upgrades the scene with one reload.
-    setUrdfCollisionMeshesRequested(true);
-  }, [resolvedSourceFormat, showCollision, urdfCollisionMeshesRequested]);
 
   const disposeRobotObject = useCallback((robotObject: THREE.Object3D | null) => {
     if (!robotObject) return;
@@ -411,6 +443,12 @@ export function useRobotLoader({
     prevRobotLinksRef.current = robotLinks;
 
     if (!previousLinks || !currentRobot) return;
+    if (
+      mountedRobotSourceScopeKeyRef.current !== currentSourceScopeKey ||
+      mountedRobotReloadTokenRef.current !== reloadToken
+    ) {
+      return;
+    }
 
     const patch = detectSingleGeometryPatch(previousLinks, robotLinks);
     if (!patch) return;
@@ -431,7 +469,6 @@ export function useRobotLoader({
     });
 
     if (!applied) return;
-
     skipReloadCountRef.current += 1;
     setRobotVersion((v) => v + 1);
     setError(null);
@@ -457,13 +494,18 @@ export function useRobotLoader({
     prevRobotJointsRef.current = robotJoints;
 
     if (!previousJoints || !currentRobot) return;
+    if (
+      mountedRobotSourceScopeKeyRef.current !== currentSourceScopeKey ||
+      mountedRobotReloadTokenRef.current !== reloadToken
+    ) {
+      return;
+    }
 
     const patches = detectJointPatches(previousJoints, robotJoints);
     if (!patches || patches.length === 0) return;
 
     const applied = patchJointsInPlace(currentRobot, patches, invalidate);
     if (!applied) return;
-
     skipReloadCountRef.current += 1;
     setRobotVersion((v) => v + 1);
     setError(null);
@@ -490,6 +532,9 @@ export function useRobotLoader({
         robotRef.current = null;
       }
       mountedRobotSourceScopeKeyRef.current = null;
+      mountedRobotReloadTokenRef.current = null;
+      inFlightLoadScopeKeyRef.current = null;
+      completedLoadScopeKeyRef.current = null;
     };
   }, [
     clearGroundAlignTimers,
@@ -519,6 +564,20 @@ export function useRobotLoader({
   // Load robot with proper cleanup and abort handling
   useEffect(() => {
     if (!urdfContent) return;
+    const isMountedForCurrentLoadScope =
+      Boolean(robotRef.current) &&
+      mountedRobotSourceScopeKeyRef.current === currentSourceScopeKey &&
+      mountedRobotReloadTokenRef.current === reloadToken;
+    if (
+      isMountedForCurrentLoadScope &&
+      completedLoadScopeKeyRef.current === loadScopeKey &&
+      !error
+    ) {
+      return;
+    }
+    if (inFlightLoadScopeKeyRef.current === loadScopeKey && !loadAbortRef.current.aborted) {
+      return;
+    }
     if (skipReloadCountRef.current > 0) {
       skipReloadCountRef.current -= 1;
       return;
@@ -527,6 +586,7 @@ export function useRobotLoader({
     // Create abort controller for this load
     const abortController = { aborted: false };
     loadAbortRef.current = abortController;
+    inFlightLoadScopeKeyRef.current = loadScopeKey;
 
     const loadRobot = async () => {
       try {
@@ -629,6 +689,7 @@ export function useRobotLoader({
 
           robotRef.current = loadedRobot;
           mountedRobotSourceScopeKeyRef.current = currentSourceScopeKey;
+          mountedRobotReloadTokenRef.current = reloadToken;
           setRobot(loadedRobot);
           setRobotVersion((v) => v + 1);
           setError(null);
@@ -669,6 +730,8 @@ export function useRobotLoader({
             }),
           );
           setError(null);
+          completedLoadScopeKeyRef.current = loadScopeKey;
+          inFlightLoadScopeKeyRef.current = null;
           invalidate();
           if (wasMountedBeforeFinalize && !preservedRootTransformFromPreviousRobot) {
             setInitialGroundAlignment(loadedRobot, false);
@@ -897,10 +960,12 @@ export function useRobotLoader({
         }
       } catch (err) {
         if (!abortController.aborted && isMountedRef.current) {
-          console.error('[URDFViewer] Failed to load URDF:', err);
+          console.error('[EditorViewer] Failed to load URDF:', err);
           const errorMessage = err instanceof Error ? err.message : 'Unknown error';
           setError(errorMessage);
           setIsLoading(false);
+          completedLoadScopeKeyRef.current = null;
+          inFlightLoadScopeKeyRef.current = null;
           publishLoadingDispatch(null, {
             status: 'error',
             phase: null,
@@ -921,6 +986,9 @@ export function useRobotLoader({
     return () => {
       // Mark this load as aborted to prevent state updates
       abortController.aborted = true;
+      if (inFlightLoadScopeKeyRef.current === loadScopeKey) {
+        inFlightLoadScopeKeyRef.current = null;
+      }
       clearGroundAlignTimers();
 
       // NOTE: We do NOT dispose robotRef.current here.
@@ -930,8 +998,11 @@ export function useRobotLoader({
   }, [
     assets,
     clearGroundAlignTimers,
+    currentSourceScopeKey,
+    error,
     hasStructuredRobotState,
     invalidate,
+    loadScopeKey,
     publishLoadingDispatch,
     reloadToken,
     resolvedSourceFormat,

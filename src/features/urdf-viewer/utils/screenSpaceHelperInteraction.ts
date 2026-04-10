@@ -100,7 +100,7 @@ function getHelperPaddingPx(helperKind: ViewerHelperKind): number {
 
 function supportsScreenSpaceHelperFallback(helperKind: ViewerHelperKind): boolean {
   // Inertia helpers already render a solid pickable mesh. Expanding their
-  // footprint in screen space makes hover/click trigger visibly outside the box.
+  // footprint in screen space makes hover/click trigger outside the visible box.
   return helperKind !== 'inertia';
 }
 

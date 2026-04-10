@@ -134,7 +134,7 @@ test('SettingsModal removes drag listeners when unmounted mid-drag', async () =>
       root.render(React.createElement(SettingsModal));
     });
 
-    const dragHandle = container.querySelector('.cursor-move');
+    const dragHandle = container.querySelector('[data-testid="settings-drag-handle"]');
     assert.ok(dragHandle, 'settings modal should render a draggable header');
 
     await act(async () => {
@@ -235,6 +235,63 @@ test('SettingsModal updates source code editor typography preferences', async ()
 
     assert.equal(useUIStore.getState().codeEditorFontFamily, 'fira-code');
     assert.equal(useUIStore.getState().codeEditorFontSize, 14);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    useUIStore.setState(initialState);
+    dom.window.close();
+  }
+});
+
+test('SettingsModal keeps import warning on the original switch control and keeps segmented surfaces consistent', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const initialState = useUIStore.getState();
+
+  try {
+    useUIStore.setState({
+      isSettingsOpen: true,
+      settingsPos: { x: 48, y: 64 },
+      lang: 'en',
+      theme: 'dark',
+    });
+
+    await act(async () => {
+      root.render(React.createElement(SettingsModal));
+    });
+
+    const importWarningSwitch = container.querySelector(
+      '[role="switch"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(importWarningSwitch, 'general settings should render the original switch control');
+    assert.equal(importWarningSwitch.getAttribute('aria-checked'), 'true');
+
+    await act(async () => {
+      importWarningSwitch.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    assert.equal(useUIStore.getState().showImportWarning, false);
+    assert.equal(importWarningSwitch.getAttribute('aria-checked'), 'false');
+
+    const englishButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'English',
+    ) as HTMLButtonElement | undefined;
+    assert.ok(englishButton, 'language segmented control should render the English option');
+    assert.match(
+      englishButton.className,
+      /\bbg-segmented-active\b/,
+      'selected language button should use the segmented active surface token',
+    );
+
+    const darkButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Dark',
+    ) as HTMLButtonElement | undefined;
+    assert.ok(darkButton, 'theme segmented control should render the dark option');
+    assert.match(
+      darkButton.className,
+      /\bbg-segmented-active\b/,
+      'selected theme button should use the segmented active surface token',
+    );
   } finally {
     await act(async () => {
       root.unmount();

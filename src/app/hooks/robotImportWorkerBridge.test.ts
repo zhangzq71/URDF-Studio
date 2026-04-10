@@ -9,7 +9,7 @@ import type { RobotImportWorkerResponse } from '@/app/utils/robotImportWorker';
 import {
   createRobotImportWorkerClient,
   resolveRobotFileDataWithWorker,
-} from './robotImportWorkerBridge';
+} from './robotImportWorkerBridge.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -87,6 +87,54 @@ test('robot import worker client resolves successful worker responses', async ()
     assert.fail('Expected worker result to be ready');
   }
   assert.equal(result.robotData.name, 'demo');
+});
+
+test('robot import worker client forwards resolve progress events before completion', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+  const progressEvents: Array<{ progressPercent: number; message?: string | null }> = [];
+
+  const resultPromise = client.resolve(
+    demoUrdfFile,
+    {},
+    {
+      onProgress: (progress) => {
+        progressEvents.push(progress);
+      },
+    },
+  );
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+
+  fakeWorker.emitMessage({
+    type: 'resolve-robot-file-progress',
+    requestId: postedRequest.requestId,
+    progress: {
+      progressPercent: 35,
+      message: 'Resolving URDF source',
+    },
+  });
+
+  fakeWorker.emitMessage({
+    type: 'resolve-robot-file-result',
+    requestId: postedRequest.requestId,
+    result: resolveRobotFileData(demoUrdfFile),
+  });
+
+  const result = await resultPromise;
+
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(progressEvents, [
+    {
+      progressPercent: 35,
+      message: 'Resolving URDF source',
+    },
+  ]);
 });
 
 test('robot import worker client rejects after worker errors and marks worker unavailable', async () => {

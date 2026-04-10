@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-import { resolveLinkIkHandleDescriptor, resolveLinkKey } from '@/core/robot';
+import {
+  resolveDirectManipulableLinkIkDescriptor,
+  resolveLinkIkHandleDescriptor,
+  resolveLinkKey,
+} from '@/core/robot';
 import { MathUtils as SharedMathUtils } from '@/shared/utils';
 import type { UrdfJoint, UrdfLink } from '@/types';
 import type { ViewerHelperKind } from '../types';
@@ -49,6 +53,7 @@ interface SyncIkHandleVisualizationOptions {
   robotJoints?: Record<string, UrdfJoint>;
   showIkHandles: boolean;
   showIkHandlesAlwaysOnTop: boolean;
+  ikDragActive?: boolean;
 }
 
 interface SyncMjcfSiteVisualizationOptions {
@@ -92,10 +97,12 @@ const scratchMjcfTendonSegmentVector = new THREE.Vector3();
 const scratchMjcfTendonSegmentMidpoint = new THREE.Vector3();
 const scratchMjcfTendonSegmentDirection = new THREE.Vector3();
 const mjcfTendonYAxis = new THREE.Vector3(0, 1, 0);
-const IK_HANDLE_STYLE_VERSION = 2;
+const IK_HANDLE_STYLE_VERSION = 3;
 const IK_HANDLE_IDLE_COLOR = 0x16a34a;
 const IK_HANDLE_HOVER_COLOR = 0x22c55e;
 const IK_HANDLE_SELECTED_COLOR = 0x15803d;
+const ORIGIN_AXES_HOVER_LIFT = 0.32;
+const ORIGIN_AXES_SELECTED_LIFT = 0.18;
 
 interface MjcfSiteAnchorData {
   worldPosition: THREE.Vector3;
@@ -451,6 +458,34 @@ function updateInteractionColor(
   return true;
 }
 
+function updateInteractionColorLift(
+  material: THREE.Material & {
+    color?: THREE.Color;
+    needsUpdate?: boolean;
+  },
+  liftAmount: number,
+): boolean {
+  if (!material.color?.isColor) {
+    return false;
+  }
+
+  const storedBaseColorHex = material.userData.__interactionLiftBaseColorHex;
+  const baseColorHex =
+    typeof storedBaseColorHex === 'number' ? storedBaseColorHex : material.color.getHex();
+  const nextColor = new THREE.Color(baseColorHex).lerp(new THREE.Color(0xffffff), liftAmount);
+
+  material.userData.__interactionLiftBaseColorHex = baseColorHex;
+  material.userData.__interactionColorLift = liftAmount;
+
+  if (material.color.equals(nextColor)) {
+    return false;
+  }
+
+  material.color.copy(nextColor);
+  material.needsUpdate = true;
+  return true;
+}
+
 function collectUniqueHelperObjects(
   ...objects: Array<THREE.Object3D | null | undefined>
 ): THREE.Object3D[] {
@@ -539,6 +574,7 @@ export function syncIkHandleVisualizationForLinks({
   robotJoints,
   showIkHandles,
   showIkHandlesAlwaysOnTop,
+  ikDragActive = false,
 }: SyncIkHandleVisualizationOptions): boolean {
   let changed = false;
   const rootLinkId = resolveRobotRootLinkId(robotLinks, robotJoints);
@@ -557,7 +593,12 @@ export function syncIkHandleVisualizationForLinks({
     }
 
     const linkId = robotData ? resolveLinkKey(robotData.links, link.name) : null;
-    const descriptor = linkId ? resolveLinkIkHandleDescriptor(robotData, linkId) : null;
+    const descriptor = linkId
+      ? ikDragActive
+        ? (resolveDirectManipulableLinkIkDescriptor(robotData, linkId) ??
+          resolveLinkIkHandleDescriptor(robotData, linkId))
+        : resolveLinkIkHandleDescriptor(robotData, linkId)
+      : null;
 
     if (!descriptor) {
       if (ikHandle) {
@@ -1309,6 +1350,14 @@ export function syncLinkHelperInteractionStateForLinks({
               ? IK_HANDLE_SELECTED_COLOR
               : IK_HANDLE_IDLE_COLOR
           : undefined;
+      const originAxesColorLift =
+        helperName === '__origin_axes__'
+          ? state === 'hovered'
+            ? ORIGIN_AXES_HOVER_LIFT
+            : state === 'selected'
+              ? ORIGIN_AXES_SELECTED_LIFT
+              : 0
+          : 0;
 
       changed = updateInteractionScale(helperObject, scaleMultiplier) || changed;
 
@@ -1334,6 +1383,9 @@ export function syncLinkHelperInteractionStateForLinks({
 
         changed = updateInteractionOpacity(child.material, opacityMultiplier) || changed;
         changed = updateInteractionColor(child.material, activeColorHex) || changed;
+        if (helperName === '__origin_axes__') {
+          changed = updateInteractionColorLift(child.material, originAxesColorLift) || changed;
+        }
       });
     });
   });

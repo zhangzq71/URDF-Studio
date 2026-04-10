@@ -20,7 +20,13 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 
 import { OptionsPanelContainer } from '@/shared/components/Panel';
-import { Button, IconButton, Select, Switch } from '@/shared/components/ui';
+import {
+  Button,
+  CompactSwitch,
+  IconButton,
+  PanelSegmentedControl,
+  PanelSelect,
+} from '@/shared/components/ui';
 import { translations } from '@/shared/i18n';
 import { useUIStore, type CodeEditorFontFamily } from '@/store';
 import { SettingsAboutPane } from './settings/SettingsAboutPane';
@@ -37,8 +43,6 @@ const DEFAULT_CODE_EDITOR_FONT_SIZE = 13;
 const SETTINGS_ICON_STROKE_WIDTH = 1.65;
 const SETTINGS_INLINE_BUTTON_CLASSNAME =
   'h-7 rounded-[6px] border-border-black px-2.5 text-[11px] font-medium shadow-none';
-const SETTINGS_SELECT_CLASSNAME =
-  'h-8 rounded-[6px] border-border-black bg-panel-bg px-2.5 pr-8 py-0 text-[12px] font-medium shadow-sm';
 const SETTINGS_TEXT_ACTION_CLASSNAME =
   'h-7 rounded-[6px] px-2.5 text-[11px] font-medium text-text-secondary shadow-none hover:bg-settings-muted hover:text-text-primary active:bg-settings-muted';
 
@@ -73,19 +77,6 @@ interface SettingsNavButtonProps {
   item: SettingsNavItem;
   isActive: boolean;
   onSelect: (page: SettingsPage) => void;
-}
-
-interface SettingsSegmentOption<T> {
-  value: T;
-  label: string;
-  icon?: React.ReactNode;
-}
-
-interface SettingsSegmentedControlProps<T> {
-  options: ReadonlyArray<SettingsSegmentOption<T>>;
-  value: T;
-  onChange: (value: T) => void;
-  className?: string;
 }
 
 interface SettingsStepperProps {
@@ -168,7 +159,7 @@ function SettingsRow({ label, children, stacked = false }: SettingsRowProps) {
 function ToggleRow({ label, checked, onChange }: ToggleRowProps) {
   return (
     <SettingsRow label={label}>
-      <Switch checked={checked} onChange={onChange} size="md" />
+      <CompactSwitch checked={checked} onChange={onChange} />
     </SettingsRow>
   );
 }
@@ -195,42 +186,6 @@ function SettingsNavButton({ item, isActive, onSelect }: SettingsNavButtonProps)
       </span>
       <span className="min-w-0 flex-1 text-[11px] font-medium leading-4.5">{item.title}</span>
     </button>
-  );
-}
-
-function SettingsSegmentedControl<T extends string | number>({
-  options,
-  value,
-  onChange,
-  className = '',
-}: SettingsSegmentedControlProps<T>) {
-  return (
-    <div
-      className={`inline-flex min-h-7 max-w-full flex-wrap items-center rounded-[8px] border border-border-black bg-settings-muted p-0.5 ${className}`.trim()}
-    >
-      {options.map((option) => {
-        const isSelected = value === option.value;
-        return (
-          <button
-            key={String(option.value)}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={`inline-flex h-6 items-center justify-center gap-1.5 rounded-[6px] px-2.5 text-[11px] font-medium transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-settings-accent-soft ${
-              isSelected
-                ? 'bg-panel-bg text-text-primary shadow-sm ring-1 ring-border-black/60'
-                : 'text-text-secondary hover:bg-panel-bg/80 hover:text-text-primary'
-            }`}
-          >
-            {option.icon ? (
-              <span className={isSelected ? 'text-settings-accent' : 'text-text-tertiary'}>
-                {option.icon}
-              </span>
-            ) : null}
-            <span>{option.label}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -633,11 +588,10 @@ export function SettingsModal() {
               />
               <SettingsRow label={t.fontFamily}>
                 <div className="w-36">
-                  <Select
+                  <PanelSelect
                     data-testid="settings-code-editor-font-family"
                     options={codeEditorFontFamilyOptions}
                     value={codeEditorFontFamily}
-                    className={SETTINGS_SELECT_CLASSNAME}
                     onChange={(event) =>
                       setCodeEditorFontFamily(event.currentTarget.value as CodeEditorFontFamily)
                     }
@@ -723,17 +677,19 @@ export function SettingsModal() {
               }
             >
               <SettingsRow label={t.language}>
-                <SettingsSegmentedControl
+                <PanelSegmentedControl
                   options={[
                     { value: 'en', label: 'English' },
                     { value: 'zh', label: '中文' },
                   ]}
                   value={lang}
                   onChange={(value) => setLang(value as 'en' | 'zh')}
+                  size="xs"
+                  stretch={false}
                 />
               </SettingsRow>
               <SettingsRow label={t.theme}>
-                <SettingsSegmentedControl
+                <PanelSegmentedControl
                   options={[
                     {
                       value: 'light',
@@ -759,10 +715,12 @@ export function SettingsModal() {
                   ]}
                   value={theme}
                   onChange={(value) => setTheme(value as 'light' | 'dark' | 'system')}
+                  size="xs"
+                  stretch={false}
                 />
               </SettingsRow>
               <SettingsRow label={t.interfaceFontSize}>
-                <SettingsSegmentedControl
+                <PanelSegmentedControl
                   options={[
                     { value: 'small', label: t.small },
                     { value: 'medium', label: t.medium },
@@ -770,6 +728,8 @@ export function SettingsModal() {
                   ]}
                   value={fontSize}
                   onChange={(value) => setFontSize(value as 'small' | 'medium' | 'large')}
+                  size="xs"
+                  stretch={false}
                 />
               </SettingsRow>
               <ToggleRow
@@ -811,8 +771,9 @@ export function SettingsModal() {
       >
         <div className="flex h-full min-h-0 flex-col bg-settings-shell">
           <div
+            data-testid="settings-drag-handle"
             onMouseDown={handleDragStart}
-            className="flex min-h-11 cursor-move select-none items-center justify-between gap-3 border-b border-border-black bg-panel-bg/95 px-3.5 py-2.5"
+            className="flex min-h-11 select-none items-center justify-between gap-3 border-b border-border-black bg-panel-bg/95 px-3.5 py-2.5"
           >
             <div className="flex min-w-0 items-center gap-2.5">
               <div className="rounded-[7px] border border-border-black bg-settings-card p-1.25 text-text-secondary">

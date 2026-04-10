@@ -42,8 +42,10 @@ class FakeWorker {
 
 test('Collada parse worker failures reject instead of silently reparsing on the main thread', async () => {
   const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
   let fetchCount = 0;
   const fakeWorker = new FakeWorker();
+  const consoleErrors: unknown[][] = [];
 
   globalThis.fetch = (async () => {
     fetchCount += 1;
@@ -54,6 +56,9 @@ test('Collada parse worker failures reject instead of silently reparsing on the 
       text: async () => '<COLLADA></COLLADA>',
     } as Response;
   }) as typeof fetch;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args);
+  };
 
   try {
     const client = createColladaParseWorkerPoolClient({
@@ -73,8 +78,12 @@ test('Collada parse worker failures reject instead of silently reparsing on the 
       /Collada parse worker is unavailable/i,
     );
     assert.equal(fetchCount, 0);
+    assert.equal(consoleErrors.length, 1);
+    assert.match(String(consoleErrors[0]?.[0] || ''), /Collada parse worker crashed/i);
+    assert.match(String(consoleErrors[0]?.[1] || ''), /collada worker exploded/i);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
   }
 });
 

@@ -12,6 +12,8 @@ import {
 export type PickTargetMode = 'all' | 'visual' | 'collision';
 
 const GEOMETRY_DISTANCE_TIE_EPSILON = 1e-3;
+const HIDDEN_HELPER_DISTANCE_EPSILON = 1e-3;
+const MIN_VISIBLE_MATERIAL_OPACITY = 1e-3;
 
 function matchesMode(key: string, mode: PickTargetMode): boolean {
   if (mode === 'all') return true;
@@ -49,7 +51,11 @@ function getEffectiveRenderOrder(object: THREE.Object3D | null): number {
   let renderOrder = 0;
 
   while (current) {
-    if (typeof current.renderOrder === 'number' && current.renderOrder > renderOrder) {
+    if (
+      !isPickOnlyMesh(current) &&
+      typeof current.renderOrder === 'number' &&
+      current.renderOrder > renderOrder
+    ) {
       renderOrder = current.renderOrder;
     }
     current = current.parent;
@@ -58,15 +64,40 @@ function getEffectiveRenderOrder(object: THREE.Object3D | null): number {
   return renderOrder;
 }
 
+function isPickOnlyMesh(object: THREE.Object3D | null): boolean {
+  if (!(object as THREE.Mesh | null)?.isMesh) {
+    return false;
+  }
+
+  const material = (object as THREE.Mesh).material;
+  const materials = Array.isArray(material) ? material : [material];
+  if (materials.length === 0) {
+    return false;
+  }
+
+  return materials.every((entry) => {
+    if (!entry || entry.visible === false) {
+      return true;
+    }
+
+    const opacity = typeof entry.opacity === 'number' ? entry.opacity : 1;
+    return entry.colorWrite === false || opacity <= MIN_VISIBLE_MATERIAL_OPACITY;
+  });
+}
+
 function hasOverlayPresentation(object: THREE.Object3D | null): boolean {
   let current: THREE.Object3D | null = object;
 
   while (current) {
-    if (typeof current.renderOrder === 'number' && current.renderOrder > 0) {
+    if (
+      !isPickOnlyMesh(current) &&
+      typeof current.renderOrder === 'number' &&
+      current.renderOrder > 0
+    ) {
       return true;
     }
 
-    if ((current as THREE.Mesh).isMesh) {
+    if ((current as THREE.Mesh).isMesh && !isPickOnlyMesh(current)) {
       const meshMaterial = (current as THREE.Mesh).material;
       const materials: THREE.Material[] = Array.isArray(meshMaterial)
         ? [...meshMaterial]
@@ -175,6 +206,21 @@ function isSelectableHelperHit(hit: THREE.Intersection): boolean {
   return isSelectableHelperObject(hit.object);
 }
 
+function shouldYieldHelperHit(
+  helperHit: THREE.Intersection,
+  geometryHit: THREE.Intersection,
+): boolean {
+  if (!isSelectableHelperHit(helperHit) || isSelectableHelperHit(geometryHit)) {
+    return false;
+  }
+
+  if (hasOverlayPresentation(helperHit.object)) {
+    return false;
+  }
+
+  return geometryHit.distance + HIDDEN_HELPER_DISTANCE_EPSILON < helperHit.distance;
+}
+
 function sortByInteractionPriority(
   hits: THREE.Intersection[],
   interactionLayerPriority: readonly ViewerInteractiveLayer[] | undefined,
@@ -184,6 +230,11 @@ function sortByInteractionPriority(
     const rightIsHelper = isSelectableHelperHit(right);
 
     if (leftIsHelper !== rightIsHelper) {
+      const helperHit = leftIsHelper ? left : right;
+      const geometryHit = leftIsHelper ? right : left;
+      if (shouldYieldHelperHit(helperHit, geometryHit)) {
+        return leftIsHelper ? 1 : -1;
+      }
       return leftIsHelper ? -1 : 1;
     }
 

@@ -5,10 +5,6 @@ import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from '@/app/utils/overlayLoaders';
-import {
-  isSourceCodeDocumentReadOnly,
-  type SourceCodeDocumentFlavor,
-} from '@/app/utils/sourceCodeDisplay';
 import type { Language } from '@/shared/i18n';
 import type { BridgeJoint, InteractionSelection, Theme, UrdfJoint } from '@/types';
 import type { AssemblyState } from '@/types';
@@ -17,6 +13,7 @@ import type {
   CollisionOptimizationSource,
   CollisionTargetRef,
 } from '@/features/property-editor';
+import type { SourceCodeEditorDocument } from '@/features/code-editor';
 
 const SourceCodeEditor = lazy(() =>
   loadSourceCodeEditorModule().then((module) => ({ default: module.SourceCodeEditor })),
@@ -34,16 +31,10 @@ const BridgeCreateModal = lazy(() =>
 
 interface AppLayoutOverlaysProps {
   isCodeViewerOpen: boolean;
-  sourceCodeContent: string;
-  sourceCodeDocumentFlavor: SourceCodeDocumentFlavor;
-  forceSourceCodeReadOnly?: boolean;
+  sourceCodeDocuments: SourceCodeEditorDocument[];
   autoApplyEnabled?: boolean;
-  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
-  onSourceCodeDownload?: () => void;
   onCloseCodeViewer: () => void;
   theme: Theme;
-  selectedFileName?: string;
-  robotName: string;
   lang: Language;
   loadingEditorLabel: string;
   isCollisionOptimizerOpen: boolean;
@@ -72,16 +63,10 @@ interface AppLayoutOverlaysProps {
 
 export function AppLayoutOverlays({
   isCodeViewerOpen,
-  sourceCodeContent,
-  sourceCodeDocumentFlavor,
-  forceSourceCodeReadOnly = false,
+  sourceCodeDocuments,
   autoApplyEnabled = true,
-  onCodeChange,
-  onSourceCodeDownload,
   onCloseCodeViewer,
   theme,
-  selectedFileName,
-  robotName,
   lang,
   loadingEditorLabel,
   isCollisionOptimizerOpen,
@@ -100,26 +85,16 @@ export function AppLayoutOverlays({
   onPreviewBridgeChange,
   onCreateBridge,
 }: AppLayoutOverlaysProps) {
-  const codeEditorFileName = selectedFileName
-    ? selectedFileName.split('/').pop() || `${robotName}.urdf`
-    : `${robotName}.urdf`;
-  const isSourceCodeReadOnly =
-    forceSourceCodeReadOnly || isSourceCodeDocumentReadOnly(sourceCodeDocumentFlavor);
   return (
     <>
       {isCodeViewerOpen && (
         <Suspense fallback={<LazyOverlayFallback label={loadingEditorLabel} />}>
           <SourceCodeEditor
-            code={sourceCodeContent}
-            onCodeChange={onCodeChange}
+            documents={sourceCodeDocuments}
             onClose={onCloseCodeViewer}
             theme={theme}
-            fileName={codeEditorFileName}
             lang={lang}
-            documentFlavor={sourceCodeDocumentFlavor}
-            readOnly={isSourceCodeReadOnly}
             autoApplyEnabled={autoApplyEnabled}
-            onDownload={isSourceCodeReadOnly ? undefined : onSourceCodeDownload}
           />
         </Suspense>
       )}

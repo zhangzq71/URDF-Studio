@@ -1,9 +1,9 @@
 import type { RobotFile } from '@/types';
-import type { URDFViewerProps } from '../types';
+import type { ViewerProps } from '../types';
 
 interface ResolveStandaloneViewerHoverSelectionWiringArgs {
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
-  sourceFormat?: URDFViewerProps['sourceFormat'] | RobotFile['format'] | null;
+  hoveredSelection?: ViewerProps['hoveredSelection'];
+  sourceFormat?: ViewerProps['sourceFormat'] | RobotFile['format'] | null;
   isMeshPreview?: boolean;
 }
 

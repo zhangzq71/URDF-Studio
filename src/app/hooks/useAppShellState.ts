@@ -11,7 +11,6 @@ export interface AppToastState {
 export interface AppViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean;
-  showVisualizerOptionsPanel: boolean;
   showJointPanel: boolean;
 }
 
@@ -26,7 +25,6 @@ const DEFAULT_TOAST_STATE: AppToastState = {
 const DEFAULT_VIEW_CONFIG: AppViewConfig = {
   showToolbar: true,
   showOptionsPanel: true,
-  showVisualizerOptionsPanel: true,
   showJointPanel: true,
 };
 
@@ -39,7 +37,9 @@ export function useAppShellState() {
   const [isCodeViewerOpen, setIsCodeViewerOpen] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(null);
+  const [projectExportProgress, setProjectExportProgress] = useState<ExportProgressState | null>(
+    null,
+  );
   const [viewConfig, setViewConfig] = useState<AppViewConfig>(DEFAULT_VIEW_CONFIG);
 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -79,14 +79,17 @@ export function useAppShellState() {
 
   const isAIModalOpen = isAIInspectionOpen || isAIConversationOpen;
 
-  const setIsAIModalOpen = useCallback((open: boolean) => {
-    if (open) {
-      openAIInspection();
-      return;
-    }
+  const setIsAIModalOpen = useCallback(
+    (open: boolean) => {
+      if (open) {
+        openAIInspection();
+        return;
+      }
 
-    closeAIEntryPoints();
-  }, [closeAIEntryPoints, openAIInspection]);
+      closeAIEntryPoints();
+    },
+    [closeAIEntryPoints, openAIInspection],
+  );
 
   useEffect(() => {
     return () => {

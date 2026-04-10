@@ -1,4 +1,8 @@
-import { MathUtils, Quaternion, Vector3 } from "three";
+import { Quaternion, Vector3 } from "three";
+import {
+    clampJointInteractionValue,
+    normalizeJointInteractionLimits,
+} from "../../../../../core/robot/jointInteractionLimits.js";
 export const jointCatalogCacheByStagePath = new Map();
 export const maxJointCatalogCacheEntries = 8;
 export function getLinkPathFromMeshId(meshId) {
@@ -114,37 +118,28 @@ export function axisTokenToVector(axisToken) {
     return new Vector3(1, 0, 0);
 }
 export function normalizeLimits(lowerLimitDeg, upperLimitDeg) {
-    let lower = lowerLimitDeg ?? -180;
-    let upper = upperLimitDeg ?? 180;
-    if (!Number.isFinite(lower))
-        lower = -180;
-    if (!Number.isFinite(upper))
-        upper = 180;
-    if (lower > upper) {
-        const midpoint = (lower + upper) * 0.5;
-        lower = midpoint;
-        upper = midpoint;
-    }
-    return { lower, upper };
+    return (normalizeJointInteractionLimits(lowerLimitDeg, upperLimitDeg, {
+        lower: -180,
+        upper: 180,
+    }) || {
+        lower: -180,
+        upper: 180,
+    });
 }
 export function roundAngleDegrees(value) {
     return Math.round(value * 100) / 100;
 }
 export function clampJointAnglePreservingNeutralZero(angleDeg, lowerLimitDeg, upperLimitDeg) {
-    const numericAngle = Number(angleDeg);
-    if (!Number.isFinite(numericAngle))
-        return 0;
-    if (Math.abs(numericAngle) <= 1e-8)
-        return 0;
-    return MathUtils.clamp(numericAngle, lowerLimitDeg, upperLimitDeg);
+    return clampJointInteractionValue(angleDeg, lowerLimitDeg, upperLimitDeg, {
+        defaultLimits: {
+            lower: -180,
+            upper: 180,
+        },
+        preserveNeutralZero: true,
+    });
 }
 export function getInteractiveJointLimits(lowerLimitDeg, upperLimitDeg) {
-    const lower = Number.isFinite(lowerLimitDeg) ? lowerLimitDeg : -180;
-    const upper = Number.isFinite(upperLimitDeg) ? upperLimitDeg : 180;
-    return {
-        lower: Math.min(lower, 0),
-        upper: Math.max(upper, 0),
-    };
+    return normalizeLimits(lowerLimitDeg, upperLimitDeg);
 }
 export function hasFiniteLimitValue(value) {
     return value !== null && value !== undefined && Number.isFinite(Number(value));

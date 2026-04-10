@@ -1,6 +1,8 @@
 import type { RobotData, RobotState, UrdfLink, UrdfVisual } from '@/types';
 
 type RobotSnapshot = RobotData | RobotState;
+const MJCF_WORLD_LINK_ID = 'world';
+const MJCF_WORLD_GEOM_LINK_PREFIX = 'world_geom_';
 
 function hideVisual(visual: UrdfVisual): UrdfVisual {
   return visual.visible === false ? visual : { ...visual, visible: false };
@@ -50,6 +52,21 @@ function hideMjcfWorldLink(link: UrdfLink): UrdfLink {
   };
 }
 
+function isMjcfWorldOwnedSyntheticLink(link: UrdfLink): boolean {
+  return (
+    link.id.startsWith(MJCF_WORLD_GEOM_LINK_PREFIX) ||
+    link.name.startsWith(MJCF_WORLD_GEOM_LINK_PREFIX)
+  );
+}
+
+function shouldHideMjcfWorldOwnedLink(link: UrdfLink): boolean {
+  return (
+    link.id === MJCF_WORLD_LINK_ID ||
+    link.name === MJCF_WORLD_LINK_ID ||
+    isMjcfWorldOwnedSyntheticLink(link)
+  );
+}
+
 export function applyMjcfWorldVisibility<T extends RobotSnapshot>(
   robot: T,
   showMjcfWorldLink: boolean,
@@ -58,21 +75,28 @@ export function applyMjcfWorldVisibility<T extends RobotSnapshot>(
     return robot;
   }
 
-  const worldLink = robot.links.world;
-  if (!worldLink) {
-    return robot;
-  }
+  let changed = false;
+  const nextLinks = Object.fromEntries(
+    Object.entries(robot.links).map(([linkId, link]) => {
+      if (!shouldHideMjcfWorldOwnedLink(link)) {
+        return [linkId, link];
+      }
 
-  const nextWorldLink = hideMjcfWorldLink(worldLink);
-  if (nextWorldLink === worldLink) {
+      const nextLink = hideMjcfWorldLink(link);
+      if (nextLink !== link) {
+        changed = true;
+      }
+
+      return [linkId, nextLink];
+    }),
+  ) as T['links'];
+
+  if (!changed) {
     return robot;
   }
 
   return {
     ...robot,
-    links: {
-      ...robot.links,
-      world: nextWorldLink,
-    },
+    links: nextLinks,
   };
 }

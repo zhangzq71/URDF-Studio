@@ -775,7 +775,11 @@ export class ThreeRenderDelegateCore {
                 meshCountsByLinkPath,
             };
         }
-        catch {
+        catch (error) {
+            console.error('[ThreeRenderDelegateCore] Failed to build robot metadata snapshot from USD driver.', {
+                stageSourcePath: String(stageSourcePath || '').trim() || null,
+                error,
+            });
             return null;
         }
     }

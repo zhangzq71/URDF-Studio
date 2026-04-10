@@ -49,6 +49,10 @@ function applyJointPatch(joint: RuntimeURDFJoint, patch: JointPatchCandidate): v
   joint.origPosition = joint.position.clone();
   joint.origQuaternion = joint.quaternion.clone();
 
+  if (joint.jointType !== 'fixed') {
+    joint.jointValue = null;
+  }
+
   const axis = patch.jointData.axis;
   const axisLengthSq = axis ? axis.x * axis.x + axis.y * axis.y + axis.z * axis.z : 0;
   if (axisLengthSq > 0) {

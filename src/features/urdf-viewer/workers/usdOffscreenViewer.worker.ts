@@ -46,6 +46,7 @@ import {
   sortUsdInteractionCandidates,
   type ResolvedUsdHelperHit,
 } from '../utils/usdInteractionPicking.ts';
+import { resolveScreenSpaceUsdHelperHit } from '../utils/usdScreenSpaceHelperInteraction.ts';
 import { resolveUsdRuntimeLinkPathForMesh } from '../utils/usdRuntimeMeshMapping.ts';
 import { resolveUsdVisualMeshObjectOrder } from '../utils/usdRuntimeMeshObjectOrder.ts';
 import { prepareUsdVisualMesh } from '../utils/usdVisualRendering.ts';
@@ -1121,12 +1122,35 @@ function pickRuntimeInteractionTargetAtLocalPoint(
     };
   }
 
-  return exactCandidate?.kind === 'geometry'
-    ? {
-        kind: 'geometry',
-        meta: exactCandidate.meta,
-      }
-    : null;
+  if (exactCandidate?.kind === 'geometry') {
+    return {
+      kind: 'geometry',
+      meta: exactCandidate.meta,
+    };
+  }
+
+  const screenSpaceHelperHit = resolveScreenSpaceUsdHelperHit({
+    pointerClientX: localX,
+    pointerClientY: localY,
+    helperTargets: runtimeHelperTargets,
+    resolution: resolvedRobotData,
+    camera,
+    canvasRect: {
+      x: 0,
+      y: 0,
+      width: runtimeWindow.innerWidth,
+      height: runtimeWindow.innerHeight,
+    },
+    interactionLayerPriority,
+  });
+  if (screenSpaceHelperHit) {
+    return {
+      kind: 'helper',
+      selection: screenSpaceHelperHit,
+    };
+  }
+
+  return null;
 }
 
 function commitRuntimeHoverTarget(pickedTarget: RuntimeInteractionTarget | null): void {

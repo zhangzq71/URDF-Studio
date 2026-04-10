@@ -8,9 +8,18 @@ export interface PrimitiveFit {
   volume: number;
 }
 
+export interface BoxFit {
+  center: { x: number; y: number; z: number };
+  dimensions: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number; w: number };
+  volume: number;
+}
+
 export interface PrimitiveFitSet {
+  box?: BoxFit;
   cylinder?: PrimitiveFit;
   capsule?: PrimitiveFit;
+  boxCandidates?: BoxFit[];
   cylinderCandidates?: PrimitiveFit[];
   capsuleCandidates?: PrimitiveFit[];
 }
@@ -360,6 +369,183 @@ function createPerpendicularBasis(axis: Point3): {
   return { axis: axisVector, basisU, basisV };
 }
 
+interface BoxFitBasis {
+  xAxis: THREE.Vector3;
+  yAxis: THREE.Vector3;
+  zAxis: THREE.Vector3;
+}
+
+function canonicalizeQuaternion(quaternion: THREE.Quaternion): THREE.Quaternion {
+  if (
+    quaternion.w < -1e-8 ||
+    (Math.abs(quaternion.w) <= 1e-8 && quaternion.x < -1e-8) ||
+    (Math.abs(quaternion.w) <= 1e-8 && Math.abs(quaternion.x) <= 1e-8 && quaternion.y < -1e-8) ||
+    (Math.abs(quaternion.w) <= 1e-8 &&
+      Math.abs(quaternion.x) <= 1e-8 &&
+      Math.abs(quaternion.y) <= 1e-8 &&
+      quaternion.z < 0)
+  ) {
+    quaternion.set(-quaternion.x, -quaternion.y, -quaternion.z, -quaternion.w);
+  }
+
+  return quaternion;
+}
+
+function createBoxFitBasis(
+  primaryAxis: Point3,
+  secondaryAxis: Point3,
+  tertiaryAxis?: Point3,
+): BoxFitBasis | null {
+  const xAxis = canonicalizeAxis(primaryAxis);
+  if (!xAxis) {
+    return null;
+  }
+
+  const xVector = new THREE.Vector3(xAxis.x, xAxis.y, xAxis.z).normalize();
+  const yVector = new THREE.Vector3(secondaryAxis.x, secondaryAxis.y, secondaryAxis.z);
+  yVector.addScaledVector(xVector, -xVector.dot(yVector));
+
+  if (yVector.lengthSq() <= 1e-12 && tertiaryAxis) {
+    yVector.set(tertiaryAxis.x, tertiaryAxis.y, tertiaryAxis.z);
+    yVector.addScaledVector(xVector, -xVector.dot(yVector));
+  }
+
+  if (yVector.lengthSq() <= 1e-12) {
+    const fallbackReference =
+      Math.abs(xVector.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+    yVector.copy(fallbackReference).addScaledVector(xVector, -xVector.dot(fallbackReference));
+  }
+
+  if (yVector.lengthSq() <= 1e-12) {
+    return null;
+  }
+
+  yVector.normalize();
+  const zVector = new THREE.Vector3().crossVectors(xVector, yVector).normalize();
+  if (zVector.lengthSq() <= 1e-12) {
+    return null;
+  }
+
+  if (tertiaryAxis) {
+    const tertiaryVector = new THREE.Vector3(tertiaryAxis.x, tertiaryAxis.y, tertiaryAxis.z);
+    if (zVector.dot(tertiaryVector) < 0) {
+      zVector.multiplyScalar(-1);
+    }
+  }
+
+  yVector.crossVectors(zVector, xVector).normalize();
+
+  return {
+    xAxis: xVector,
+    yAxis: yVector,
+    zAxis: zVector,
+  };
+}
+
+function computeBoxFitForBasis(points: Point3[], basis: BoxFitBasis): BoxFit | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+
+  points.forEach((point) => {
+    const projectionX = point.x * basis.xAxis.x + point.y * basis.xAxis.y + point.z * basis.xAxis.z;
+    const projectionY = point.x * basis.yAxis.x + point.y * basis.yAxis.y + point.z * basis.yAxis.z;
+    const projectionZ = point.x * basis.zAxis.x + point.y * basis.zAxis.y + point.z * basis.zAxis.z;
+
+    minX = Math.min(minX, projectionX);
+    maxX = Math.max(maxX, projectionX);
+    minY = Math.min(minY, projectionY);
+    maxY = Math.max(maxY, projectionY);
+    minZ = Math.min(minZ, projectionZ);
+    maxZ = Math.max(maxZ, projectionZ);
+  });
+
+  const dimensions = {
+    x: Math.max(maxX - minX, 1e-8),
+    y: Math.max(maxY - minY, 1e-8),
+    z: Math.max(maxZ - minZ, 1e-8),
+  };
+  const center = new THREE.Vector3()
+    .copy(basis.xAxis)
+    .multiplyScalar((minX + maxX) / 2)
+    .addScaledVector(basis.yAxis, (minY + maxY) / 2)
+    .addScaledVector(basis.zAxis, (minZ + maxZ) / 2);
+  const rotation = canonicalizeQuaternion(
+    new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(basis.xAxis, basis.yAxis, basis.zAxis),
+    ),
+  );
+
+  return {
+    center: { x: center.x, y: center.y, z: center.z },
+    dimensions,
+    rotation: {
+      x: rotation.x,
+      y: rotation.y,
+      z: rotation.z,
+      w: rotation.w,
+    },
+    volume: dimensions.x * dimensions.y * dimensions.z,
+  };
+}
+
+function buildBoxFitCandidates(points: Point3[]): BoxFit[] {
+  const candidates: BoxFit[] = [];
+  const basisCandidates: BoxFitBasis[] = [
+    {
+      xAxis: new THREE.Vector3(1, 0, 0),
+      yAxis: new THREE.Vector3(0, 1, 0),
+      zAxis: new THREE.Vector3(0, 0, 1),
+    },
+  ];
+  const principalAxes = computePrincipalAxes(points);
+
+  if (principalAxes.length >= 2) {
+    const principalBasis = createBoxFitBasis(principalAxes[0], principalAxes[1], principalAxes[2]);
+    if (principalBasis) {
+      basisCandidates.push(principalBasis);
+    }
+  }
+
+  basisCandidates.forEach((basis) => {
+    const candidate = computeBoxFitForBasis(points, basis);
+    if (!candidate) {
+      return;
+    }
+
+    const isDuplicate = candidates.some((existing) => {
+      const volumeDelta = Math.abs(existing.volume - candidate.volume);
+      const quaternionDot = Math.abs(
+        existing.rotation.x * candidate.rotation.x +
+          existing.rotation.y * candidate.rotation.y +
+          existing.rotation.z * candidate.rotation.z +
+          existing.rotation.w * candidate.rotation.w,
+      );
+
+      return volumeDelta <= 1e-8 && quaternionDot >= 0.9999;
+    });
+
+    if (!isDuplicate) {
+      candidates.push(candidate);
+    }
+  });
+
+  return candidates.sort(
+    (left, right) =>
+      left.volume - right.volume ||
+      left.dimensions.x - right.dimensions.x ||
+      left.dimensions.y - right.dimensions.y ||
+      left.dimensions.z - right.dimensions.z,
+  );
+}
+
 function computeCapsuleVolume(totalLength: number, radius: number): number {
   if (totalLength <= 0 || radius <= 0) return 0;
   const clampedRadius = Math.min(radius, totalLength / 2);
@@ -531,6 +717,7 @@ export function computeBestPrimitiveFits(points: Point3[]): PrimitiveFitSet | un
 
   let bestCylinder: PrimitiveFit | undefined;
   let bestCapsule: PrimitiveFit | undefined;
+  const boxCandidates = buildBoxFitCandidates(points);
   const cylinderCandidates: PrimitiveFit[] = [];
   const capsuleCandidates: PrimitiveFit[] = [];
 
@@ -550,8 +737,10 @@ export function computeBestPrimitiveFits(points: Point3[]): PrimitiveFitSet | un
   });
 
   return {
+    box: boxCandidates[0],
     cylinder: bestCylinder,
     capsule: bestCapsule,
+    boxCandidates,
     cylinderCandidates: cylinderCandidates.sort(
       (left, right) =>
         left.volume - right.volume || left.length - right.length || left.radius - right.radius,

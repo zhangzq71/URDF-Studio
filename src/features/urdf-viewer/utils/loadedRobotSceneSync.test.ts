@@ -276,6 +276,40 @@ test('syncLoadedRobotScene hides MJCF world runtime geometry when the world togg
   assert.equal(result.linkMeshMap.get('world:visual')?.includes(worldMesh), true);
 });
 
+test('syncLoadedRobotScene boosts collision overlay opacity when visuals are hidden', () => {
+  const previousOpacity = collisionBaseMaterial.opacity;
+  const robot = new THREE.Group();
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collisionGroup = new THREE.Group();
+  (collisionGroup as any).isURDFCollider = true;
+  const collisionMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collisionGroup.add(collisionMesh);
+
+  link.add(collisionGroup);
+  robot.add(link);
+  (robot as any).links = { base_link: link };
+
+  const result = syncLoadedRobotScene({
+    robot,
+    sourceFormat: 'urdf',
+    showCollision: true,
+    showVisual: false,
+    urdfMaterials: null,
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(collisionMesh.material, collisionBaseMaterial);
+  assert.equal(collisionBaseMaterial.opacity, 0.72);
+
+  collisionBaseMaterial.opacity = previousOpacity;
+  collisionBaseMaterial.needsUpdate = true;
+});
+
 test('syncLoadedRobotScene maps folded MJCF visual meshes onto semantic synthetic link ids', () => {
   const robot = new THREE.Group();
   const link = new URDFLink();
@@ -909,7 +943,7 @@ test('syncLoadedRobotScene traverses each collider subtree only once', () => {
   assert.equal(collisionMesh.userData.parentLinkName, 'base_link');
 });
 
-test('syncLoadedRobotScene skips hidden collider subtree processing when collisions are disabled', () => {
+test('syncLoadedRobotScene preserves hidden collider metadata when collisions are disabled', () => {
   const robot = new THREE.Group();
   const link = new URDFLink();
   link.name = 'base_link';
@@ -933,12 +967,14 @@ test('syncLoadedRobotScene skips hidden collider subtree processing when collisi
     urdfMaterials: null,
   });
 
-  assert.equal(result.linkMeshMap.has('base_link:collision'), false);
+  assert.equal(result.linkMeshMap.has('base_link:collision'), true);
+  assert.equal(result.linkMeshMap.get('base_link:collision')?.includes(collisionMesh), true);
   assert.equal(collisionGroup.visible, false);
   assert.equal(collisionGroup.userData.parentLinkName, 'base_link');
-  assert.equal(collisionMesh.userData.isCollisionMesh, undefined);
-  assert.equal(collisionMesh.userData.parentLinkName, undefined);
-  assert.equal(collisionMesh.material, collisionMaterial);
+  assert.equal(collisionMesh.userData.isCollisionMesh, true);
+  assert.equal(collisionMesh.userData.parentLinkName, 'base_link');
+  assert.equal(collisionMesh.userData.runtimeParentLinkName, 'base_link');
+  assert.equal(collisionMesh.material, collisionBaseMaterial);
 });
 
 test('syncLoadedRobotScene disposes replaced collision materials when normalizing collision meshes', () => {

@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { toggleOptionsPanels, toggleViewPanel } from './viewMenuState.js';
+import { setOptionsPanelVisibility, toggleOptionsPanel, toggleViewPanel } from './viewMenuState.js';
 
 test('toggleViewPanel marks a single panel as visible without changing other fields', () => {
   const next = toggleViewPanel(
     {
       showToolbar: false,
       showOptionsPanel: false,
-      showVisualizerOptionsPanel: false,
       showJointPanel: false,
     },
     'showToolbar',
@@ -17,39 +16,48 @@ test('toggleViewPanel marks a single panel as visible without changing other fie
   assert.deepEqual(next, {
     showToolbar: true,
     showOptionsPanel: false,
-    showVisualizerOptionsPanel: false,
     showJointPanel: false,
   });
 });
 
-test('toggleOptionsPanels opens both viewer and visualizer options together', () => {
-  const next = toggleOptionsPanels({
+test('toggleOptionsPanel opens the unified options panel', () => {
+  const next = toggleOptionsPanel({
     showToolbar: false,
     showOptionsPanel: false,
-    showVisualizerOptionsPanel: false,
     showJointPanel: false,
   });
 
   assert.deepEqual(next, {
     showToolbar: false,
     showOptionsPanel: true,
-    showVisualizerOptionsPanel: true,
     showJointPanel: false,
   });
 });
 
-test('toggleOptionsPanels closes both option panels when either is visible', () => {
+test('toggleOptionsPanel closes the unified options panel when it is visible', () => {
   const current = {
     showToolbar: true,
     showOptionsPanel: true,
-    showVisualizerOptionsPanel: true,
     showJointPanel: false,
   };
 
-  assert.deepEqual(toggleOptionsPanels(current), {
+  assert.deepEqual(toggleOptionsPanel(current), {
     showToolbar: true,
     showOptionsPanel: false,
-    showVisualizerOptionsPanel: false,
     showJointPanel: false,
+  });
+});
+
+test('setOptionsPanelVisibility updates the unified options panel without touching other fields', () => {
+  const current = {
+    showToolbar: true,
+    showOptionsPanel: false,
+    showJointPanel: true,
+  };
+
+  assert.deepEqual(setOptionsPanelVisibility(current, false), {
+    showToolbar: true,
+    showOptionsPanel: false,
+    showJointPanel: true,
   });
 });

@@ -3,12 +3,12 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
 import type { UrdfVisual } from '@/types';
-import type { URDFViewerProps } from '../types';
+import type { ViewerProps } from '../types';
 import { useCollisionTransformDragLifecycle } from '../hooks/useCollisionTransformDragLifecycle';
 import { getObjectRPY } from '../utils/collisionTransformMath';
 import {
   canRenderCollisionTransformControls,
-  resolveActiveCollisionDraggingControls,
+  resolveCurrentCollisionDraggingControls,
 } from '../utils/collisionTransformControlsShared';
 import {
   extractUsdGeometryTransformFromWorldMatrix,
@@ -39,9 +39,7 @@ function cloneGeometryForBaseline(geometry?: UrdfVisual): UrdfVisual | null {
         ...(geometry.origin?.rpy ?? {}),
       },
     },
-    dimensions: geometry.dimensions
-      ? { ...geometry.dimensions }
-      : geometry.dimensions,
+    dimensions: geometry.dimensions ? { ...geometry.dimensions } : geometry.dimensions,
   };
 }
 
@@ -54,12 +52,24 @@ export interface UsdCollisionTransformTarget {
 }
 
 interface UsdCollisionTransformControlsProps {
-  selection?: URDFViewerProps['selection'];
+  selection?: ViewerProps['selection'];
   transformMode: 'select' | 'translate' | 'rotate' | 'universal';
   setIsDragging: (dragging: boolean) => void;
-  resolveTarget: (selection: NonNullable<URDFViewerProps['selection']>) => UsdCollisionTransformTarget | null;
-  onTransformChange?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
-  onTransformEnd?: (linkId: string, position: { x: number; y: number; z: number }, rotation: { r: number; p: number; y: number }, objectIndex?: number) => void;
+  resolveTarget: (
+    selection: NonNullable<ViewerProps['selection']>,
+  ) => UsdCollisionTransformTarget | null;
+  onTransformChange?: (
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => void;
+  onTransformEnd?: (
+    linkId: string,
+    position: { x: number; y: number; z: number },
+    rotation: { r: number; p: number; y: number },
+    objectIndex?: number,
+  ) => void;
   onTransformPending?: (pending: boolean) => void;
 }
 
@@ -140,10 +150,10 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
       return null;
     }
 
-    const currentGeometry = baselineGeometryRef.current ?? cloneGeometryForBaseline(activeTarget.getGeometry());
-    const currentMeshWorldMatrix = baselineMeshWorldMatrixRef.current?.clone()
-      ?? activeTarget.getMeshWorldMatrix?.()
-      ?? null;
+    const currentGeometry =
+      baselineGeometryRef.current ?? cloneGeometryForBaseline(activeTarget.getGeometry());
+    const currentMeshWorldMatrix =
+      baselineMeshWorldMatrixRef.current?.clone() ?? activeTarget.getMeshWorldMatrix?.() ?? null;
     const linkWorldMatrix = activeTarget.getLinkWorldMatrix();
 
     if (!currentGeometry || !currentMeshWorldMatrix || !linkWorldMatrix) {
@@ -171,51 +181,56 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
     };
   }, []);
 
-  const syncProxyFromTarget = useCallback((target = activeTargetRef.current) => {
-    const nextProxyObject = proxyObjectRef.current;
-    if (!nextProxyObject || !target || !syncLinkFrame(target)) {
-      return;
-    }
+  const syncProxyFromTarget = useCallback(
+    (target = activeTargetRef.current) => {
+      const nextProxyObject = proxyObjectRef.current;
+      if (!nextProxyObject || !target || !syncLinkFrame(target)) {
+        return;
+      }
 
-    captureBaseline(target);
+      captureBaseline(target);
 
-    const geometry = target.getGeometry();
-    const xyz = geometry?.origin?.xyz || DEFAULT_POSITION;
-    const rpy = geometry?.origin?.rpy || DEFAULT_ROTATION;
-    const meshWorldMatrix = baselineMeshWorldMatrixRef.current;
-    const linkWorldMatrix = target.getLinkWorldMatrix();
+      const geometry = target.getGeometry();
+      const xyz = geometry?.origin?.xyz || DEFAULT_POSITION;
+      const rpy = geometry?.origin?.rpy || DEFAULT_ROTATION;
+      const meshWorldMatrix = baselineMeshWorldMatrixRef.current;
+      const linkWorldMatrix = target.getLinkWorldMatrix();
 
-    if (meshWorldMatrix && linkWorldMatrix) {
-      const proxyLocalTransform = extractUsdProxyLocalTransformFromWorldMatrices({
-        linkWorldMatrix,
-        meshWorldMatrix,
-      });
+      if (meshWorldMatrix && linkWorldMatrix) {
+        const proxyLocalTransform = extractUsdProxyLocalTransformFromWorldMatrices({
+          linkWorldMatrix,
+          meshWorldMatrix,
+        });
 
-      nextProxyObject.position.set(
-        proxyLocalTransform.position.x,
-        proxyLocalTransform.position.y,
-        proxyLocalTransform.position.z,
-      );
-      nextProxyObject.quaternion.setFromEuler(new THREE.Euler(
-        proxyLocalTransform.rotation.r,
-        proxyLocalTransform.rotation.p,
-        proxyLocalTransform.rotation.y,
-        'ZYX',
-      ));
-      nextProxyObject.scale.set(
-        proxyLocalTransform.scale.x,
-        proxyLocalTransform.scale.y,
-        proxyLocalTransform.scale.z,
-      );
-    } else {
-      nextProxyObject.position.set(xyz.x, xyz.y, xyz.z);
-      nextProxyObject.quaternion.setFromEuler(new THREE.Euler(rpy.r, rpy.p, rpy.y, 'ZYX'));
-      nextProxyObject.scale.setScalar(1);
-    }
+        nextProxyObject.position.set(
+          proxyLocalTransform.position.x,
+          proxyLocalTransform.position.y,
+          proxyLocalTransform.position.z,
+        );
+        nextProxyObject.quaternion.setFromEuler(
+          new THREE.Euler(
+            proxyLocalTransform.rotation.r,
+            proxyLocalTransform.rotation.p,
+            proxyLocalTransform.rotation.y,
+            'ZYX',
+          ),
+        );
+        nextProxyObject.scale.set(
+          proxyLocalTransform.scale.x,
+          proxyLocalTransform.scale.y,
+          proxyLocalTransform.scale.z,
+        );
+      } else {
+        nextProxyObject.position.set(xyz.x, xyz.y, xyz.z);
+        nextProxyObject.quaternion.setFromEuler(new THREE.Euler(rpy.r, rpy.p, rpy.y, 'ZYX'));
+        nextProxyObject.scale.setScalar(1);
+      }
 
-    nextProxyObject.updateMatrixWorld(true);
-    syncTranslateProxy();
-  }, [captureBaseline, syncLinkFrame, syncTranslateProxy]);
+      nextProxyObject.updateMatrixWorld(true);
+      syncTranslateProxy();
+    },
+    [captureBaseline, syncLinkFrame, syncTranslateProxy],
+  );
 
   const applyTranslateProxyToTarget = useCallback(() => {
     const nextProxyObject = proxyObjectRef.current;
@@ -234,8 +249,10 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
       return false;
     }
 
-    const positionChanged = originalPositionRef.current.distanceToSquared(nextProxyObject.position) > 1e-8;
-    const rotationChanged = originalQuaternionRef.current.angleTo(nextProxyObject.quaternion) > 1e-4;
+    const positionChanged =
+      originalPositionRef.current.distanceToSquared(nextProxyObject.position) > 1e-8;
+    const rotationChanged =
+      originalQuaternionRef.current.angleTo(nextProxyObject.quaternion) > 1e-4;
     return positionChanged || rotationChanged;
   }, []);
 
@@ -289,7 +306,13 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
     }
 
     syncTranslateProxy();
-  }, [applyTranslateProxyToTarget, commitTransform, hasTransformChanged, syncTranslateProxy, transformMode]);
+  }, [
+    applyTranslateProxyToTarget,
+    commitTransform,
+    hasTransformChanged,
+    syncTranslateProxy,
+    transformMode,
+  ]);
 
   const handleCancelDrag = useCallback(() => {
     const nextProxyObject = proxyObjectRef.current;
@@ -355,10 +378,10 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
 
   useEffect(() => {
     if (
-      transformMode === 'select'
-      || selection?.type !== 'link'
-      || !selection?.id
-      || selection.subType !== 'collision'
+      transformMode === 'select' ||
+      selection?.type !== 'link' ||
+      !selection?.id ||
+      selection.subType !== 'collision'
     ) {
       if (isDraggingRef.current) {
         cancelActiveDrag();
@@ -380,8 +403,9 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
       return;
     }
 
-    const isSameTarget = activeTargetRef.current?.linkId === resolvedTarget.linkId
-      && activeTargetRef.current?.objectIndex === resolvedTarget.objectIndex;
+    const isSameTarget =
+      activeTargetRef.current?.linkId === resolvedTarget.linkId &&
+      activeTargetRef.current?.objectIndex === resolvedTarget.objectIndex;
 
     if (isDraggingRef.current && !isSameTarget) {
       cancelActiveDrag();
@@ -398,13 +422,7 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
       activeControlsRef.current = null;
       syncProxyFromTarget(resolvedTarget);
     }
-  }, [
-    cancelActiveDrag,
-    resolveTarget,
-    selection,
-    syncProxyFromTarget,
-    transformMode,
-  ]);
+  }, [cancelActiveDrag, resolveTarget, selection, syncProxyFromTarget, transformMode]);
 
   useEffect(() => {
     if (!isDraggingRef.current) {
@@ -414,10 +432,9 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
 
   useFrame(() => {
     const translateControls = transformRef.current;
-    const draggingControls = resolveActiveCollisionDraggingControls(
+    const draggingControls = resolveCurrentCollisionDraggingControls(
       translateControls,
       rotateTransformRef.current,
-      activeControlsRef.current,
     );
 
     if (draggingControls) {
@@ -439,27 +456,31 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
     }
   }, 1000);
 
-  const handleProxyRef = useCallback((group: THREE.Group | null) => {
-    proxyObjectRef.current = group;
-    setProxyObject(group);
-    if (group && activeTargetRef.current && !isDraggingRef.current) {
-      syncProxyFromTarget(activeTargetRef.current);
-    }
-  }, [syncProxyFromTarget]);
-
-  const handleTranslateProxyRef = useCallback((group: THREE.Group | null) => {
-    translateProxyRef.current = group;
-    setTranslateProxy(group);
-    if (group && !isDraggingRef.current) {
-      syncTranslateProxy();
-    }
-  }, [syncTranslateProxy]);
-
-  const canRenderControls = Boolean(proxyObject) && canRenderCollisionTransformControls(
-    transformMode,
-    shouldUseTranslateProxy,
-    translateProxy,
+  const handleProxyRef = useCallback(
+    (group: THREE.Group | null) => {
+      proxyObjectRef.current = group;
+      setProxyObject(group);
+      if (group && activeTargetRef.current && !isDraggingRef.current) {
+        syncProxyFromTarget(activeTargetRef.current);
+      }
+    },
+    [syncProxyFromTarget],
   );
+
+  const handleTranslateProxyRef = useCallback(
+    (group: THREE.Group | null) => {
+      translateProxyRef.current = group;
+      setTranslateProxy(group);
+      if (group && !isDraggingRef.current) {
+        syncTranslateProxy();
+      }
+    },
+    [syncTranslateProxy],
+  );
+
+  const canRenderControls =
+    Boolean(proxyObject) &&
+    canRenderCollisionTransformControls(transformMode, shouldUseTranslateProxy, translateProxy);
 
   return (
     <>
@@ -473,7 +494,7 @@ export const UsdCollisionTransformControls: React.FC<UsdCollisionTransformContro
           ref={transformRef}
           rotateRef={rotateTransformRef}
           object={proxyObject}
-          translateObject={shouldUseTranslateProxy ? translateProxy ?? undefined : undefined}
+          translateObject={shouldUseTranslateProxy ? (translateProxy ?? undefined) : undefined}
           mode={controlMode}
           size={COLLISION_TRANSLATE_GIZMO_SIZE}
           rotateSize={COLLISION_ROTATE_GIZMO_SIZE}

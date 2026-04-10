@@ -47,11 +47,30 @@ import {
   requestXmlCompletionsWithWorker,
   requestXmlValidationWithWorker,
 } from '../utils/xmlEditorWorkerBridge.ts';
+import {
+  getSourceCodeEditorTabBadgeClassName,
+  getSourceCodeEditorTabClassName,
+  SOURCE_CODE_EDITOR_TABS_CLASS,
+} from '../utils/sourceCodeEditorTabClasses';
 import { useSourceCodeEditorAutoApply } from '../hooks/useSourceCodeEditorAutoApply';
 
-export interface SourceCodeEditorProps {
+export interface SourceCodeEditorDocument {
+  id: string;
   code: string;
   onCodeChange: (newCode: string) => Promise<boolean> | boolean;
+  fileName: string;
+  tabLabel?: string;
+  filePath?: string;
+  documentFlavor?: SourceCodeDocumentFlavor;
+  readOnly?: boolean;
+  onDownload?: () => void;
+  validationEnabled?: boolean;
+}
+
+export interface SourceCodeEditorProps {
+  documents?: SourceCodeEditorDocument[];
+  code?: string;
+  onCodeChange?: (newCode: string) => Promise<boolean> | boolean;
   onClose: () => void;
   theme: Theme;
   fileName?: string;
@@ -67,6 +86,19 @@ interface DocumentMeta {
   label: string;
   supportsValidation: boolean;
   isXmlLike: boolean;
+}
+
+interface ActiveSourceCodeDocument {
+  id: string;
+  code: string;
+  onCodeChange: (newCode: string) => Promise<boolean> | boolean;
+  fileName: string;
+  tabLabel?: string;
+  filePath?: string;
+  documentFlavor: SourceCodeDocumentFlavor;
+  readOnly: boolean;
+  onDownload?: () => void;
+  validationEnabled?: boolean;
 }
 
 const editorTexts = {
@@ -206,6 +238,60 @@ const formatContentSize = (content: string): string => {
   return `${(bytes / 1024).toFixed(1)} KB`;
 };
 
+const getCodeDocumentLabel = (fileName: string): string => {
+  const normalizedFileName = fileName.replace(/\\/g, '/');
+  const segments = normalizedFileName.split('/');
+  return segments[segments.length - 1] || normalizedFileName;
+};
+
+const normalizeDocuments = ({
+  documents,
+  code,
+  onCodeChange,
+  fileName,
+  documentFlavor,
+  readOnly,
+  onDownload,
+}: Pick<
+  SourceCodeEditorProps,
+  'documents' | 'code' | 'onCodeChange' | 'fileName' | 'documentFlavor' | 'readOnly' | 'onDownload'
+>): ActiveSourceCodeDocument[] => {
+  if (documents && documents.length > 0) {
+    return documents.map((document) => ({
+      id: document.id,
+      code: document.code,
+      onCodeChange: document.onCodeChange,
+      fileName: document.fileName,
+      tabLabel: document.tabLabel ?? document.fileName,
+      filePath: document.filePath,
+      documentFlavor: document.documentFlavor ?? 'urdf',
+      readOnly: document.readOnly ?? false,
+      onDownload: document.onDownload,
+      validationEnabled: document.validationEnabled,
+    }));
+  }
+
+  const resolvedFileName = fileName ?? 'robot.urdf';
+  return [
+    {
+      id: resolvedFileName,
+      code: code ?? '',
+      onCodeChange:
+        onCodeChange ??
+        (() => {
+          throw new Error(
+            'SourceCodeEditor requires onCodeChange when documents are not provided.',
+          );
+        }),
+      fileName: getCodeDocumentLabel(resolvedFileName),
+      tabLabel: getCodeDocumentLabel(resolvedFileName),
+      documentFlavor: documentFlavor ?? 'urdf',
+      readOnly: readOnly ?? false,
+      onDownload,
+    },
+  ];
+};
+
 const resolveCodeEditorFontFamily = (fontFamily: CodeEditorFontFamily): string => {
   switch (fontFamily) {
     case 'fira-code':
@@ -310,6 +396,7 @@ const toWorkerValidationError = (
 ];
 
 export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
+  documents,
   code,
   onCodeChange,
   onClose,
@@ -324,16 +411,55 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   const codeEditorFontFamily = useUIStore((state) => state.codeEditorFontFamily);
   const codeEditorFontSize = useUIStore((state) => state.codeEditorFontSize);
   const t = editorTexts[lang];
-  const isEquivalentMjcfPreview = documentFlavor === 'equivalent-mjcf';
-  const isReadOnly = readOnly || documentFlavor === 'equivalent-mjcf';
-  const documentMeta = useMemo(() => getDocumentMeta(documentFlavor, t), [documentFlavor, t]);
+  const normalizedDocuments = useMemo(
+    () =>
+      normalizeDocuments({
+        documents,
+        code,
+        onCodeChange,
+        fileName,
+        documentFlavor,
+        readOnly,
+        onDownload,
+      }),
+    [code, documentFlavor, documents, fileName, onCodeChange, onDownload, readOnly],
+  );
+  const [activeDocumentId, setActiveDocumentId] = useState(
+    () => normalizedDocuments[0]?.id ?? fileName,
+  );
+  const activeDocument = useMemo(
+    () =>
+      normalizedDocuments.find((document) => document.id === activeDocumentId) ??
+      normalizedDocuments[0],
+    [activeDocumentId, normalizedDocuments],
+  );
+
+  useEffect(() => {
+    if (!normalizedDocuments.some((document) => document.id === activeDocument.id)) {
+      setActiveDocumentId(normalizedDocuments[0]?.id ?? activeDocument.id);
+    }
+  }, [activeDocument, normalizedDocuments]);
+
+  const activeDocumentCode = activeDocument.code;
+  const activeDocumentFileName = activeDocument.fileName;
+  const activeDocumentLabel = activeDocument.tabLabel ?? activeDocument.fileName;
+  const activeDocumentPath = activeDocument.filePath ?? activeDocument.fileName;
+  const activeDocumentFlavor = activeDocument.documentFlavor;
+  const activeDocumentValidationEnabled = activeDocument.validationEnabled;
+  const isEquivalentMjcfPreview = activeDocumentFlavor === 'equivalent-mjcf';
+  const isReadOnly = activeDocument.readOnly || activeDocumentFlavor === 'equivalent-mjcf';
+  const documentMeta = useMemo(
+    () => getDocumentMeta(activeDocumentFlavor, t),
+    [activeDocumentFlavor, t],
+  );
+  const validationEnabled = activeDocumentValidationEnabled ?? documentMeta.supportsValidation;
   const [isDirty, setIsDirty] = useState(false);
   const [isEditorReady, setIsEditorReady] = useState(false);
-  const [isValidationPending, setIsValidationPending] = useState(documentMeta.supportsValidation);
+  const [isValidationPending, setIsValidationPending] = useState(validationEnabled);
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
   const [isApplying, setIsApplying] = useState(false);
   const [autoApplyBlockedCode, setAutoApplyBlockedCode] = useState<string | null>(null);
-  const [currentCode, setCurrentCode] = useState(code);
+  const [currentCode, setCurrentCode] = useState(activeDocumentCode);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAppliedCodeRef = useRef<string | null>(null);
@@ -373,35 +499,60 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   }, []);
 
   useEffect(() => {
+    pendingAppliedCodeRef.current = null;
+    pendingAppliedBaseCodeRef.current = null;
+    validationRequestSequenceRef.current += 1;
+    editorRef.current = null;
+    setCurrentCode(activeDocumentCode);
+    setIsDirty(false);
+    setAutoApplyBlockedCode(null);
+    setValidationErrors([]);
+    setIsValidationPending(validationEnabled);
+    setIsApplying(false);
+    setIsEditorReady(false);
+    setCopied(false);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+  }, [activeDocument.id, activeDocumentCode, validationEnabled]);
+
+  useEffect(() => {
     const awaitingParentApplySync =
       pendingAppliedCodeRef.current !== null &&
       pendingAppliedCodeRef.current === currentCode &&
-      code === pendingAppliedBaseCodeRef.current;
+      activeDocumentCode === pendingAppliedBaseCodeRef.current;
 
     if (awaitingParentApplySync) {
       return;
     }
 
-    if (pendingAppliedCodeRef.current !== null && code !== pendingAppliedBaseCodeRef.current) {
+    if (
+      pendingAppliedCodeRef.current !== null &&
+      activeDocumentCode !== pendingAppliedBaseCodeRef.current
+    ) {
       pendingAppliedCodeRef.current = null;
       pendingAppliedBaseCodeRef.current = null;
     }
 
-    if (editorRef.current && code !== currentCode && !isDirty) {
-      editorRef.current.setValue(code);
-      setCurrentCode(code);
+    if (editorRef.current && activeDocumentCode !== currentCode && !isDirty) {
+      editorRef.current.setValue(activeDocumentCode);
+      setCurrentCode(activeDocumentCode);
       setAutoApplyBlockedCode(null);
       return;
     }
 
-    if (code === currentCode && pendingAppliedCodeRef.current === code) {
+    if (
+      activeDocumentCode === currentCode &&
+      pendingAppliedCodeRef.current === activeDocumentCode
+    ) {
       pendingAppliedCodeRef.current = null;
       pendingAppliedBaseCodeRef.current = null;
     }
-  }, [code, currentCode, isDirty]);
+  }, [activeDocumentCode, currentCode, isDirty]);
 
   useEffect(() => {
-    if (!documentMeta.supportsValidation) {
+    if (!validationEnabled) {
       setValidationErrors([]);
       setIsValidationPending(false);
       validationRequestSequenceRef.current += 1;
@@ -413,7 +564,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     setIsValidationPending(true);
 
     const timeout = window.setTimeout(() => {
-      void requestXmlValidationWithWorker(currentCode, documentFlavor, t)
+      void requestXmlValidationWithWorker(currentCode, activeDocumentFlavor, t)
         .then((nextErrors) => {
           if (validationRequestSequenceRef.current !== requestSequence) {
             return;
@@ -441,15 +592,15 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         validationRequestSequenceRef.current += 1;
       }
     };
-  }, [currentCode, documentFlavor, documentMeta.supportsValidation, t]);
+  }, [activeDocumentFlavor, currentCode, t, validationEnabled]);
 
   useEffect(() => {
     if (
       !monacoInstance ||
-      (documentFlavor !== 'urdf' &&
-        documentFlavor !== 'xacro' &&
-        documentFlavor !== 'sdf' &&
-        documentFlavor !== 'mjcf')
+      (activeDocumentFlavor !== 'urdf' &&
+        activeDocumentFlavor !== 'xacro' &&
+        activeDocumentFlavor !== 'sdf' &&
+        activeDocumentFlavor !== 'mjcf')
     ) {
       return undefined;
     }
@@ -475,7 +626,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
         let entries: Awaited<ReturnType<typeof requestXmlCompletionsWithWorker>>;
 
         try {
-          entries = await requestXmlCompletionsWithWorker(documentFlavor, textBeforeCursor);
+          entries = await requestXmlCompletionsWithWorker(activeDocumentFlavor, textBeforeCursor);
         } catch (error) {
           console.error('XML completion worker request failed:', error);
           return { suggestions: [] };
@@ -512,7 +663,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     });
 
     return () => disposable.dispose();
-  }, [documentFlavor, monacoInstance]);
+  }, [activeDocumentFlavor, monacoInstance]);
 
   useEffect(() => {
     if (!monacoInstance || !editorRef.current) {
@@ -537,7 +688,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       return;
     }
 
-    const markers = documentMeta.supportsValidation
+    const markers = validationEnabled
       ? validationErrors.map((error) => ({
           severity: monacoInstance.MarkerSeverity.Error,
           startLineNumber: error.line,
@@ -550,7 +701,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       : [];
 
     monacoInstance.editor.setModelMarkers(model, 'urdf-validator', markers);
-  }, [documentMeta.supportsValidation, monacoInstance, validationErrors]);
+  }, [monacoInstance, validationEnabled, validationErrors]);
 
   const handleApply = useCallback(
     async (trigger: 'manual' | 'auto' = 'manual') => {
@@ -559,8 +710,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       }
 
       const value = editorRef.current.getValue();
-      if (documentMeta.supportsValidation) {
-        void requestXmlValidationWithWorker(value, documentFlavor, t)
+      if (validationEnabled) {
+        void requestXmlValidationWithWorker(value, activeDocumentFlavor, t)
           .then((nextErrors) => {
             startTransition(() => {
               setValidationErrors(nextErrors);
@@ -577,10 +728,10 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       setIsApplying(true);
 
       try {
-        const didApply = await Promise.resolve(onCodeChange(value));
+        const didApply = await Promise.resolve(activeDocument.onCodeChange(value));
         if (didApply) {
           pendingAppliedCodeRef.current = value;
-          pendingAppliedBaseCodeRef.current = code;
+          pendingAppliedBaseCodeRef.current = activeDocumentCode;
           setIsDirty(false);
           setAutoApplyBlockedCode(null);
           return true;
@@ -601,13 +752,13 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       }
     },
     [
-      code,
-      documentFlavor,
-      documentMeta.supportsValidation,
+      activeDocument,
+      activeDocumentCode,
+      activeDocumentFlavor,
       isApplying,
       isReadOnly,
-      onCodeChange,
       t,
+      validationEnabled,
     ],
   );
 
@@ -618,12 +769,12 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       }
 
       setCurrentCode(value);
-      setIsDirty(isReadOnly ? false : value !== code);
+      setIsDirty(isReadOnly ? false : value !== activeDocumentCode);
       if (autoApplyBlockedCode && autoApplyBlockedCode !== value) {
         setAutoApplyBlockedCode(null);
       }
     },
-    [autoApplyBlockedCode, code, isReadOnly],
+    [activeDocumentCode, autoApplyBlockedCode, isReadOnly],
   );
 
   const handleCopy = useCallback(() => {
@@ -638,11 +789,33 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
   const handleDownload = useCallback(() => {
     downloadSourceCodeDocument({
       content: currentCode,
-      fileName,
-      documentFlavor,
-      onDownload,
+      fileName: activeDocumentFileName,
+      documentFlavor: activeDocumentFlavor,
+      onDownload: activeDocument.onDownload,
     });
-  }, [currentCode, documentFlavor, fileName, onDownload]);
+  }, [activeDocument, activeDocumentFileName, activeDocumentFlavor, currentCode]);
+
+  const handleDocumentSwitch = useCallback(
+    async (nextDocumentId: string) => {
+      if (
+        nextDocumentId === activeDocument.id ||
+        isApplying ||
+        !normalizedDocuments.some((document) => document.id === nextDocumentId)
+      ) {
+        return;
+      }
+
+      if (isDirty && !isReadOnly) {
+        const didApply = await handleApply('manual');
+        if (!didApply) {
+          return;
+        }
+      }
+
+      setActiveDocumentId(nextDocumentId);
+    },
+    [activeDocument.id, handleApply, isApplying, isDirty, isReadOnly, normalizedDocuments],
+  );
 
   useEffect(() => {
     if (isReadOnly) {
@@ -671,7 +844,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
     currentCode,
     isDirty,
     isReadOnly,
-    supportsValidation: documentMeta.supportsValidation,
+    supportsValidation: validationEnabled,
     validationErrorCount: validationErrors.length,
     isValidationPending,
     isApplying,
@@ -723,29 +896,69 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       window={windowState}
       onClose={onClose}
       title={
-        <div className="flex min-w-0 items-center gap-2.5 overflow-hidden whitespace-nowrap">
-          <div className="flex items-center gap-1.5 opacity-80">
-            <Code className="h-4 w-4 text-system-blue" />
-            <span className="truncate font-mono text-xs font-semibold tracking-tight text-text-primary">
-              {fileName}
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden whitespace-nowrap">
+          <Code className="h-4 w-4 shrink-0 text-system-blue" />
+          {normalizedDocuments.length > 1 ? (
+            <div className="flex min-w-0 flex-1 items-center overflow-hidden">
+              <div
+                className={`${SOURCE_CODE_EDITOR_TABS_CLASS} overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+              >
+                {normalizedDocuments.map((document) => {
+                  const isActiveDocument = document.id === activeDocument.id;
+                  return (
+                    <button
+                      key={document.id}
+                      aria-pressed={isActiveDocument}
+                      className={getSourceCodeEditorTabClassName(isActiveDocument)}
+                      data-window-control
+                      onClick={() => {
+                        void handleDocumentSwitch(document.id);
+                      }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                      }}
+                      title={document.filePath ?? document.fileName}
+                      type="button"
+                    >
+                      <span className="max-w-40 truncate">
+                        {document.tabLabel ?? document.fileName}
+                      </span>
+                      {document.documentFlavor === 'equivalent-mjcf' ? (
+                        <span className={getSourceCodeEditorTabBadgeClassName(isActiveDocument)}>
+                          {t.generated}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <span
+              className="min-w-0 truncate font-mono text-xs font-semibold tracking-tight text-text-primary"
+              title={activeDocumentPath}
+            >
+              {activeDocumentLabel}
             </span>
+          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="shrink-0 text-[10px] text-text-tertiary">{contentSizeLabel}</span>
+            {isReadOnly ? (
+              <span className="shrink-0 rounded bg-element-hover px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-text-secondary">
+                {t.readOnly}
+              </span>
+            ) : null}
+            {activeDocumentFlavor === 'equivalent-mjcf' ? (
+              <span className="shrink-0 rounded bg-system-blue/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-system-blue">
+                {t.generated}
+              </span>
+            ) : null}
+            {!isReadOnly && isDirty ? (
+              <span className="shrink-0 rounded bg-amber-500/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                {t.modified}
+              </span>
+            ) : null}
           </div>
-          <span className="shrink-0 text-[10px] text-text-tertiary">{contentSizeLabel}</span>
-          {isReadOnly ? (
-            <span className="shrink-0 rounded bg-element-hover px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-text-secondary">
-              {t.readOnly}
-            </span>
-          ) : null}
-          {documentFlavor === 'equivalent-mjcf' ? (
-            <span className="shrink-0 rounded bg-system-blue/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-system-blue">
-              {t.generated}
-            </span>
-          ) : null}
-          {!isReadOnly && isDirty ? (
-            <span className="shrink-0 rounded bg-amber-500/12 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-              {t.modified}
-            </span>
-          ) : null}
         </div>
       }
       headerActions={
@@ -809,8 +1022,6 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
       headerClassName="flex h-10 items-center justify-between gap-3 border-b border-border-black bg-element-bg px-3 select-none"
       headerLeftClassName="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden"
       headerRightClassName="flex shrink-0 items-center gap-1"
-      headerDraggableClassName="cursor-move"
-      headerDraggingClassName="cursor-move"
       showMinimizeButton={false}
       maximizeTitle={t.maximize}
       restoreTitle={t.restore}
@@ -842,9 +1053,10 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
         <Suspense fallback={null}>
           <MonacoEditor
+            key={activeDocument.id}
             height="100%"
             defaultLanguage={documentMeta.language}
-            defaultValue={code}
+            defaultValue={activeDocumentCode}
             theme={theme === 'dark' ? 'vs-dark' : 'light'}
             onMount={handleEditorMount}
             onChange={handleEditorChange}
@@ -864,8 +1076,8 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
               renderLineHighlight: 'all',
               readOnly: isReadOnly,
               domReadOnly: isReadOnly,
-              glyphMargin: documentMeta.supportsValidation,
-              renderValidationDecorations: documentMeta.supportsValidation ? 'editable' : 'off',
+              glyphMargin: validationEnabled,
+              renderValidationDecorations: validationEnabled ? 'editable' : 'off',
             }}
           />
         </Suspense>
@@ -873,7 +1085,7 @@ export const SourceCodeEditor: React.FC<SourceCodeEditorProps> = ({
 
       <div className="flex h-7 shrink-0 items-center justify-between border-t border-border-black bg-element-bg px-3 text-[10px] select-none">
         <div className="flex items-center gap-3">
-          {documentMeta.supportsValidation ? (
+          {validationEnabled ? (
             validationErrors.length > 0 ? (
               <Tooltip content={t.jumpToProblem} side="bottom">
                 <button

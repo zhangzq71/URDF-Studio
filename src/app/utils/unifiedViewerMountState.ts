@@ -6,7 +6,6 @@ export type UnifiedViewerMode = AppMode;
 
 export interface UnifiedViewerMountState {
   viewerMounted: boolean;
-  visualizerMounted: boolean;
 }
 
 export interface UnifiedViewerMountStateInput {
@@ -57,7 +56,6 @@ export function createInitialUnifiedViewerMountState(
 
   return {
     viewerMounted: viewerMode,
-    visualizerMounted: !viewerMode,
   };
 }
 
@@ -69,6 +67,5 @@ export function resolveUnifiedViewerMountState(
 
   return {
     viewerMounted: currentState.viewerMounted || viewerMode,
-    visualizerMounted: currentState.visualizerMounted || !viewerMode,
   };
 }

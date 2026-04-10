@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { JointType, type RobotData, type UrdfMjcfSite, type Vector3 } from '@/types';
+import { JointType, type RobotData, type UrdfLink, type UrdfMjcfSite, type Vector3 } from '@/types';
 
 import { resolveLinkRenderableBounds } from './assemblyPlacement';
 import { solveClosedLoopMotionCompensation } from './closedLoops';
@@ -22,6 +22,7 @@ const IK_SOLVER_STEP_ANGLE_LIMIT = 0.2;
 const IK_SOLVER_STEP_TRANSLATION_LIMIT = 0.02;
 const IK_NUMERICAL_EPSILON = 1e-12;
 const IK_WORLD_POINT_EPSILON = 1e-9;
+const IK_AXIS_ANCHOR_EPSILON = 1e-8;
 
 const SUPPORTED_LINK_IK_JOINT_TYPES = new Set<JointType>([
   JointType.FIXED,
@@ -106,6 +107,8 @@ const tempTargetWorldPosition = new THREE.Vector3();
 const tempErrorVector = new THREE.Vector3();
 const tempJointAxis = new THREE.Vector3();
 const tempJacobianColumn = new THREE.Vector3();
+const tempAnchorAxis = new THREE.Vector3();
+const tempAnchorCandidate = new THREE.Vector3();
 
 function toVector3Value(vector: THREE.Vector3): Vector3 {
   return { x: vector.x, y: vector.y, z: vector.z };
@@ -322,9 +325,69 @@ function collectLinkIkChain(
   };
 }
 
-function resolveIkHandleAnchorLocal(bounds: THREE.Box3): Vector3 {
+function resolveJointAxisForIkAnchor(
+  robot: Pick<RobotData, 'joints'>,
+  jointIds: string[],
+): THREE.Vector3 | null {
+  const distalJointId = jointIds[jointIds.length - 1];
+  if (!distalJointId) {
+    return null;
+  }
+
+  const distalJoint = robot.joints[distalJointId];
+  if (!distalJoint?.axis) {
+    return null;
+  }
+
+  tempAnchorAxis.set(distalJoint.axis.x ?? 0, distalJoint.axis.y ?? 0, distalJoint.axis.z ?? 0);
+  if (tempAnchorAxis.lengthSq() <= IK_AXIS_ANCHOR_EPSILON) {
+    return null;
+  }
+
+  return tempAnchorAxis.normalize().clone();
+}
+
+function getAnchorAxisDistanceSq(point: THREE.Vector3, axis: THREE.Vector3): number {
+  const axisProjection = point.dot(axis);
+  return Math.max(0, point.lengthSq() - axisProjection * axisProjection);
+}
+
+function resolveIkHandleAnchorLocal(
+  bounds: THREE.Box3,
+  preferredAxisLocal: THREE.Vector3 | null = null,
+): Vector3 {
   bounds.getCenter(tempBoundsCenter);
-  return toVector3Value(tempBoundsCenter);
+
+  if (!preferredAxisLocal) {
+    return toVector3Value(tempBoundsCenter);
+  }
+
+  const centerDistanceSq = getAnchorAxisDistanceSq(tempBoundsCenter, preferredAxisLocal);
+  if (centerDistanceSq > IK_AXIS_ANCHOR_EPSILON) {
+    return toVector3Value(tempBoundsCenter);
+  }
+
+  let bestDistanceSq = centerDistanceSq;
+  let bestCandidate = tempBoundsCenter.clone();
+
+  const faceCenterCandidates = [
+    tempAnchorCandidate.set(bounds.min.x, tempBoundsCenter.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(bounds.max.x, tempBoundsCenter.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, bounds.min.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, bounds.max.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, tempBoundsCenter.y, bounds.min.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, tempBoundsCenter.y, bounds.max.z).clone(),
+  ];
+
+  faceCenterCandidates.forEach((candidate) => {
+    const candidateDistanceSq = getAnchorAxisDistanceSq(candidate, preferredAxisLocal);
+    if (candidateDistanceSq > bestDistanceSq + IK_AXIS_ANCHOR_EPSILON) {
+      bestDistanceSq = candidateDistanceSq;
+      bestCandidate = candidate;
+    }
+  });
+
+  return toVector3Value(bestCandidate);
 }
 
 function scoreMjcfSiteForIkAnchor(site: UrdfMjcfSite): number {
@@ -376,6 +439,40 @@ function resolveLinkIkAnchorFromMjcfSites(
   };
 }
 
+function buildLinkIkHandleDescriptor(
+  robot: Pick<RobotData, 'joints'>,
+  link: UrdfLink,
+  linkId: string,
+  jointIds: string[],
+): LinkIkHandleDescriptor | null {
+  const boundsResult = resolveLinkRenderableBounds(link);
+  const siteAnchorResult = !boundsResult ? resolveLinkIkAnchorFromMjcfSites(link) : null;
+  if (!boundsResult && !siteAnchorResult) {
+    return null;
+  }
+
+  if (!boundsResult) {
+    return {
+      linkId,
+      anchorLocal: siteAnchorResult!.anchorLocal,
+      anchorSource: siteAnchorResult!.anchorSource,
+      radius: IK_HANDLE_RADIUS,
+      jointIds,
+    };
+  }
+
+  return {
+    linkId,
+    anchorLocal: resolveIkHandleAnchorLocal(
+      boundsResult.bounds,
+      resolveJointAxisForIkAnchor(robot, jointIds),
+    ),
+    anchorSource: boundsResult.source,
+    radius: IK_HANDLE_RADIUS,
+    jointIds,
+  };
+}
+
 export function resolveLinkIkHandleDescriptor(
   robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
   linkId: string,
@@ -406,29 +503,24 @@ export function resolveLinkIkHandleDescriptor(
     return null;
   }
 
-  const boundsResult = resolveLinkRenderableBounds(link);
-  const siteAnchorResult = !boundsResult ? resolveLinkIkAnchorFromMjcfSites(link) : null;
-  if (!boundsResult && !siteAnchorResult) {
+  return buildLinkIkHandleDescriptor(robot, link, linkId, chainResult.chain?.jointIds ?? []);
+}
+
+export function resolveDirectManipulableLinkIkDescriptor(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
+  linkId: string,
+): LinkIkHandleDescriptor | null {
+  const link = robot.links[linkId];
+  if (!link || linkId === robot.rootLinkId) {
     return null;
   }
 
-  if (!boundsResult) {
-    return {
-      linkId,
-      anchorLocal: siteAnchorResult!.anchorLocal,
-      anchorSource: siteAnchorResult!.anchorSource,
-      radius: IK_HANDLE_RADIUS,
-      jointIds: chainResult.chain?.jointIds ?? [],
-    };
+  const chainResult = collectLinkIkChain(robot, linkId);
+  if (!chainResult.chain) {
+    return null;
   }
 
-  return {
-    linkId,
-    anchorLocal: resolveIkHandleAnchorLocal(boundsResult.bounds),
-    anchorSource: boundsResult.source,
-    radius: IK_HANDLE_RADIUS,
-    jointIds: chainResult.chain?.jointIds ?? [],
-  };
+  return buildLinkIkHandleDescriptor(robot, link, linkId, chainResult.chain.jointIds);
 }
 
 export function resolveLinkIkHandleDescriptors(
@@ -437,6 +529,52 @@ export function resolveLinkIkHandleDescriptors(
   return [robot.rootLinkId, ...getLeafLinkIds(robot)]
     .map((linkId) => resolveLinkIkHandleDescriptor(robot, linkId))
     .filter((descriptor): descriptor is LinkIkHandleDescriptor => descriptor !== null);
+}
+
+export function resolveSelectableIkHandleLinkId(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
+  linkId: string,
+): string | null {
+  if (!robot.links[linkId]) {
+    return null;
+  }
+
+  if (resolveLinkIkHandleDescriptor(robot, linkId)) {
+    return linkId;
+  }
+
+  const visitedLinkIds = new Set<string>([linkId]);
+  const pendingLinkIds = [linkId];
+  const descendantCandidateIds = new Set<string>();
+
+  while (pendingLinkIds.length > 0) {
+    const currentLinkId = pendingLinkIds.shift();
+    if (!currentLinkId) {
+      continue;
+    }
+
+    Object.values(robot.joints).forEach((joint) => {
+      if (joint.parentLinkId !== currentLinkId || visitedLinkIds.has(joint.childLinkId)) {
+        return;
+      }
+
+      visitedLinkIds.add(joint.childLinkId);
+      pendingLinkIds.push(joint.childLinkId);
+
+      const descriptor = resolveLinkIkHandleDescriptor(robot, joint.childLinkId);
+      if (!descriptor) {
+        return;
+      }
+
+      descendantCandidateIds.add(descriptor.linkId);
+    });
+  }
+
+  if (descendantCandidateIds.size !== 1) {
+    return null;
+  }
+
+  return [...descendantCandidateIds][0] ?? null;
 }
 
 export function resolveLinkIkHandleWorldPosition(
@@ -810,7 +948,9 @@ export function solveLinkIkPositionTarget(
   robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId' | 'closedLoopConstraints'>,
   request: LinkIkPositionSolveRequest,
 ): LinkIkPositionSolveResult {
-  const descriptor = resolveLinkIkHandleDescriptor(robot, request.linkId);
+  const descriptor =
+    resolveDirectManipulableLinkIkDescriptor(robot, request.linkId) ??
+    resolveLinkIkHandleDescriptor(robot, request.linkId);
   const chainResult = collectLinkIkChain(robot, request.linkId);
   const maxIterations = request.maxIterations ?? 20;
   const positionTolerance = request.positionTolerance ?? 1e-3;

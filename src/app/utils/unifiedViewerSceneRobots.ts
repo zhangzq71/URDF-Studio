@@ -1,6 +1,6 @@
 import type { RobotState } from '@/types';
 
-export function resolveUnifiedViewerVisualizerRobot({
+export function resolveUnifiedViewerEditorRobot({
   robot,
   viewerRobot,
   assemblyWorkspaceActive,

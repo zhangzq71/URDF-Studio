@@ -1,30 +1,19 @@
 import React from 'react';
 
 const loadViewerSceneConnectorModule = () => import('./ViewerSceneConnector');
-const loadViewerPanelsModule = () => import('@/features/urdf-viewer/components/URDFViewerPanels');
-const loadViewerJointsPanelModule = () => import('./URDFViewerJointsPanel');
-const loadVisualizerSceneModule = () => import('@/features/visualizer/components/VisualizerScene');
-const loadVisualizerPanelsModule = () =>
-  import('@/features/visualizer/components/VisualizerPanels');
+const loadViewerPanelsModule = () => import('@/features/editor');
+const loadViewerJointsPanelModule = () => import('./ViewerJointsPanel');
 
 export const LazyViewerSceneConnector = React.lazy(async () => ({
   default: (await loadViewerSceneConnectorModule()).ViewerSceneConnector,
 }));
 
 export const LazyViewerPanels = React.lazy(async () => ({
-  default: (await loadViewerPanelsModule()).URDFViewerPanels,
+  default: (await loadViewerPanelsModule()).ViewerPanels,
 }));
 
 export const LazyViewerJointsPanel = React.lazy(async () => ({
-  default: (await loadViewerJointsPanelModule()).URDFViewerJointsPanel,
-}));
-
-export const LazyVisualizerScene = React.lazy(async () => ({
-  default: (await loadVisualizerSceneModule()).VisualizerScene,
-}));
-
-export const LazyVisualizerPanels = React.lazy(async () => ({
-  default: (await loadVisualizerPanelsModule()).VisualizerPanels,
+  default: (await loadViewerJointsPanelModule()).ViewerJointsPanel,
 }));
 
 export async function preloadViewerModeModules(): Promise<void> {
@@ -33,8 +22,4 @@ export async function preloadViewerModeModules(): Promise<void> {
     loadViewerPanelsModule(),
     loadViewerJointsPanelModule(),
   ]);
-}
-
-export async function preloadVisualizerModeModules(): Promise<void> {
-  await Promise.all([loadVisualizerSceneModule(), loadVisualizerPanelsModule()]);
 }

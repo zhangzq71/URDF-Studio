@@ -36,7 +36,7 @@ function createSourceFile(): RobotFile {
   };
 }
 
-test('buildUnifiedViewerResourceScopes preserves live viewer and visualizer scope state without preview', () => {
+test('buildUnifiedViewerResourceScopes preserves the live viewer scope state without preview', () => {
   const sourceFile = createSourceFile();
   const state = buildUnifiedViewerResourceScopes({
     urdfContent: '<robot name="go2" />',
@@ -50,11 +50,7 @@ test('buildUnifiedViewerResourceScopes preserves live viewer and visualizer scop
     viewerRobotLinks: {
       base_link: createMeshLink('robots/go2/meshes/base.dae'),
     },
-    visualizerRobotLinks: {
-      base_link: createMeshLink('robots/go2/meshes/base.dae'),
-    },
     previousViewerResourceScope: null,
-    previousVisualizerResourceScope: null,
   });
 
   assert.equal(state.effectiveUrdfContent, '<robot name="go2" />');
@@ -62,9 +58,6 @@ test('buildUnifiedViewerResourceScopes preserves live viewer and visualizer scop
   assert.equal(state.effectiveSourceFile, sourceFile);
   assert.equal(state.activeViewportFileName, 'robots/go2/urdf/go2.urdf');
   assert.deepEqual(state.viewerResourceScope.assets, {
-    'robots/go2/meshes/base.dae': 'blob:go2-base',
-  });
-  assert.deepEqual(state.visualizerResourceScope.assets, {
     'robots/go2/meshes/base.dae': 'blob:go2-base',
   });
 
@@ -81,18 +74,13 @@ test('buildUnifiedViewerResourceScopes preserves live viewer and visualizer scop
     viewerRobotLinks: {
       base_link: createMeshLink('robots/go2/meshes/base.dae'),
     },
-    visualizerRobotLinks: {
-      base_link: createMeshLink('robots/go2/meshes/base.dae'),
-    },
     previousViewerResourceScope: state.viewerResourceScope,
-    previousVisualizerResourceScope: state.visualizerResourceScope,
   });
 
   assert.equal(repeated.viewerResourceScope, state.viewerResourceScope);
-  assert.equal(repeated.visualizerResourceScope, state.visualizerResourceScope);
 });
 
-test('buildUnifiedViewerResourceScopes swaps viewer scope to preview resources without disturbing visualizer scope', () => {
+test('buildUnifiedViewerResourceScopes swaps viewer scope to preview resources', () => {
   const sourceFile = createSourceFile();
 
   const state = buildUnifiedViewerResourceScopes({
@@ -109,11 +97,7 @@ test('buildUnifiedViewerResourceScopes swaps viewer scope to preview resources w
     },
     availableFiles: [],
     viewerRobotLinks: undefined,
-    visualizerRobotLinks: {
-      base_link: createMeshLink('robots/go2/meshes/base.dae'),
-    },
     previousViewerResourceScope: null,
-    previousVisualizerResourceScope: null,
   });
 
   assert.equal(state.effectiveUrdfContent, '<robot name="preview" />');
@@ -122,8 +106,5 @@ test('buildUnifiedViewerResourceScopes swaps viewer scope to preview resources w
   assert.equal(state.activeViewportFileName, 'meshes/preview.stl');
   assert.deepEqual(state.viewerResourceScope.assets, {
     'meshes/preview.stl': 'blob:preview',
-  });
-  assert.deepEqual(state.visualizerResourceScope.assets, {
-    'robots/go2/meshes/base.dae': 'blob:go2-base',
   });
 });

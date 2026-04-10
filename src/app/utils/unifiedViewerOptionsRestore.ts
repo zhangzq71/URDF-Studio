@@ -1,11 +1,9 @@
 export interface UnifiedViewerOptionsVisibilitySnapshot {
   viewer: boolean;
-  visualizer: boolean;
 }
 
 interface CaptureUnifiedViewerOptionsVisibilityArgs {
   showViewerOptions: boolean;
-  showVisualizerOptions: boolean;
 }
 
 interface ResolveUnifiedViewerOptionsRestoreArgs {
@@ -16,11 +14,9 @@ interface ResolveUnifiedViewerOptionsRestoreArgs {
 
 export function captureUnifiedViewerOptionsVisibility({
   showViewerOptions,
-  showVisualizerOptions,
 }: CaptureUnifiedViewerOptionsVisibilityArgs): UnifiedViewerOptionsVisibilitySnapshot {
   return {
     viewer: showViewerOptions,
-    visualizer: showVisualizerOptions,
   };
 }
 

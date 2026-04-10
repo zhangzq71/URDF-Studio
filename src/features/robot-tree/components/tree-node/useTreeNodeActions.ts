@@ -2,6 +2,8 @@ import type { Dispatch, MouseEvent, SetStateAction } from 'react';
 import {
   getCollisionGeometryByObjectIndex,
   removeCollisionGeometryByObjectIndex,
+  updateCollisionGeometryByObjectIndex,
+  updateVisualGeometryByObjectIndex,
 } from '@/core/robot';
 import { matchesSelection, type Selection } from '@/store/selectionStore';
 import { GeometryType, type RobotState } from '@/types';
@@ -26,6 +28,7 @@ interface UseTreeNodeActionsParams {
     subType: 'visual' | 'collision',
     objectIndex?: number,
     suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
   ) => void;
   onAddChild: (parentId: string) => void;
   onAddCollisionBody: (parentId: string) => void;
@@ -130,6 +133,27 @@ export function useTreeNodeActions({
     setEditingTarget({ type, id, draft: currentName });
   };
 
+  const beginGeometryRenaming = (
+    targetLinkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex: number,
+    currentName: string,
+  ) => {
+    setIsGeometryExpanded(true);
+    if (onSelectGeometry) {
+      onSelectGeometry(targetLinkId, subType, objectIndex, true);
+    } else {
+      onSelect('link', targetLinkId, subType);
+    }
+    setEditingTarget({
+      type: 'geometry',
+      linkId: targetLinkId,
+      subType,
+      objectIndex,
+      draft: currentName,
+    });
+  };
+
   const cancelRenaming = () => {
     setEditingTarget(null);
   };
@@ -138,19 +162,39 @@ export function useTreeNodeActions({
     if (!editingTarget) return;
 
     const nextName = editingTarget.draft.trim();
-    if (!nextName) {
-      setEditingTarget(null);
-      return;
-    }
-
     if (editingTarget.type === 'link') {
+      if (!nextName) {
+        setEditingTarget(null);
+        return;
+      }
       if (editingTarget.id === linkId && link.name !== nextName) {
         onUpdate('link', editingTarget.id, { ...link, name: nextName });
       }
-    } else {
+    } else if (editingTarget.type === 'joint') {
+      if (!nextName) {
+        setEditingTarget(null);
+        return;
+      }
       const targetJoint = childJointsById[editingTarget.id];
       if (targetJoint && targetJoint.name !== nextName) {
         onUpdate('joint', editingTarget.id, { ...targetJoint, name: nextName });
+      }
+    } else if (editingTarget.linkId === linkId) {
+      const targetGeometry =
+        editingTarget.subType === 'collision'
+          ? getCollisionGeometryByObjectIndex(link, editingTarget.objectIndex)?.geometry
+          : link.visual;
+      const normalizedName = nextName || undefined;
+      if (targetGeometry?.name !== normalizedName) {
+        const nextLink =
+          editingTarget.subType === 'collision'
+            ? updateCollisionGeometryByObjectIndex(link, editingTarget.objectIndex, {
+                name: normalizedName,
+              })
+            : updateVisualGeometryByObjectIndex(link, editingTarget.objectIndex, {
+                name: normalizedName,
+              });
+        onUpdate('link', editingTarget.linkId, nextLink);
       }
     }
 
@@ -177,7 +221,7 @@ export function useTreeNodeActions({
     event.stopPropagation();
 
     const menuWidth = 170;
-    const menuHeight = target.type === 'geometry' ? 44 : target.type === 'link' ? 260 : 176;
+    const menuHeight = target.type === 'geometry' ? 88 : target.type === 'link' ? 260 : 176;
     const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
     const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
 
@@ -189,9 +233,20 @@ export function useTreeNodeActions({
   };
 
   const handleRenameMenuAction = () => {
-    if (!contextMenu || (contextMenu.target.type !== 'link' && contextMenu.target.type !== 'joint'))
+    if (!contextMenu) return;
+
+    if (contextMenu.target.type === 'link' || contextMenu.target.type === 'joint') {
+      beginRenaming(contextMenu.target.type, contextMenu.target.id, contextMenu.target.name);
+      setContextMenu(null);
       return;
-    beginRenaming(contextMenu.target.type, contextMenu.target.id, contextMenu.target.name);
+    }
+
+    beginGeometryRenaming(
+      contextMenu.target.linkId,
+      contextMenu.target.subType,
+      contextMenu.target.objectIndex,
+      contextMenu.target.name,
+    );
     setContextMenu(null);
   };
 

@@ -1,21 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { URDFViewerController } from '../hooks/useURDFViewerController';
-import { buildURDFViewerSceneProps } from './viewerSceneProps';
+import type { ViewerController } from '../hooks/useViewerController';
+import { buildViewerSceneProps } from './viewerSceneProps';
+import type { AssemblyState } from '@/types';
 
-function createControllerStub(overrides: Partial<URDFViewerController> = {}): URDFViewerController {
+function createControllerStub(overrides: Partial<ViewerController> = {}): ViewerController {
   return {
     groundPlaneOffset: 1.25,
     toolMode: 'measure',
+    handleHoverWrapper: () => {},
     ...overrides,
-  } as URDFViewerController;
+  } as ViewerController;
 }
 
-test('buildURDFViewerSceneProps uses controller-owned defaults for viewer scene wiring', () => {
+function createAssemblyStateStub(): AssemblyState {
+  return {
+    name: 'workspace',
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    components: {},
+    bridges: {},
+  };
+}
+
+test('buildViewerSceneProps uses controller-owned defaults for viewer scene wiring', () => {
   const controller = createControllerStub();
 
-  const sceneProps = buildURDFViewerSceneProps({
+  const sceneProps = buildViewerSceneProps({
     controller,
     availableFiles: [],
     urdfContent: '<robot name="go2" />',
@@ -28,19 +42,23 @@ test('buildURDFViewerSceneProps uses controller-owned defaults for viewer scene 
   assert.equal(sceneProps.toolMode, 'measure');
   assert.equal(sceneProps.active, true);
   assert.equal(sceneProps.hoverSelectionEnabled, true);
+  assert.equal(sceneProps.onHover, controller.handleHoverWrapper);
   assert.equal(sceneProps.isMeshPreview, false);
   assert.equal(sceneProps.runtimeInstanceKey, 0);
 });
 
-test('buildURDFViewerSceneProps preserves explicit overrides for preview and handoff flows', () => {
+test('buildViewerSceneProps preserves explicit overrides for preview and handoff flows', () => {
   const controller = createControllerStub({
     groundPlaneOffset: 0.5,
     toolMode: 'select',
   });
   const onHover = () => {};
   const onMeshSelect = () => {};
+  const onAssemblyTransform = () => {};
+  const onComponentTransform = () => {};
+  const onBridgeTransform = () => {};
 
-  const sceneProps = buildURDFViewerSceneProps({
+  const sceneProps = buildViewerSceneProps({
     controller,
     active: false,
     sourceFile: {
@@ -58,6 +76,11 @@ test('buildURDFViewerSceneProps preserves explicit overrides for preview and han
     hoverSelectionEnabled: false,
     onHover,
     onMeshSelect,
+    assemblyState: createAssemblyStateStub(),
+    assemblySelection: { type: 'component', id: 'comp_alpha' },
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
     isMeshPreview: true,
     runtimeInstanceKey: 7,
   });
@@ -67,8 +90,12 @@ test('buildURDFViewerSceneProps preserves explicit overrides for preview and han
   assert.equal(sceneProps.groundPlaneOffset, 3.5);
   assert.equal(sceneProps.toolMode, 'select');
   assert.equal(sceneProps.hoverSelectionEnabled, false);
-  assert.equal(sceneProps.onHover, onHover);
+  assert.equal(sceneProps.onHover, undefined);
   assert.equal(sceneProps.onMeshSelect, onMeshSelect);
+  assert.equal(sceneProps.assemblySelection?.id, 'comp_alpha');
+  assert.equal(sceneProps.onAssemblyTransform, onAssemblyTransform);
+  assert.equal(sceneProps.onComponentTransform, onComponentTransform);
+  assert.equal(sceneProps.onBridgeTransform, onBridgeTransform);
   assert.equal(sceneProps.isMeshPreview, true);
   assert.equal(sceneProps.runtimeInstanceKey, 7);
 });

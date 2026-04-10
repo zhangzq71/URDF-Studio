@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
   SNAPSHOT_MIN_LONG_EDGE,
+  clampSnapshotRenderPlanToPixelBudget,
+  resolveSnapshotRenderTargetSamples,
   resolveSnapshotRenderPlan,
 } from './snapshotResolution.ts';
 
@@ -70,4 +72,48 @@ test('resolveSnapshotRenderPlan honors an explicit long-edge target when provide
   assert.equal(plan.targetHeight, 1440);
   assert.equal(plan.scale, 2560 / 3840);
   assert.equal(plan.targetPixelRatio, (2560 / 3840) * 2);
+});
+
+test('clampSnapshotRenderPlanToPixelBudget preserves aspect ratio while shrinking unsafe captures', () => {
+  const plan = clampSnapshotRenderPlanToPixelBudget(
+    {
+      baseWidth: 3840,
+      baseHeight: 2160,
+      basePixelRatio: 2,
+      scale: 2,
+      targetWidth: 7680,
+      targetHeight: 4320,
+      targetPixelRatio: 4,
+    },
+    16_000_000,
+  );
+
+  assert.equal(plan.targetWidth, 5333);
+  assert.equal(plan.targetHeight, 3000);
+  assert.equal(plan.scale, 5333 / 3840);
+  assert.equal(plan.targetPixelRatio, 2 * (5333 / 3840));
+});
+
+test('resolveSnapshotRenderTargetSamples disables MSAA for very large renders', () => {
+  assert.equal(
+    resolveSnapshotRenderTargetSamples({
+      width: 7680,
+      height: 4320,
+      requestedSamples: 8,
+      maxSupportedSamples: 8,
+    }),
+    0,
+  );
+});
+
+test('resolveSnapshotRenderTargetSamples keeps moderate MSAA on medium-size renders', () => {
+  assert.equal(
+    resolveSnapshotRenderTargetSamples({
+      width: 3840,
+      height: 2160,
+      requestedSamples: 8,
+      maxSupportedSamples: 8,
+    }),
+    4,
+  );
 });

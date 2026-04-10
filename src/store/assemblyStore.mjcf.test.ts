@@ -35,13 +35,18 @@ function createRobotFile(name: string, format: RobotFile['format'], content = ''
   };
 }
 
+function pathFromMyosuiteFixture(relativePath: string): string {
+  return path.join(process.cwd(), 'test', 'myosuite-main', ...relativePath.split('/'));
+}
+
 function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[] {
   const rootDir = path.join(process.cwd(), relativeDir);
 
-  const walk = (currentDir: string): string[] => fs.readdirSync(currentDir, { withFileTypes: true }).flatMap((entry) => {
-    const fullPath = path.join(currentDir, entry.name);
-    return entry.isDirectory() ? walk(fullPath) : [fullPath];
-  });
+  const walk = (currentDir: string): string[] =>
+    fs.readdirSync(currentDir, { withFileTypes: true }).flatMap((entry) => {
+      const fullPath = path.join(currentDir, entry.name);
+      return entry.isDirectory() ? walk(fullPath) : [fullPath];
+    });
 
   return walk(rootDir)
     .sort()
@@ -49,10 +54,10 @@ function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[]
       const relativePath = path.relative(process.cwd(), fullPath).replace(/\\/g, '/');
       const lowerPath = relativePath.toLowerCase();
       if (
-        lowerPath.endsWith('.urdf')
-        || lowerPath.endsWith('.xml')
-        || lowerPath.endsWith('.xacro')
-        || lowerPath.endsWith('.urdf.xacro')
+        lowerPath.endsWith('.urdf') ||
+        lowerPath.endsWith('.xml') ||
+        lowerPath.endsWith('.xacro') ||
+        lowerPath.endsWith('.urdf.xacro')
       ) {
         const content = fs.readFileSync(fullPath, 'utf8');
         const format = detectImportFormat(content, relativePath);
@@ -68,7 +73,9 @@ function loadImportableRobotFilesFromDirectory(relativeDir: string): RobotFile[]
 test('MJCF assembly merge re-roots the merged graph after bridge joints change the parent component', () => {
   resetAssemblyStore();
 
-  const barkourFiles = loadImportableRobotFilesFromDirectory('test/mujoco_menagerie-main/google_barkour_vb');
+  const barkourFiles = loadImportableRobotFilesFromDirectory(
+    'test/mujoco_menagerie-main/google_barkour_vb',
+  );
   const go2Files = loadImportableRobotFilesFromDirectory('test/mujoco_menagerie-main/unitree_go2');
   const barkourFile = barkourFiles.find((file) => file.name.endsWith('/barkour_vb.xml'));
   const go2File = go2Files.find((file) => file.name.endsWith('/go2.xml'));
@@ -114,4 +121,46 @@ test('MJCF assembly merge re-roots the merged graph after bridge joints change t
   const workspaceViewerRobot = buildWorkspaceViewerRobotData(merged);
   assert.equal(workspaceViewerRobot.rootLinkId, go2Component.robot.rootLinkId);
   assert.ok(!workspaceViewerRobot.links.__workspace_world__);
+});
+
+test('addComponent surfaces actionable MyoSuite template placeholder errors for MJCF assembly imports', () => {
+  resetAssemblyStore();
+
+  const supportFiles = [
+    'myosuite/envs/myo/assets/hand/myohand_object.xml',
+    'myosuite/envs/myo/assets/hand/myohand_tabletop.xml',
+    'myosuite/simhive/object_sim/common.xml',
+    'myosuite/simhive/myo_sim/hand/assets/myohand_assets.xml',
+    'myosuite/simhive/myo_sim/hand/assets/myohand_body.xml',
+    'myosuite/simhive/furniture_sim/simpleTable/simpleTable_asset.xml',
+    'myosuite/simhive/furniture_sim/simpleTable/simpleGraniteTable_body.xml',
+  ].map((relativePath) =>
+    createRobotFile(
+      path.relative(process.cwd(), pathFromMyosuiteFixture(relativePath)).replace(/\\/g, '/'),
+      'mjcf',
+      fs.readFileSync(pathFromMyosuiteFixture(relativePath), 'utf8'),
+    ),
+  );
+
+  const file = supportFiles[0]!;
+  const store = useAssemblyStore.getState();
+  store.initAssembly('myosuite-placeholder-error');
+
+  assert.throws(
+    () =>
+      store.addComponent(file, {
+        availableFiles: supportFiles,
+        assets: {},
+        allFileContents: {},
+      }),
+    (error) => {
+      assert.ok(error instanceof Error, 'expected addComponent to throw an Error');
+      assert.match(error.message, /Failed to add assembly component from/);
+      assert.match(error.message, /OBJECT_NAME/);
+      assert.match(error.message, /concrete object directory/);
+      return true;
+    },
+  );
+
+  assert.deepEqual(useAssemblyStore.getState().assemblyState?.components ?? {}, {});
 });

@@ -33,26 +33,41 @@ interface ArchiveFilesArrayEntryLike {
   path?: string;
 }
 
+interface ExtractedArchiveContentDirectory {
+  [key: string]: ExtractedArchiveContentNode;
+}
+
+type ExtractedArchiveContentNode = File | ExtractedArchiveContentDirectory | null;
+
 interface ArchiveReaderLike {
   getFilesArray(): Promise<ArchiveFilesArrayEntryLike[]>;
   extractSingleFile(path: string): Promise<File>;
-  extractFiles(onEntryExtracted?: (entry: { file: File; path: string }) => void): Promise<unknown>;
+  extractFiles(
+    onEntryExtracted?: (entry: { file: File; path: string }) => void,
+  ): Promise<ExtractedArchiveContentNode>;
   close(): Promise<void>;
 }
 
 interface ArchiveModuleLike {
   Archive: {
-    init(options?: { getWorker?: () => Worker } | null): unknown;
+    init(options?: { getWorker?: () => Worker; workerUrl?: string } | null): unknown;
     open(file: File): Promise<ArchiveReaderLike>;
   };
 }
 
 let archiveModulePromise: Promise<ArchiveModuleLike> | null = null;
-let browserArchiveInitPromise: Promise<void> | null = null;
+let archiveModuleInitialized = false;
+// Browser builds need an explicit worker URL because Vite prebundles the ESM entry
+// under /node_modules/.vite/deps, which breaks libarchive's default relative lookup.
 const NODE_ARCHIVE_MODULE_SPECIFIER = 'libarchive.js/dist/libarchive-node.mjs';
+const BROWSER_ARCHIVE_WORKER_URL = '/assets/worker-bundle.js';
 const MIN_FULL_ARCHIVE_EXTRACTION_ENTRIES = 8;
 const FULL_ARCHIVE_EXTRACTION_ENTRY_RATIO = 0.55;
 const FULL_ARCHIVE_EXTRACTION_BYTES_RATIO = 0.6;
+const CUMULATIVE_FULL_ARCHIVE_EXTRACTION_ENTRY_RATIO = 0.4;
+const CUMULATIVE_FULL_ARCHIVE_EXTRACTION_BYTES_RATIO = 0.45;
+const EAGER_FULL_ARCHIVE_EXTRACTION_MAX_ENTRIES = 48;
+const EAGER_FULL_ARCHIVE_EXTRACTION_MAX_TOTAL_BYTES = 48 * 1024 * 1024;
 
 function isNodeRuntime(): boolean {
   return typeof process !== 'undefined' && Boolean(process.versions?.node);
@@ -83,22 +98,12 @@ async function loadArchiveModule(): Promise<ArchiveModuleLike> {
   }
 
   const archiveModule = await archiveModulePromise;
-
-  if (!isNodeRuntime()) {
-    if (!browserArchiveInitPromise) {
-      browserArchiveInitPromise = import('libarchive.js/dist/worker-bundle.js?worker').then(
-        (module) => {
-          const ArchiveWorker = module.default as new () => Worker;
-          archiveModule.Archive.init({
-            getWorker: () => new ArchiveWorker(),
-          });
-        },
-      );
-    }
-
-    await browserArchiveInitPromise;
+  if (!isNodeRuntime() && !archiveModuleInitialized) {
+    archiveModule.Archive.init({
+      workerUrl: BROWSER_ARCHIVE_WORKER_URL,
+    });
+    archiveModuleInitialized = true;
   }
-
   return archiveModule;
 }
 
@@ -108,12 +113,33 @@ async function withArchiveReader<T>(
 ): Promise<T> {
   const archiveModule = await loadArchiveModule();
   const reader = await archiveModule.Archive.open(archiveFile);
+  let actionResult!: T;
+  let actionError: unknown = null;
 
   try {
-    return await action(reader);
-  } finally {
-    await reader.close().catch(() => undefined);
+    actionResult = await action(reader);
+  } catch (error) {
+    actionError = error;
   }
+
+  try {
+    await reader.close();
+  } catch (closeError) {
+    if (actionError) {
+      console.error(
+        '[archiveImport] Failed to close archive reader after action failure.',
+        closeError,
+      );
+      throw actionError;
+    }
+    throw closeError;
+  }
+
+  if (actionError) {
+    throw actionError;
+  }
+
+  return actionResult;
 }
 
 async function listArchiveEntriesFromReader(
@@ -148,26 +174,44 @@ function normalizeRequestedArchivePaths(requestedPaths: readonly string[]): stri
   );
 }
 
-function canReadExtractedArchiveFile(
-  entry: ArchiveFilesArrayEntryLike,
-): entry is ArchiveFilesArrayEntryLike & {
-  file: File;
-} {
-  return entry.file instanceof File;
+function flattenExtractedArchiveContent(
+  node: ExtractedArchiveContentNode,
+  parentPath = '',
+): Array<{ path: string; file: File }> {
+  if (node instanceof File) {
+    return parentPath ? [{ path: parentPath, file: node }] : [];
+  }
+
+  if (!node || typeof node !== 'object') {
+    return [];
+  }
+
+  return Object.entries(node).flatMap(([segment, childNode]) =>
+    flattenExtractedArchiveContent(childNode, parentPath ? `${parentPath}/${segment}` : segment),
+  );
 }
 
 function shouldExtractWholeArchive(
   requestedPaths: readonly string[],
   entries: readonly ArchiveImportEntry[],
   entryMap: ReadonlyMap<string, ArchiveImportEntry>,
+  options: {
+    entryRatioThreshold?: number;
+    bytesRatioThreshold?: number;
+  } = {},
 ): boolean {
   if (requestedPaths.length < MIN_FULL_ARCHIVE_EXTRACTION_ENTRIES || entries.length === 0) {
     return false;
   }
 
+  const {
+    entryRatioThreshold = FULL_ARCHIVE_EXTRACTION_ENTRY_RATIO,
+    bytesRatioThreshold = FULL_ARCHIVE_EXTRACTION_BYTES_RATIO,
+  } = options;
+
   const totalEntries = entries.length;
   const requestedEntryRatio = requestedPaths.length / totalEntries;
-  if (requestedEntryRatio >= FULL_ARCHIVE_EXTRACTION_ENTRY_RATIO) {
+  if (requestedEntryRatio >= entryRatioThreshold) {
     return true;
   }
 
@@ -180,7 +224,16 @@ function shouldExtractWholeArchive(
     (sum, path) => sum + (entryMap.get(path)?.size || 0),
     0,
   );
-  return requestedBytes / totalBytes >= FULL_ARCHIVE_EXTRACTION_BYTES_RATIO;
+  return requestedBytes / totalBytes >= bytesRatioThreshold;
+}
+
+function shouldEagerlyExtractWholeArchive(entries: readonly ArchiveImportEntry[]): boolean {
+  if (entries.length === 0 || entries.length > EAGER_FULL_ARCHIVE_EXTRACTION_MAX_ENTRIES) {
+    return false;
+  }
+
+  const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
+  return totalBytes > 0 && totalBytes <= EAGER_FULL_ARCHIVE_EXTRACTION_MAX_TOTAL_BYTES;
 }
 
 export async function withArchiveImportSession<T>(
@@ -190,6 +243,9 @@ export async function withArchiveImportSession<T>(
   return withArchiveReader(archiveFile, async (reader) => {
     const entries = await listArchiveEntriesFromReader(reader);
     const entryMap = new Map(entries.map((entry) => [entry.path, entry] as const));
+    const eagerlyExtractWholeArchive = shouldEagerlyExtractWholeArchive(entries);
+    const requestedPathHistory = new Set<string>();
+    const extractedFileCache = new Map<string, { path: string; file: File; size: number }>();
     let fullyExtractedEntryMap: Map<string, { path: string; file: File; size: number }> | null =
       null;
 
@@ -235,27 +291,25 @@ export async function withArchiveImportSession<T>(
         return fullyExtractedEntryMap;
       }
 
-      await reader.extractFiles();
-      const extractedEntries = await reader.getFilesArray();
-      fullyExtractedEntryMap = new Map(
-        extractedEntries.flatMap((entry) => {
-          const path = resolveArchiveEntryPath(entry);
-          if (!path || !canReadExtractedArchiveFile(entry)) {
+      const extractedEntries = flattenExtractedArchiveContent(await reader.extractFiles());
+      fullyExtractedEntryMap = new Map([
+        ...extractedFileCache,
+        ...extractedEntries.flatMap((entry) => {
+          const path = normalizeArchiveEntryPath(entry.path);
+          if (!path) {
             return [];
           }
 
-          return [
-            [
-              path,
-              {
-                path,
-                file: entry.file,
-                size: entryMap.get(path)?.size || entry.file.size,
-              },
-            ] as const,
-          ];
+          const extractedEntry = {
+            path,
+            file: entry.file,
+            size: entryMap.get(path)?.size || entry.file.size,
+          };
+          extractedFileCache.set(path, extractedEntry);
+
+          return [[path, extractedEntry] as const];
         }),
-      );
+      ]);
 
       return fullyExtractedEntryMap;
     };
@@ -281,9 +335,31 @@ export async function withArchiveImportSession<T>(
           }
         });
 
+        const cachedPaths = normalizedRequestedPaths.filter((path) => extractedFileCache.has(path));
+        if (cachedPaths.length === normalizedRequestedPaths.length) {
+          emitArchiveExtractionProgress(normalizedRequestedPaths, entryMap, onProgress);
+          normalizedRequestedPaths.forEach((path) => requestedPathHistory.add(path));
+          return normalizedRequestedPaths.map((path) => {
+            const cachedEntry = extractedFileCache.get(path);
+            if (!cachedEntry) {
+              throw new Error(`Missing deferred asset "${path}" in archive cache.`);
+            }
+            return cachedEntry;
+          });
+        }
+
+        const cumulativeRequestedPaths = Array.from(
+          new Set([...requestedPathHistory, ...normalizedRequestedPaths]),
+        );
+
         if (
           fullyExtractedEntryMap ||
-          shouldExtractWholeArchive(normalizedRequestedPaths, entries, entryMap)
+          eagerlyExtractWholeArchive ||
+          shouldExtractWholeArchive(normalizedRequestedPaths, entries, entryMap) ||
+          shouldExtractWholeArchive(cumulativeRequestedPaths, entries, entryMap, {
+            entryRatioThreshold: CUMULATIVE_FULL_ARCHIVE_EXTRACTION_ENTRY_RATIO,
+            bytesRatioThreshold: CUMULATIVE_FULL_ARCHIVE_EXTRACTION_BYTES_RATIO,
+          })
         ) {
           const extractedEntryMap = await ensureFullyExtractedEntries();
           const extractedFiles = normalizedRequestedPaths.map((path) => {
@@ -296,10 +372,14 @@ export async function withArchiveImportSession<T>(
           });
 
           emitArchiveExtractionProgress(normalizedRequestedPaths, entryMap, onProgress);
+          normalizedRequestedPaths.forEach((path) => requestedPathHistory.add(path));
           return extractedFiles;
         }
 
-        const totalBytes = normalizedRequestedPaths.reduce(
+        const uncachedPaths = normalizedRequestedPaths.filter(
+          (path) => !extractedFileCache.has(path),
+        );
+        const totalBytes = uncachedPaths.reduce(
           (sum, path) => sum + (entryMap.get(path)?.size || 0),
           0,
         );
@@ -307,46 +387,37 @@ export async function withArchiveImportSession<T>(
         let processedBytes = 0;
         onProgress?.({
           processedEntries,
-          totalEntries: normalizedRequestedPaths.length,
+          totalEntries: uncachedPaths.length,
           processedBytes,
           totalBytes,
         });
 
-        const extractedFiles: Array<{ path: string; file: File; size: number }> = [];
-
-        for (const path of normalizedRequestedPaths) {
+        for (const path of uncachedPaths) {
           const file = await reader.extractSingleFile(path);
           const size = entryMap.get(path)?.size || file.size;
+          extractedFileCache.set(path, { path, file, size });
 
-          extractedFiles.push({ path, file, size });
+          requestedPathHistory.add(path);
           processedEntries += 1;
           processedBytes += size;
           onProgress?.({
             processedEntries,
-            totalEntries: normalizedRequestedPaths.length,
+            totalEntries: uncachedPaths.length,
             processedBytes,
             totalBytes,
           });
         }
 
-        return extractedFiles;
+        return normalizedRequestedPaths.map((path) => {
+          const cachedEntry = extractedFileCache.get(path);
+          if (!cachedEntry) {
+            throw new Error(`Missing deferred asset "${path}" after archive extraction.`);
+          }
+          return cachedEntry;
+        });
       },
     });
   });
-}
-
-export async function listArchiveEntries(archiveFile: File): Promise<ArchiveImportEntry[]> {
-  return withArchiveImportSession(archiveFile, async (session) => session.entries);
-}
-
-export async function extractArchiveEntries(
-  archiveFile: File,
-  requestedPaths: readonly string[],
-  onProgress?: (snapshot: ArchiveExtractionSnapshot) => void,
-): Promise<Array<{ path: string; file: File; size: number }>> {
-  return withArchiveImportSession(archiveFile, async (session) =>
-    session.extractEntries(requestedPaths, onProgress),
-  );
 }
 
 export { isSupportedArchiveImportFile };

@@ -13,6 +13,7 @@ import {
   getVisualGeometryEntries,
 } from '@/core/robot';
 import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
+import { getCollisionBoxDisplayCylinderTransform } from '@/core/utils/collisionBoxDisplay';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
@@ -212,7 +213,7 @@ function createImagePreviewMesh(
     },
     undefined,
     (error) => {
-      console.error('[URDFViewer] Failed to load image asset preview texture:', error);
+      console.error('[EditorViewer] Failed to load image asset preview texture:', error);
     },
   );
 
@@ -229,6 +230,14 @@ function createPrimitiveMesh(
   const boxFacePalette = !isCollision ? getBoxFaceMaterialPalette(geometry) : [];
 
   if (geometry.type === GeometryType.BOX) {
+    if (isCollision) {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 30), material);
+      const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dimensions);
+      mesh.scale.set(...scale);
+      mesh.rotation.set(...rotation);
+      return mesh;
+    }
+
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
       boxFacePalette.length > 0
@@ -237,7 +246,7 @@ function createPrimitiveMesh(
             {
               fallbackColor: geometry.color,
               manager,
-              label: 'URDFViewer:box-face-material',
+              label: 'EditorViewer:box-face-material',
             },
           )
         : material,
@@ -364,7 +373,12 @@ export async function buildRuntimeRobotFromState({
       } else {
         loadMeshCb(geometry.meshPath, manager, (object, error) => {
           if (error) {
-            console.error('[URDFViewer] Failed to load mesh from robot state:', error);
+            console.error('[EditorViewer] Failed to load mesh from robot state:', error);
+          } else if (!object) {
+            console.error(
+              '[EditorViewer] Mesh loader completed without an object for robot state geometry:',
+              geometry.meshPath,
+            );
           }
 
           if (!object || !shouldAttachLoadedMeshObject(object, isCollision)) {
@@ -453,10 +467,11 @@ export async function buildRuntimeRobotFromState({
 
   for (const [jointId, jointData] of Object.entries(joints)) {
     const jointKey = jointData.id || jointId;
+    const jointDisplayName = jointData.name || jointKey;
     const joint = jointData.mimic ? new URDFMimicJoint() : new URDFJoint();
-    joint.name = jointKey;
-    joint.urdfName = jointKey;
-    joint.userData.displayName = jointData.name || jointKey;
+    joint.name = jointDisplayName;
+    joint.urdfName = jointDisplayName;
+    joint.userData.displayName = jointDisplayName;
     joint.userData.jointId = jointKey;
     joint.userData.originalJointType = jointData.type;
     joint.jointType = resolveRuntimeJointType(jointData.type);

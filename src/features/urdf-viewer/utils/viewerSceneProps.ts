@@ -1,16 +1,17 @@
 import type { Object3D as ThreeObject3D } from 'three';
-import type { RobotFile } from '@/types';
+import type { AssemblyState, RobotFile } from '@/types';
 import type { AssemblyTransform } from '@/types';
-import type { URDFViewerController } from '../hooks/useURDFViewerController';
-import type { ToolMode, URDFViewerProps, ViewerDocumentLoadEvent, ViewerSceneMode } from '../types';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
+import type { ViewerController } from '../hooks/useViewerController';
+import type { ToolMode, ViewerProps, ViewerDocumentLoadEvent, ViewerSceneMode } from '../types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
 
-interface BuildURDFViewerScenePropsArgs {
+interface BuildViewerScenePropsArgs {
   resolvedTheme?: 'light' | 'dark';
-  controller: URDFViewerController;
+  controller: ViewerController;
   active?: boolean;
   sourceFile?: RobotFile | null;
-  sourceFormat?: URDFViewerProps['sourceFormat'];
+  sourceFormat?: ViewerProps['sourceFormat'];
   availableFiles: RobotFile[];
   urdfContent: string;
   assets: Record<string, string>;
@@ -22,18 +23,25 @@ interface BuildURDFViewerScenePropsArgs {
   sourceFilePath?: string;
   groundPlaneOffset?: number;
   mode: ViewerSceneMode;
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  selection?: ViewerProps['selection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   hoverSelectionEnabled?: boolean;
-  onHover?: URDFViewerProps['onHover'];
-  onMeshSelect?: URDFViewerProps['onMeshSelect'];
-  robotLinks?: URDFViewerProps['robotLinks'];
-  robotJoints?: URDFViewerProps['robotJoints'];
-  focusTarget?: URDFViewerProps['focusTarget'];
-  onCollisionTransformPreview?: URDFViewerProps['onCollisionTransformPreview'];
-  onCollisionTransform?: URDFViewerProps['onCollisionTransform'];
+  onHover?: ViewerProps['onHover'];
+  onMeshSelect?: ViewerProps['onMeshSelect'];
+  onUpdate?: ViewerProps['onUpdate'];
+  robotLinks?: ViewerProps['robotLinks'];
+  robotJoints?: ViewerProps['robotJoints'];
+  focusTarget?: ViewerProps['focusTarget'];
+  onCollisionTransformPreview?: ViewerProps['onCollisionTransformPreview'];
+  onCollisionTransform?: ViewerProps['onCollisionTransform'];
   isMeshPreview?: boolean;
+  ikDragActive?: boolean;
   runtimeInstanceKey?: number;
+  assemblyState?: AssemblyState | null;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: ViewerProps['onAssemblyTransform'];
+  onComponentTransform?: ViewerProps['onComponentTransform'];
+  onBridgeTransform?: ViewerProps['onBridgeTransform'];
   sourceSceneAssemblyComponentId?: string | null;
   sourceSceneAssemblyComponentTransform?: AssemblyTransform | null;
   showSourceSceneAssemblyComponentControls?: boolean;
@@ -43,11 +51,11 @@ interface BuildURDFViewerScenePropsArgs {
   ) => void;
 }
 
-export interface URDFViewerSceneBaseProps extends BuildURDFViewerScenePropsArgs {
+export interface ViewerSceneBaseProps extends BuildViewerScenePropsArgs {
   toolMode: ToolMode;
 }
 
-export function buildURDFViewerSceneProps({
+export function buildViewerSceneProps({
   resolvedTheme,
   controller,
   active = true,
@@ -67,20 +75,26 @@ export function buildURDFViewerSceneProps({
   selection,
   hoveredSelection,
   hoverSelectionEnabled = true,
-  onHover,
   onMeshSelect,
+  onUpdate,
   robotLinks,
   robotJoints,
   focusTarget,
   onCollisionTransformPreview,
   onCollisionTransform,
   isMeshPreview = false,
+  ikDragActive = false,
   runtimeInstanceKey = 0,
+  assemblyState,
+  assemblySelection,
+  onAssemblyTransform,
+  onComponentTransform,
+  onBridgeTransform,
   sourceSceneAssemblyComponentId,
   sourceSceneAssemblyComponentTransform,
   showSourceSceneAssemblyComponentControls = false,
   onSourceSceneAssemblyComponentTransform,
-}: BuildURDFViewerScenePropsArgs): URDFViewerSceneBaseProps {
+}: BuildViewerScenePropsArgs): ViewerSceneBaseProps {
   return {
     resolvedTheme,
     controller,
@@ -101,15 +115,22 @@ export function buildURDFViewerSceneProps({
     selection,
     hoveredSelection,
     hoverSelectionEnabled,
-    onHover,
+    onHover: hoverSelectionEnabled ? controller.handleHoverWrapper : undefined,
     onMeshSelect,
+    onUpdate,
     robotLinks,
     robotJoints,
     focusTarget,
     onCollisionTransformPreview,
     onCollisionTransform,
     isMeshPreview,
+    ikDragActive,
     runtimeInstanceKey,
+    assemblyState,
+    assemblySelection,
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
     sourceSceneAssemblyComponentId,
     sourceSceneAssemblyComponentTransform,
     showSourceSceneAssemblyComponentControls,

@@ -1,6 +1,6 @@
 /**
  * Shared Mesh Renderer Components
- * Used by both Visualizer.tsx and URDFViewer.tsx
+ * Used by the unified editor viewer pipeline.
  */
 
 import React, { lazy } from 'react';
@@ -54,6 +54,8 @@ export const OBJRenderer = React.memo(
     enableShadows,
     assets,
     assetBaseDir,
+    logicalAssetPath,
+    preserveOriginalMaterial,
     scale,
     onResolved,
   }: {
@@ -63,6 +65,8 @@ export const OBJRenderer = React.memo(
     enableShadows?: boolean;
     assets: Record<string, string>;
     assetBaseDir?: string;
+    logicalAssetPath?: string;
+    preserveOriginalMaterial?: boolean;
     scale?: ScaleProps;
     onResolved?: () => void;
   }) => {
@@ -74,6 +78,8 @@ export const OBJRenderer = React.memo(
         enableShadows={enableShadows}
         assets={assets}
         assetBaseDir={assetBaseDir}
+        logicalAssetPath={logicalAssetPath}
+        preserveOriginalMaterial={preserveOriginalMaterial}
         scale={scale}
         onResolved={onResolved}
       />

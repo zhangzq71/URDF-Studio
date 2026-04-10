@@ -474,8 +474,6 @@ export function AIInspectionModal({
         className="z-[100] flex flex-col overflow-hidden rounded-2xl border border-border-black bg-panel-bg text-text-primary shadow-xl select-none dark:bg-panel-bg"
         headerClassName="h-12 border-b border-border-black flex items-center justify-between px-4 bg-element-bg shrink-0"
         interactionClassName="select-none"
-        headerDraggableClassName="cursor-grab"
-        headerDraggingClassName="!cursor-grabbing"
         minimizeTitle={t.minimize}
         maximizeTitle={t.maximize}
         restoreTitle={t.restore}

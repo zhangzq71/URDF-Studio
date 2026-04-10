@@ -11,7 +11,12 @@ import { useActiveHistory } from '../hooks/useActiveHistory';
 import { HeaderActions } from './header/HeaderActions';
 import { HeaderMenus } from './header/HeaderMenus';
 import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
-import type { HeaderAction, HeaderMenuKey, HeaderViewConfig } from './header/types';
+import type {
+  HeaderAction,
+  HeaderMenuKey,
+  HeaderViewAvailability,
+  HeaderViewConfig,
+} from './header/types';
 
 interface HeaderProps {
   // Import actions
@@ -22,7 +27,7 @@ interface HeaderProps {
   // Modal actions
   onOpenAIInspection: () => void;
   onOpenAIConversation: () => void;
-  onOpenMeasureTool: () => void;
+  onOpenIkTool: () => void;
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
@@ -35,9 +40,9 @@ interface HeaderProps {
   viewConfig: {
     showToolbar: boolean;
     showOptionsPanel: boolean;
-    showVisualizerOptionsPanel: boolean;
     showJointPanel: boolean;
   };
+  viewAvailability?: HeaderViewAvailability;
   setViewConfig: React.Dispatch<React.SetStateAction<HeaderViewConfig>>;
 }
 
@@ -48,7 +53,7 @@ export function Header({
   onExportProject,
   onOpenAIInspection,
   onOpenAIConversation,
-  onOpenMeasureTool,
+  onOpenIkTool,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
@@ -57,6 +62,7 @@ export function Header({
   onSnapshot,
   onOpenCollisionOptimizer,
   viewConfig,
+  viewAvailability = { jointPanel: true },
   setViewConfig,
 }: HeaderProps) {
   const headerRef = React.useRef<HTMLElement | null>(null);
@@ -126,6 +132,7 @@ export function Header({
           showUndoRedoInline={responsive.showUndoRedoInline}
           t={t}
           viewConfig={viewConfig}
+          viewAvailability={viewAvailability}
           setViewConfig={setViewConfig}
           onImportFile={onImportFile}
           onImportFolder={onImportFolder}
@@ -133,7 +140,7 @@ export function Header({
           onExportProject={onExportProject}
           onOpenAIInspection={onOpenAIInspection}
           onOpenAIConversation={onOpenAIConversation}
-          onOpenMeasureTool={onOpenMeasureTool}
+          onOpenIkTool={onOpenIkTool}
           onOpenCollisionOptimizer={onOpenCollisionOptimizer}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}

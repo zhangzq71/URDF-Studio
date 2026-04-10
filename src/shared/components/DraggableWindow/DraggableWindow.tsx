@@ -61,8 +61,7 @@ export interface DraggableWindowProps {
   controlIcons?: WindowControlIcons;
 }
 
-const DEFAULT_CONTROL_BUTTON_CLASS =
-  'p-1.5 hover:bg-element-hover rounded-md transition-colors';
+const DEFAULT_CONTROL_BUTTON_CLASS = 'p-1.5 hover:bg-element-hover rounded-md transition-colors';
 const DEFAULT_CLOSE_BUTTON_CLASS =
   'p-1.5 text-text-tertiary hover:bg-red-500 hover:text-white rounded-md transition-colors';
 const DEFAULT_LEFT_RESIZE_CLASS =
@@ -92,8 +91,8 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   closeButtonClassName = DEFAULT_CLOSE_BUTTON_CLASS,
   interactionClassName,
   draggingClassName,
-  headerDraggableClassName = 'cursor-grab',
-  headerDraggingClassName = 'cursor-grabbing',
+  headerDraggableClassName = '',
+  headerDraggingClassName = '',
   showMinimizeButton = true,
   showMaximizeButton = true,
   showCloseButton = true,
@@ -142,7 +141,9 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
 
   const shouldRenderResizeHandles = showResizeHandles && !isMaximized && !isMinimized;
   const minimizeIcon = controlIcons?.minimize ?? <Minus className="w-4 h-4 text-text-tertiary" />;
-  const maximizeIcon = controlIcons?.maximize ?? <Maximize2 className="w-4 h-4 text-text-tertiary" />;
+  const maximizeIcon = controlIcons?.maximize ?? (
+    <Maximize2 className="w-4 h-4 text-text-tertiary" />
+  );
   const restoreIcon = controlIcons?.restore ?? <Minimize2 className="w-4 h-4 text-text-tertiary" />;
   const closeIcon = controlIcons?.close ?? <X className="w-4 h-4" />;
 

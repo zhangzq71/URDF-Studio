@@ -133,6 +133,7 @@ test('prepareImportPayload scans zip bundles off the main classification path an
   const result = await prepareImportPayload({
     files: [zipFile],
     existingPaths: [],
+    preResolvePreferredImport: false,
   });
 
   assert.equal(
@@ -229,6 +230,7 @@ o BodyMesh`,
   const result = await prepareImportPayload({
     files: [zipFile],
     existingPaths: [],
+    preResolvePreferredImport: false,
   });
 
   assert.equal(result.preferredFileName, 'robot/demo.xml');
@@ -504,6 +506,99 @@ test('prepareImportPayload fast-open mode prefers MJCF over a non-self-contained
   });
 
   assert.equal(result.preferredFileName, 'google_barkour_v0/barkour_v0.xml');
+  assert.deepEqual(result.preResolvedImports, []);
+});
+
+test('prepareImportPayload fast-open mode skips MJCF keyframe fragments when ranking archive roots', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'keyframes.xml',
+    `<mujoco>
+  <keyframe>
+    <key name="home" qpos="0 0 0" />
+  </keyframe>
+</mujoco>`,
+  );
+  zip.file(
+    'left_hand.xml',
+    `<?xml version="1.0"?>
+<mujoco model="left_shadow_hand">
+  <worldbody>
+    <body name="hand">
+      <geom type="box" size="0.01 0.01 0.01" />
+    </body>
+  </worldbody>
+</mujoco>`,
+  );
+  zip.file(
+    'scene_left.xml',
+    `<?xml version="1.0"?>
+<mujoco model="left_shadow_hand scene">
+  <include file="left_hand.xml"/>
+  <worldbody>
+    <light pos="0 0 1"/>
+    <geom name="floor" pos="0 0 -0.1" size="0 0 0.05" type="plane"/>
+  </worldbody>
+</mujoco>`,
+  );
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'shadow_hand_fixture.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'left_hand.xml');
+  assert.deepEqual(result.preResolvedImports, []);
+});
+
+test('prepareImportPayload fast-open mode prefers standalone MJCF robots over include-based scene wrappers', async () => {
+  const files = [
+    createLooseFile(
+      'stretch.xml',
+      `<?xml version="1.0"?>
+<mujoco model="stretch">
+  <worldbody>
+    <body name="base_link">
+      <geom type="box" size="0.1 0.1 0.1" />
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="lift_motor" joint="lift_joint" />
+  </actuator>
+</mujoco>`,
+      'hello_robot_stretch/stretch.xml',
+    ),
+    createLooseFile(
+      'scene.xml',
+      `<?xml version="1.0"?>
+<mujoco model="stretch scene">
+  <include file="stretch.xml"/>
+  <worldbody>
+    <light pos="0 0 1.5"/>
+    <body name="table">
+      <geom type="box" size=".6 .5 .24"/>
+    </body>
+    <body name="object">
+      <freejoint/>
+      <geom type="box" size=".02 .04 .04"/>
+    </body>
+  </worldbody>
+</mujoco>`,
+      'hello_robot_stretch/scene.xml',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'hello_robot_stretch/stretch.xml');
   assert.deepEqual(result.preResolvedImports, []);
 });
 
@@ -879,11 +974,128 @@ test('prepareImportPayload eagerly hydrates SDF gazebo material script textures 
   ]);
   assert.deepEqual([...result.textFiles].map((file) => file.path).sort(), [
     'demo/materials/scripts/demo.material',
+    'demo/meshes/base_link.dae',
   ]);
   assert.deepEqual(
     result.deferredAssetFiles.map((file) => file.name),
     ['demo/docs/preview.png'],
   );
+});
+
+test('prepareImportPayload eagerly hydrates SDF OBJ sidecar textures required by the preferred model', async () => {
+  const zip = new JSZip();
+  zip.file(
+    'ambulance/model.sdf',
+    `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="ambulance">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://ambulance/meshes/ambulance.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+  );
+  zip.file(
+    'ambulance/meshes/ambulance.obj',
+    `mtllib ambulance.mtl
+usemtl Ambulance
+o AmbulanceBody`,
+  );
+  zip.file(
+    'ambulance/meshes/ambulance.mtl',
+    `newmtl Ambulance
+map_Kd ambulance.png`,
+  );
+  zip.file('ambulance/materials/textures/ambulance.png', new Uint8Array([137, 80, 78, 71]));
+  zip.file('ambulance/docs/preview.png', new Uint8Array([137, 80, 78, 71]));
+
+  const zipBytes = await zip.generateAsync({ type: 'uint8array' });
+  const zipFile = new File([zipBytes], 'ambulance.zip', { type: 'application/zip' });
+
+  const result = await prepareImportPayload({
+    files: [zipFile],
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'ambulance/model.sdf');
+  assert.deepEqual(result.assetFiles.map((file) => file.name).sort(), [
+    'ambulance/materials/textures/ambulance.png',
+    'ambulance/meshes/ambulance.mtl',
+    'ambulance/meshes/ambulance.obj',
+  ]);
+  assert.deepEqual(result.textFiles.map((file) => file.path).sort(), [
+    'ambulance/meshes/ambulance.mtl',
+    'ambulance/meshes/ambulance.obj',
+  ]);
+  assert.deepEqual(
+    result.deferredAssetFiles.map((file) => file.name),
+    ['ambulance/docs/preview.png'],
+  );
+});
+
+test('prepareImportPayload keeps referenced SDF OBJ material sidecars blob-backed for loose folder imports', async () => {
+  const files = [
+    createLooseFile(
+      'model.sdf',
+      `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="ambulance">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://ambulance/meshes/ambulance.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+      'ambulance/model.sdf',
+    ),
+    createLooseFile(
+      'ambulance.obj',
+      `mtllib ambulance.mtl
+usemtl Ambulance
+o AmbulanceBody`,
+      'ambulance/meshes/ambulance.obj',
+    ),
+    createLooseFile(
+      'ambulance.mtl',
+      `newmtl Ambulance
+map_Kd ambulance.png`,
+      'ambulance/meshes/ambulance.mtl',
+    ),
+    createLooseFile(
+      'ambulance.png',
+      new Uint8Array([137, 80, 78, 71]),
+      'ambulance/materials/textures/ambulance.png',
+    ),
+  ];
+
+  const result = await prepareImportPayload({
+    files,
+    existingPaths: [],
+    preResolvePreferredImport: false,
+  });
+
+  assert.equal(result.preferredFileName, 'ambulance/model.sdf');
+  assert.deepEqual(result.assetFiles.map((file) => file.name).sort(), [
+    'ambulance/materials/textures/ambulance.png',
+    'ambulance/meshes/ambulance.mtl',
+    'ambulance/meshes/ambulance.obj',
+  ]);
+  assert.deepEqual(result.textFiles.map((file) => file.path).sort(), [
+    'ambulance/meshes/ambulance.mtl',
+    'ambulance/meshes/ambulance.obj',
+  ]);
 });
 
 test('prepareImportPayload prefixes rootless ROS package contents using package asset roots', async () => {

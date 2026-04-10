@@ -1,7 +1,7 @@
 import type { JointQuaternion, RobotState, UrdfJoint } from '@/types';
 
 export interface JointInteractionPreview {
-  source: 'visualizer' | 'urdf-viewer';
+  source: 'viewer';
   dragSessionId: string;
   activeJointId: string | null;
   jointAngles: Record<string, number>;

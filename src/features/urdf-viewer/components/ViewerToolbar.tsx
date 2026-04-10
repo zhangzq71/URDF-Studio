@@ -17,14 +17,20 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function clampFloatingPosition(x: number, y: number, width: number, height: number) {
-  if (typeof window === 'undefined') {
+function clampFloatingPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  containerRect?: DOMRect | null,
+) {
+  if (!containerRect) {
     return { x, y };
   }
 
   return {
-    x: clamp(x, FLOATING_MARGIN, window.innerWidth - width - FLOATING_MARGIN),
-    y: clamp(y, FLOATING_MARGIN, window.innerHeight - height - FLOATING_MARGIN),
+    x: clamp(x, FLOATING_MARGIN, containerRect.width - width - FLOATING_MARGIN),
+    y: clamp(y, FLOATING_MARGIN, containerRect.height - height - FLOATING_MARGIN),
   };
 }
 
@@ -135,10 +141,11 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
       const containerRect = container.getBoundingClientRect();
       const toolbarRect = node.getBoundingClientRect();
       const nextPosition = clampFloatingPosition(
-        containerRect.left + (containerRect.width - toolbarRect.width) / 2,
-        containerRect.top + INITIAL_TOP_OFFSET,
+        (containerRect.width - toolbarRect.width) / 2,
+        INITIAL_TOP_OFFSET,
         toolbarRect.width,
         toolbarRect.height,
+        containerRect,
       );
 
       setFloatingPosition(nextPosition);
@@ -156,16 +163,19 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
     }
 
     const syncPosition = () => {
+      const container = containerRef?.current;
       const node = nodeRef.current;
-      if (!node) {
+      if (!container || !node) {
         return;
       }
 
+      const containerRect = container.getBoundingClientRect();
       const nextPosition = clampFloatingPosition(
         floatingPosition.x,
         floatingPosition.y,
         node.offsetWidth,
         node.offsetHeight,
+        containerRect,
       );
 
       if (nextPosition.x !== floatingPosition.x || nextPosition.y !== floatingPosition.y) {
@@ -173,11 +183,19 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
       }
     };
 
+    let observer: ResizeObserver | null = null;
+    const container = containerRef?.current;
+    if (typeof ResizeObserver !== 'undefined' && container) {
+      observer = new ResizeObserver(syncPosition);
+      observer.observe(container);
+    }
+
     window.addEventListener('resize', syncPosition);
     return () => {
+      observer?.disconnect();
       window.removeEventListener('resize', syncPosition);
     };
-  }, [floatingPosition, isDocked]);
+  }, [containerRef, floatingPosition, isDocked]);
 
   const handleDragStart = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -185,6 +203,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
       event.stopPropagation();
 
       const node = nodeRef.current;
+      const container = containerRef?.current;
       if (!node) {
         return;
       }
@@ -192,34 +211,59 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
       clearDragListeners();
 
       const rect = node.getBoundingClientRect();
+      const containerRect = container?.getBoundingClientRect() ?? null;
       previousUserSelectRef.current = document.body.style.userSelect;
       previousCursorRef.current = document.body.style.cursor;
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'move';
-      dragOffsetRef.current = {
+      const dragOffset = {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
       };
+      dragOffsetRef.current = dragOffset;
 
       if (isDocked) {
         setIsDocked(false);
-        setFloatingPosition({ x: rect.left, y: rect.top });
+        setFloatingPosition(
+          clampFloatingPosition(
+            (containerRect ? event.clientX - containerRect.left : rect.left) - dragOffset.x,
+            (containerRect ? event.clientY - containerRect.top : rect.top) - dragOffset.y,
+            rect.width,
+            rect.height,
+            containerRect,
+          ),
+        );
       } else {
-        setFloatingPosition({ x: rect.left, y: rect.top });
+        setFloatingPosition(
+          clampFloatingPosition(
+            containerRect ? rect.left - containerRect.left : rect.left,
+            containerRect ? rect.top - containerRect.top : rect.top,
+            rect.width,
+            rect.height,
+            containerRect,
+          ),
+        );
       }
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const currentNode = nodeRef.current;
         const offset = dragOffsetRef.current;
+        const currentContainer = containerRef?.current;
         if (!currentNode || !offset) {
           return;
         }
 
+        const currentContainerRect = currentContainer?.getBoundingClientRect() ?? null;
         const nextPosition = clampFloatingPosition(
-          moveEvent.clientX - offset.x,
-          moveEvent.clientY - offset.y,
+          (currentContainerRect
+            ? moveEvent.clientX - currentContainerRect.left
+            : moveEvent.clientX) - offset.x,
+          (currentContainerRect
+            ? moveEvent.clientY - currentContainerRect.top
+            : moveEvent.clientY) - offset.y,
           currentNode.offsetWidth || rect.width,
           currentNode.offsetHeight || rect.height,
+          currentContainerRect,
         );
 
         setFloatingPosition(nextPosition);
@@ -232,12 +276,17 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
           if (shouldDockToHeader(currentRect)) {
             setIsDocked(true);
           } else {
+            const currentContainer = containerRef?.current;
+            const currentContainerRect = currentContainer?.getBoundingClientRect() ?? null;
             setFloatingPosition(
               clampFloatingPosition(
-                currentRect.left,
-                currentRect.top,
+                currentContainerRect
+                  ? currentRect.left - currentContainerRect.left
+                  : currentRect.left,
+                currentContainerRect ? currentRect.top - currentContainerRect.top : currentRect.top,
                 currentRect.width,
                 currentRect.height,
+                currentContainerRect,
               ),
             );
           }
@@ -260,12 +309,8 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
     <>
       <div
         onMouseDown={handleDragStart}
-        className="drag-handle flex h-full cursor-move select-none items-center px-1 text-text-tertiary/50 transition-colors hover:text-text-tertiary"
-      >
-        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-          <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
-        </svg>
-      </div>
+        className="drag-handle flex h-full select-none items-center px-1"
+      />
       {tools.map((tool) => {
         const isActive = activeMode === tool.id;
         const Icon = tool.icon;
@@ -300,6 +345,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
 
   const toolbarClassName =
     'urdf-toolbar flex items-center gap-1 rounded-lg border border-border-black bg-panel-bg p-1 shadow-2xl dark:shadow-black';
+  const floatingPositioningClassName = containerRef?.current ? 'absolute' : 'fixed';
 
   const dockSlot =
     typeof document !== 'undefined' ? document.getElementById(HEADER_DOCK_SLOT_ID) : null;
@@ -316,7 +362,7 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
   return (
     <div
       ref={nodeRef}
-      className={`${toolbarClassName} fixed z-[120] cursor-auto`}
+      className={`${toolbarClassName} ${floatingPositioningClassName} z-40 cursor-auto`}
       style={{
         left: floatingPosition?.x ?? 0,
         top: floatingPosition?.y ?? 0,

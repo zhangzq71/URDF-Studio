@@ -27,10 +27,7 @@ test('parseSDF converts gazebo jointed models into RobotState data', () => {
     robot?.links.link_over_damping.visual.meshPath,
     'model://demo_joint_damping/meshes/arm.stl',
   );
-  assert.deepEqual(
-    robot?.joints.joint_over_damping.origin.xyz,
-    { x: 0.12, y: 0, z: 0.15 },
-  );
+  assert.deepEqual(robot?.joints.joint_over_damping.origin.xyz, { x: 0.12, y: 0, z: 0.15 });
 });
 
 test('parseSDF preserves additional visuals and collisions on the same link', () => {
@@ -111,7 +108,8 @@ test('parseSDF keeps mesh visuals without explicit material colors uncolored so 
 });
 
 test('parseSDF resolves gazebo material scripts into texture-backed material metadata', () => {
-  const robot = parseSDF(`<?xml version="1.0"?>
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="demo">
     <link name="base_link">
@@ -131,10 +129,11 @@ test('parseSDF resolves gazebo material scripts into texture-backed material met
       </visual>
     </link>
   </model>
-</sdf>`, {
-    sourcePath: 'demo/model.sdf',
-    allFileContents: {
-      'demo/materials/scripts/demo.material': `material Demo/Diffuse
+</sdf>`,
+    {
+      sourcePath: 'demo/model.sdf',
+      allFileContents: {
+        'demo/materials/scripts/demo.material': `material Demo/Diffuse
 {
   technique
   {
@@ -148,19 +147,24 @@ test('parseSDF resolves gazebo material scripts into texture-backed material met
     }
   }
 }`,
+      },
     },
-  });
+  );
 
   assert.ok(robot);
   assert.equal(robot?.links.base_link.visual.color, '#ff8000');
   assert.equal(robot?.links.base_link.visual.materialSource, 'gazebo');
   assert.equal(robot?.links.base_link.visual.authoredMaterials?.[0]?.name, 'Demo/Diffuse');
-  assert.equal(robot?.links.base_link.visual.authoredMaterials?.[0]?.texture, 'demo/materials/textures/demo.png');
+  assert.equal(
+    robot?.links.base_link.visual.authoredMaterials?.[0]?.texture,
+    'demo/materials/textures/demo.png',
+  );
   assert.equal(robot?.materials?.base_link?.texture, 'demo/materials/textures/demo.png');
 });
 
 test('parseSDF preserves gazebo script materials on secondary visual bodies', () => {
-  const robot = parseSDF(`<?xml version="1.0"?>
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="demo">
     <link name="base_link">
@@ -187,10 +191,11 @@ test('parseSDF preserves gazebo script materials on secondary visual bodies', ()
       </visual>
     </link>
   </model>
-</sdf>`, {
-    sourcePath: 'demo/model.sdf',
-    allFileContents: {
-      'demo/materials/scripts/demo.material': `material Demo/Poster
+</sdf>`,
+    {
+      sourcePath: 'demo/model.sdf',
+      allFileContents: {
+        'demo/materials/scripts/demo.material': `material Demo/Poster
 {
   technique
   {
@@ -203,16 +208,112 @@ test('parseSDF preserves gazebo script materials on secondary visual bodies', ()
     }
   }
 }`,
+      },
     },
-  });
+  );
 
   assert.ok(robot);
   assert.equal(robot?.links.base_link.visualBodies?.[0]?.materialSource, 'gazebo');
-  assert.equal(robot?.links.base_link.visualBodies?.[0]?.authoredMaterials?.[0]?.texture, 'demo/materials/textures/poster.png');
+  assert.equal(
+    robot?.links.base_link.visualBodies?.[0]?.authoredMaterials?.[0]?.texture,
+    'demo/materials/textures/poster.png',
+  );
+});
+
+test('parseSDF syncs OBJ sidecar textures into authored materials when SDF omits inline material tags', () => {
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="ambulance_fixture">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://ambulance/meshes/ambulance.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+    {
+      sourcePath: 'ambulance/model.sdf',
+      allFileContents: {
+        'ambulance/meshes/ambulance.obj': `mtllib ambulance.mtl
+usemtl Ambulance
+o AmbulanceBody`,
+        'ambulance/meshes/ambulance.mtl': `newmtl Ambulance
+map_Kd ambulance.png`,
+      },
+      availableFiles: [
+        { name: 'ambulance/model.sdf' },
+        { name: 'ambulance/meshes/ambulance.obj' },
+        { name: 'ambulance/meshes/ambulance.mtl' },
+        { name: 'ambulance/materials/textures/ambulance.png' },
+      ],
+    },
+  );
+
+  assert.ok(robot);
+  assert.equal(robot?.links.base_link.visual.authoredMaterials?.length, 1);
+  assert.equal(robot?.links.base_link.visual.authoredMaterials?.[0]?.name, 'Ambulance');
+  assert.equal(
+    robot?.links.base_link.visual.authoredMaterials?.[0]?.texture,
+    'ambulance/materials/textures/ambulance.png',
+  );
+  assert.equal(robot?.materials?.base_link?.texture, 'ambulance/materials/textures/ambulance.png');
+});
+
+test('parseSDF preserves OBJ multi-material texture palettes and cross-model texture references', () => {
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="bus_fixture">
+    <link name="base_link">
+      <visual name="body">
+        <geometry>
+          <mesh>
+            <uri>model://bus/meshes/bus.obj</uri>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>`,
+    {
+      sourcePath: 'bus/model.sdf',
+      allFileContents: {
+        'bus/meshes/bus.obj': `mtllib bus.mtl
+usemtl Bus
+usemtl Wheels_01
+o BusBody`,
+        'bus/meshes/bus.mtl': `newmtl Bus
+map_Kd bus.png
+
+newmtl Wheels_01
+map_Kd model://suv/materials/textures/wheels_01.png`,
+      },
+      availableFiles: [
+        { name: 'bus/model.sdf' },
+        { name: 'bus/meshes/bus.obj' },
+        { name: 'bus/meshes/bus.mtl' },
+        { name: 'bus/materials/textures/bus.png' },
+        { name: 'suv/materials/textures/wheels_01.png' },
+      ],
+    },
+  );
+
+  assert.ok(robot);
+  assert.deepEqual(robot?.links.base_link.visual.authoredMaterials, [
+    { name: 'Bus', texture: 'bus/materials/textures/bus.png' },
+    { name: 'Wheels_01', texture: 'suv/materials/textures/wheels_01.png' },
+  ]);
+  assert.equal(robot?.materials?.base_link?.texture, 'bus/materials/textures/bus.png');
 });
 
 test('parseSDF expands included models with namespaced links and include poses', () => {
-  const robot = parseSDF(`<?xml version="1.0"?>
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="parent">
     <include>
@@ -221,10 +322,11 @@ test('parseSDF expands included models with namespaced links and include poses',
       <uri>model://child_box</uri>
     </include>
   </model>
-</sdf>`, {
-    sourcePath: 'parent/model.sdf',
-    allFileContents: {
-      'child_box/model.sdf': `<?xml version="1.0"?>
+</sdf>`,
+    {
+      sourcePath: 'parent/model.sdf',
+      allFileContents: {
+        'child_box/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="child_box">
     <link name="box">
@@ -238,21 +340,20 @@ test('parseSDF expands included models with namespaced links and include poses',
     </link>
   </model>
 </sdf>`,
+      },
     },
-  });
+  );
 
   assert.ok(robot);
   assert.ok(robot?.links['child_box::box']);
   assert.ok(robot?.links['child_box::box__root']);
   assert.equal(robot?.joints['child_box::box__root_fixed']?.childLinkId, 'child_box::box');
-  assert.deepEqual(
-    robot?.joints['child_box::box__root_fixed']?.origin.xyz,
-    { x: 1, y: 2, z: 3 },
-  );
+  assert.deepEqual(robot?.joints['child_box::box__root_fixed']?.origin.xyz, { x: 1, y: 2, z: 3 });
 });
 
 test('parseSDF lets parent joints target included model links without injecting duplicate root anchors', () => {
-  const robot = parseSDF(`<?xml version="1.0"?>
+  const robot = parseSDF(
+    `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="assembly">
     <include>
@@ -269,10 +370,11 @@ test('parseSDF lets parent joints target included model links without injecting 
       <child>gripper::base</child>
     </joint>
   </model>
-</sdf>`, {
-    sourcePath: 'assembly/model.sdf',
-    allFileContents: {
-      'arm/model.sdf': `<?xml version="1.0"?>
+</sdf>`,
+    {
+      sourcePath: 'assembly/model.sdf',
+      allFileContents: {
+        'arm/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="arm">
     <link name="base">
@@ -300,7 +402,7 @@ test('parseSDF lets parent joints target included model links without injecting 
     </joint>
   </model>
 </sdf>`,
-      'gripper/model.sdf': `<?xml version="1.0"?>
+        'gripper/model.sdf': `<?xml version="1.0"?>
 <sdf version="1.7">
   <model name="gripper">
     <link name="base">
@@ -314,8 +416,9 @@ test('parseSDF lets parent joints target included model links without injecting 
     </link>
   </model>
 </sdf>`,
+      },
     },
-  });
+  );
 
   assert.ok(robot);
   assert.equal(robot?.joints.mount?.parentLinkId, 'arm::tip');
@@ -395,12 +498,20 @@ test('parseSDF preserves non-zero child link offsets relative to incoming joint 
   assert.ok(robot);
   assert.equal(robot?.joints.finger_joint.childLinkId, 'finger__joint_stage_0');
   assert.ok(robot?.links['finger__joint_stage_0']);
-  assert.deepEqual(robot?.joints['finger__joint_stage_0_fixed']?.origin.xyz, { x: 0, y: 0, z: 0.0005 });
+  assert.deepEqual(robot?.joints['finger__joint_stage_0_fixed']?.origin.xyz, {
+    x: 0,
+    y: 0,
+    z: 0.0005,
+  });
 
   const worldMatrices = computeLinkWorldMatrices(robot!);
   const fingerPose = worldMatrices.finger;
   assert.ok(fingerPose);
-  const position = { x: fingerPose.elements[12], y: fingerPose.elements[13], z: fingerPose.elements[14] };
+  const position = {
+    x: fingerPose.elements[12],
+    y: fingerPose.elements[13],
+    z: fingerPose.elements[14],
+  };
   assert.deepEqual(position, { x: 0.1, y: 0.2, z: 0.3005 });
 });
 

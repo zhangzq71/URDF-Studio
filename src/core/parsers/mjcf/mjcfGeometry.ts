@@ -424,10 +424,6 @@ export async function createGeometryMesh(
     }
 
     default:
-      // Unknown type - log warning and create default sphere
-      console.error(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
-      const defaultRadius = geom.size?.[0] || 0.05;
-      const defaultGeometry = new THREE.SphereGeometry(defaultRadius, 32, 32);
-      return new THREE.Mesh(defaultGeometry, createDefaultMaterial());
+      throw createMJCFGeometryError('Unsupported geom type', type);
   }
 }

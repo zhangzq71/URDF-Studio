@@ -11,6 +11,8 @@ export * from './usdExportBundle';
 export { prepareUsdPreparedExportCacheWithWorker } from './usdPreparedExportCacheWorkerBridge';
 export { prewarmUsdOffscreenViewerRuntimeInBackground } from './usdOffscreenViewerWorkerClient';
 export * from './usdWasmRuntime';
+export * from './preparedUsdStageOpenCache';
+export * from './usdBlobBackedUsda';
 export * from './usdPreloadSources';
 export * from './viewerSceneProps';
 export * from './scopedToolMode';

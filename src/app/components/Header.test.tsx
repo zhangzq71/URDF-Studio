@@ -16,7 +16,7 @@ function renderHeader() {
       onExportProject: () => {},
       onOpenAIInspection: () => {},
       onOpenAIConversation: () => {},
-      onOpenMeasureTool: () => {},
+      onOpenIkTool: () => {},
       onOpenCodeViewer: () => {},
       onPrefetchCodeViewer: () => {},
       onOpenSettings: () => {},
@@ -35,7 +35,6 @@ function renderHeader() {
       viewConfig: {
         showToolbar: true,
         showOptionsPanel: true,
-        showVisualizerOptionsPanel: true,
         showJointPanel: true,
       },
       setViewConfig: () => {},

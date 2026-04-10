@@ -44,6 +44,7 @@ export interface PropertyEditorProps {
     subType: 'visual' | 'collision',
     objectIndex?: number,
     suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
   ) => void;
   onAddCollisionBody?: (linkId: string) => void;
   mode: AppMode;

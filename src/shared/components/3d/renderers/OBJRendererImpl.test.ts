@@ -6,6 +6,7 @@ import { GENERATED_OBJ_MATERIAL_USER_DATA_KEY } from '@/core/loaders/objModelDat
 import {
   disposeObjPreviewClone,
   replaceObjPreviewMeshMaterials,
+  shouldOverrideObjPreviewMesh,
 } from './OBJRendererImpl.tsx';
 
 function trackDisposeCalls<T extends THREE.Material | THREE.BufferGeometry>(resource: T) {
@@ -55,4 +56,61 @@ test('disposeObjPreviewClone releases clone-owned OBJ resources without disposin
   assert.equal(getSharedMaterialDisposeCalls(), 0);
 
   sharedMaterial.dispose();
+});
+
+test('shouldOverrideObjPreviewMesh keeps textured OBJ meshes overrideable but preserves vertex-colored meshes', () => {
+  const texturedMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: new THREE.Texture(),
+    }),
+  );
+  const vertexColorGeometry = new THREE.BoxGeometry(1, 1, 1);
+  vertexColorGeometry.setAttribute(
+    'color',
+    new THREE.Float32BufferAttribute(
+      new Array(vertexColorGeometry.attributes.position.count * 3).fill(1),
+      3,
+    ),
+  );
+  const vertexColorMesh = new THREE.Mesh(
+    vertexColorGeometry,
+    new THREE.MeshStandardMaterial({ color: 0xffffff }),
+  );
+
+  try {
+    assert.equal(shouldOverrideObjPreviewMesh(texturedMesh), true);
+    assert.equal(shouldOverrideObjPreviewMesh(vertexColorMesh), false);
+    assert.equal(shouldOverrideObjPreviewMesh(texturedMesh, true), false);
+  } finally {
+    texturedMesh.geometry.dispose();
+    (texturedMesh.material as THREE.Material).dispose();
+    vertexColorGeometry.dispose();
+    (vertexColorMesh.material as THREE.Material).dispose();
+  }
+});
+
+test('replaceObjPreviewMeshMaterials does not dispose shared override materials during material refreshes', () => {
+  const generatedMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+  generatedMaterial.userData = {
+    ...(generatedMaterial.userData ?? {}),
+    [GENERATED_OBJ_MATERIAL_USER_DATA_KEY]: true,
+  };
+  const firstSharedMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+  const secondSharedMaterial = new THREE.MeshBasicMaterial({ color: 0x0000ff });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), generatedMaterial);
+  const getFirstSharedDisposeCalls = trackDisposeCalls(firstSharedMaterial);
+
+  try {
+    replaceObjPreviewMeshMaterials([mesh], firstSharedMaterial);
+    replaceObjPreviewMeshMaterials([mesh], secondSharedMaterial);
+
+    assert.equal(mesh.material, secondSharedMaterial);
+    assert.equal(getFirstSharedDisposeCalls(), 0);
+  } finally {
+    mesh.geometry.dispose();
+    firstSharedMaterial.dispose();
+    secondSharedMaterial.dispose();
+  }
 });

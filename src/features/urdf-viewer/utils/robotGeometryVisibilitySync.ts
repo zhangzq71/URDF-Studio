@@ -54,7 +54,7 @@ export function syncRobotGeometryVisibility({
   sourceFormat,
   showCollision,
   showVisual,
-  showMjcfWorldLink = true,
+  showMjcfWorldLink = false,
   showCollisionAlwaysOnTop = true,
   highlightedMeshes,
 }: SyncRobotGeometryVisibilityOptions): boolean {
@@ -80,8 +80,12 @@ export function syncRobotGeometryVisibility({
             collider: node,
             linkData,
             showCollision,
+            showVisual,
             showCollisionAlwaysOnTop,
-            respectLinkVisibility: sourceFormat !== 'mjcf',
+            // "Show Visual" is a presentation toggle and must not suppress
+            // collision-only view. Respect per-link visibility only while
+            // visuals are enabled.
+            respectLinkVisibility: sourceFormat !== 'mjcf' && showVisual,
             highlightedMeshes,
           }) || changed;
       }

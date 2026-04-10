@@ -1,5 +1,6 @@
 import { GeometryType, type RobotData, type UrdfLink } from '@/types';
 import { getVisualGeometryEntries } from './visualBodies';
+import { getEffectiveGeometryAuthoredMaterials } from './visualMaterials';
 
 type RobotMaterials = RobotData['materials'];
 type RobotMaterialEntry = NonNullable<RobotMaterials>[string];
@@ -10,15 +11,46 @@ function normalizeMaterialValue(value?: string | null): string | undefined {
 }
 
 function materialValuesEqual(left?: string | null, right?: string | null): boolean {
-  return normalizeMaterialValue(left)?.toLowerCase() === normalizeMaterialValue(right)?.toLowerCase();
+  return (
+    normalizeMaterialValue(left)?.toLowerCase() === normalizeMaterialValue(right)?.toLowerCase()
+  );
 }
 
 function materialEntriesEqual(
   left: RobotMaterialEntry | undefined,
   right: RobotMaterialEntry | undefined,
 ): boolean {
-  return left?.color === right?.color
-    && left?.texture === right?.texture;
+  return (
+    left?.color === right?.color &&
+    left?.texture === right?.texture &&
+    JSON.stringify(left?.usdMaterial ?? null) === JSON.stringify(right?.usdMaterial ?? null)
+  );
+}
+
+function resolveTrackedVisualMaterial(
+  link: UrdfLink,
+): Pick<RobotMaterialEntry, 'color' | 'texture'> | null {
+  if (link.visual.type === GeometryType.NONE) {
+    return null;
+  }
+
+  const authoredMaterials = getEffectiveGeometryAuthoredMaterials(link.visual);
+  if (authoredMaterials.length > 1) {
+    return null;
+  }
+
+  const authoredMaterial = authoredMaterials[0];
+  const color = normalizeMaterialValue(authoredMaterial?.color ?? link.visual.color);
+  const texture = normalizeMaterialValue(authoredMaterial?.texture);
+
+  if (!color && !texture) {
+    return null;
+  }
+
+  return {
+    ...(color ? { color } : {}),
+    ...(texture ? { texture } : {}),
+  };
 }
 
 function resolveExistingMaterialEntry(
@@ -26,9 +58,11 @@ function resolveExistingMaterialEntry(
   nextLink: UrdfLink,
   previousLink?: UrdfLink,
 ): RobotMaterialEntry | undefined {
-  return materials?.[nextLink.id]
-    || materials?.[nextLink.name]
-    || (previousLink?.name ? materials?.[previousLink.name] : undefined);
+  return (
+    materials?.[nextLink.id] ||
+    materials?.[nextLink.name] ||
+    (previousLink?.name ? materials?.[previousLink.name] : undefined)
+  );
 }
 
 export function syncRobotMaterialsForLinkUpdate(
@@ -37,8 +71,11 @@ export function syncRobotMaterialsForLinkUpdate(
   previousLink?: UrdfLink,
 ): RobotMaterials | undefined {
   const existingEntry = resolveExistingMaterialEntry(materials, nextLink, previousLink);
-  const shouldTrackEntry = getVisualGeometryEntries(nextLink).length > 0
-    || Boolean(existingEntry?.color || existingEntry?.texture || existingEntry?.usdMaterial);
+  const resolvedVisualMaterial = resolveTrackedVisualMaterial(nextLink);
+  const shouldTrackEntry =
+    getVisualGeometryEntries(nextLink).length > 0 ||
+    Boolean(resolvedVisualMaterial?.color || resolvedVisualMaterial?.texture) ||
+    Boolean(existingEntry?.color || existingEntry?.texture || existingEntry?.usdMaterial);
 
   if (!shouldTrackEntry) {
     return materials;
@@ -47,12 +84,26 @@ export function syncRobotMaterialsForLinkUpdate(
   const nextEntry: RobotMaterialEntry = {
     ...(existingEntry || {}),
   };
-  const nextColor = normalizeMaterialValue(nextLink.visual.color);
+  const nextColor = resolvedVisualMaterial?.color;
+  const nextTexture = resolvedVisualMaterial?.texture;
+  const preserveUsdMaterial =
+    materialValuesEqual(existingEntry?.color, nextColor) &&
+    materialValuesEqual(existingEntry?.texture, nextTexture);
 
   if (nextColor) {
     nextEntry.color = nextColor;
   } else {
     delete nextEntry.color;
+  }
+
+  if (nextTexture) {
+    nextEntry.texture = nextTexture;
+  } else {
+    delete nextEntry.texture;
+  }
+
+  if (!preserveUsdMaterial) {
+    delete nextEntry.usdMaterial;
   }
 
   if (!nextEntry.color && !nextEntry.texture && !nextEntry.usdMaterial) {
@@ -76,9 +127,9 @@ export function syncRobotMaterialsForLinkUpdate(
   };
 }
 
-export function syncRobotVisualColorsFromMaterials<T extends Pick<RobotData, 'links' | 'materials'>>(
-  robot: T,
-): T {
+export function syncRobotVisualColorsFromMaterials<
+  T extends Pick<RobotData, 'links' | 'materials'>,
+>(robot: T): T {
   if (!robot.materials || Object.keys(robot.materials).length === 0) {
     return robot;
   }
@@ -87,13 +138,12 @@ export function syncRobotVisualColorsFromMaterials<T extends Pick<RobotData, 'li
   const nextLinks = Object.fromEntries(
     Object.entries(robot.links).map(([linkId, link]) => {
       const materialColor = normalizeMaterialValue(
-        robot.materials?.[link.id]?.color
-        || robot.materials?.[link.name]?.color,
+        robot.materials?.[link.id]?.color || robot.materials?.[link.name]?.color,
       );
       if (
-        !materialColor
-        || link.visual.type === GeometryType.NONE
-        || materialValuesEqual(link.visual.color, materialColor)
+        !materialColor ||
+        link.visual.type === GeometryType.NONE ||
+        materialValuesEqual(link.visual.color, materialColor)
       ) {
         return [linkId, link];
       }

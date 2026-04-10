@@ -9,11 +9,12 @@ export type HeaderMenuKey = 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null
 export interface HeaderViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean;
-  showVisualizerOptionsPanel: boolean;
   showJointPanel: boolean;
 }
 
-export type HeaderOptionsPanelKey = 'showOptionsPanel' | 'showVisualizerOptionsPanel';
+export interface HeaderViewAvailability {
+  jointPanel: boolean;
+}
 
 export type HeaderSetViewConfig = Dispatch<SetStateAction<HeaderViewConfig>>;
 

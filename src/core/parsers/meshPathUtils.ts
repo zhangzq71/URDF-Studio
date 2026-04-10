@@ -136,6 +136,17 @@ const SOURCE_LAYOUT_DIRECTORIES = new Set([
   'models',
 ]);
 
+const IMPORTED_ASSET_DIRECTORY_HINTS = new Set([
+  'materials',
+  'meshes',
+  'textures',
+  'media',
+  'scripts',
+  'dae',
+  'obj',
+  'stl',
+]);
+
 function inferSourcePackageSegment(sourceFilePath?: string | null): string {
   const normalizedSourcePath = normalizeRelativePath(
     String(sourceFilePath || '')
@@ -199,6 +210,9 @@ function isLikelyCanonicalImportedAssetPath(
     return false;
   }
 
+  const assetSegments = normalizedAssetPath.split('/');
+  const secondAssetSegment = assetSegments[1]?.toLowerCase() || '';
+
   const normalizedSourcePath = normalizeRelativePath(
     String(sourceFilePath || '')
       .trim()
@@ -212,7 +226,20 @@ function isLikelyCanonicalImportedAssetPath(
   }
 
   const sourcePackageSegment = inferSourcePackageSegment(sourceFilePath);
-  return Boolean(sourcePackageSegment && firstAssetSegment === sourcePackageSegment);
+  if (sourcePackageSegment && firstAssetSegment === sourcePackageSegment) {
+    return true;
+  }
+
+  if (
+    normalizedSourcePath.toLowerCase().endsWith('.sdf') &&
+    assetSegments.length >= 2 &&
+    !IMPORTED_ASSET_DIRECTORY_HINTS.has(firstAssetSegment.toLowerCase()) &&
+    IMPORTED_ASSET_DIRECTORY_HINTS.has(secondAssetSegment)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function rewriteTexturePathForSource(texturePath: string, sourceFilePath?: string | null): string {

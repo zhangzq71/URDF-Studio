@@ -23,9 +23,11 @@ import { translations } from '@/shared/i18n';
 import {
   isAssetLibraryOnlyFormat,
   isLibraryPreviewableFile,
+  isRobotDefinitionFormat,
   isVisibleLibraryEntry,
   isSupportedArchiveImportFile,
 } from '@/shared/utils/robotFileSupport';
+import { isStandaloneXacroEntry } from '@/core/parsers/importRobotFile';
 import { buildImportedRobotStoreState } from './projectRobotStateUtils';
 import {
   prepareImportPayloadWithWorker,
@@ -94,6 +96,36 @@ function pickPreparedPreferredFile(
     visibleFiles.find((file) => isLibraryPreviewableFile(file)) ??
     null
   );
+}
+
+function canAutoSeedImportedArchiveAssemblyFile(file: RobotFile): boolean {
+  if (!isRobotDefinitionFormat(file.format) || file.format === 'usd') {
+    return false;
+  }
+
+  if (file.format === 'xacro') {
+    return isStandaloneXacroEntry(file);
+  }
+
+  return true;
+}
+
+function collectAutoSeedImportedArchiveAssemblyFiles(
+  files: readonly RobotFile[],
+  preferredFile: RobotFile | null,
+): RobotFile[] {
+  const eligibleFiles = files.filter(canAutoSeedImportedArchiveAssemblyFile);
+  if (eligibleFiles.length <= 1) {
+    return preferredFile && canAutoSeedImportedArchiveAssemblyFile(preferredFile)
+      ? [preferredFile]
+      : [];
+  }
+
+  if (!preferredFile || !canAutoSeedImportedArchiveAssemblyFile(preferredFile)) {
+    return eligibleFiles;
+  }
+
+  return [preferredFile, ...eligibleFiles.filter((file) => file.name !== preferredFile.name)];
 }
 
 function waitForNextPaint(): Promise<void> {
@@ -228,11 +260,13 @@ export function useFileImport(options: UseFileImportOptions = {}) {
       const assemblyStoreState = useAssemblyStore.getState();
       const t = translations[uiState.lang];
       const inputFiles = Array.from(files);
+      const isArchiveImport =
+        inputFiles.length === 1 && isSupportedArchiveImportFile(inputFiles[0]?.name ?? '');
       const importsRobotDefinition = inputFiles.some((file) => isRobotDefinitionFile(file.name));
       const shouldShowPreparationOverlay =
         inputFiles.length > 1 ||
         inputFiles.some((file) => Boolean(file.webkitRelativePath)) ||
-        (inputFiles.length === 1 && isSupportedArchiveImportFile(inputFiles[0].name)) ||
+        isArchiveImport ||
         importsRobotDefinition;
 
       const createdBlobUrls: string[] = [];
@@ -358,8 +392,37 @@ export function useFileImport(options: UseFileImportOptions = {}) {
         const newAssets = createAssetUrls(renamedAssetFiles);
         createdBlobUrls.push(...Object.values(newAssets));
 
+        let hydratedDeferredAssets: Record<string, string> = {};
+        if (renamedDeferredAssetFiles.length > 0) {
+          const sourceArchiveFile =
+            inputFiles.length === 1 && isSupportedArchiveImportFile(inputFiles[0]?.name ?? '')
+              ? inputFiles[0]
+              : null;
+
+          if (!sourceArchiveFile) {
+            throw new Error(
+              `Deferred import assets were prepared without a supported source archive for "${preferredFileName ?? inputFiles[0]?.name ?? 'unknown import'}".`,
+            );
+          }
+
+          const hydratedAssetFiles = await hydrateDeferredImportAssetsWithWorker({
+            archiveFile: sourceArchiveFile,
+            assetFiles: renamedDeferredAssetFiles,
+            onProgress: shouldShowPreparationOverlay
+              ? (progress) => {
+                  setImportPreparationOverlay(
+                    createImportPreparationOverlayStateFromProgress(t, progress),
+                  );
+                }
+              : undefined,
+          });
+          hydratedDeferredAssets = createAssetUrls(hydratedAssetFiles);
+          createdBlobUrls.push(...Object.values(hydratedDeferredAssets));
+        }
+
         const sourceAssets = {
           ...newAssets,
+          ...hydratedDeferredAssets,
           ...usdSourceBlobUrls,
         };
         const mergedAssets = {
@@ -402,35 +465,23 @@ export function useFileImport(options: UseFileImportOptions = {}) {
           assetsState.setAllFileContents(mergedAllFileContents);
         }
 
-        if (
-          renamedDeferredAssetFiles.length > 0 &&
-          inputFiles.length === 1 &&
-          inputFiles[0] &&
-          isSupportedArchiveImportFile(inputFiles[0].name)
-        ) {
-          const sourceArchiveFile = inputFiles[0];
-          void hydrateDeferredImportAssetsWithWorker({
-            archiveFile: sourceArchiveFile,
-            assetFiles: renamedDeferredAssetFiles,
-          })
-            .then((hydratedAssetFiles) => {
-              if (hydratedAssetFiles.length === 0) {
-                return;
-              }
-
-              assetsState.addAssets(createAssetUrls(hydratedAssetFiles));
-            })
-            .catch((error) => {
-              console.error('Deferred asset hydration failed for imported archive bundle:', error);
-            });
-        }
-
         if (visibleImportedFiles.length > 0) {
           const preferredFile = pickPreparedPreferredFile(
             visibleImportedFiles,
             preferredFileName,
             preResolvedImports[0]?.fileName ?? null,
           );
+          const autoSeedAssemblyFiles =
+            isArchiveImport && !hadExistingAvailableFiles
+              ? collectAutoSeedImportedArchiveAssemblyFiles(
+                  renamedRobotFilesWithSources,
+                  preferredFile,
+                )
+              : [];
+          const shouldAutoSeedArchiveAssembly = autoSeedAssemblyFiles.length > 1;
+          const activatedImportedFile = shouldAutoSeedArchiveAssembly
+            ? (autoSeedAssemblyFiles[0] ?? preferredFile)
+            : preferredFile;
           const importedAssetPathsForWarning = collectStandaloneImportSupportAssetPaths(
             mergedAssets,
             mergedFiles,
@@ -478,8 +529,29 @@ export function useFileImport(options: UseFileImportOptions = {}) {
                 !isAssetLibraryOnlyFormat(preferredFile.format) &&
                 (preferredFile.format !== 'usd' || Boolean(preResolvedRobotData));
 
-              if (canSeedAssembly) {
+              if (shouldAutoSeedArchiveAssembly) {
                 assemblyStoreState.initAssembly(robotState.name || 'my_project');
+                autoSeedAssemblyFiles.forEach((seedFile) => {
+                  const seedPreResolvedImportResult =
+                    seedFile.name === preferredFile.name ? preferredPreResolvedImportResult : null;
+                  const seedPreResolvedRobotData =
+                    seedFile.name === preferredFile.name && seedFile.format === 'usd'
+                      ? preResolvedRobotData
+                      : null;
+                  const component = assemblyStoreState.addComponent(seedFile, {
+                    availableFiles: mergedFiles,
+                    assets: mergedAssets,
+                    allFileContents: mergedAllFileContents,
+                    preResolvedImportResult: seedPreResolvedImportResult,
+                    preResolvedRobotData: seedPreResolvedRobotData,
+                    queueAutoGround: false,
+                  });
+                  if (!component) {
+                    throw new Error(`Failed to add imported assembly component: ${seedFile.name}`);
+                  }
+                });
+                markUnsavedChangesBaselineSaved('assembly');
+              } else if (canSeedAssembly) {
                 const component = assemblyStoreState.addComponent(preferredFile, {
                   availableFiles: mergedFiles,
                   assets: mergedAssets,
@@ -496,13 +568,18 @@ export function useFileImport(options: UseFileImportOptions = {}) {
                 markUnsavedChangesBaselineSaved('assembly');
               }
 
-              uiState.setSidebarTab('structure');
+              uiState.setSidebarTab(shouldAutoSeedArchiveAssembly ? 'workspace' : 'structure');
               clearImportPreparationOverlay();
-              prewarmUsdSelectionInBackground(preferredFile, mergedFiles, mergedAssets);
+              prewarmUsdSelectionInBackground(activatedImportedFile, mergedFiles, mergedAssets);
               if (onLoadRobot) {
-                onLoadRobot(preferredFile);
+                onLoadRobot(activatedImportedFile);
               } else {
-                await loadRobot(preferredFile, mergedFiles, mergedAssets, mergedAllFileContents);
+                await loadRobot(
+                  activatedImportedFile,
+                  mergedFiles,
+                  mergedAssets,
+                  mergedAllFileContents,
+                );
               }
             } else if (!hadSelectedFile) {
               uiState.setSidebarTab('structure');

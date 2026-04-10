@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 
 import { createPlaceholderMesh } from '@/core/loaders';
-import { DEFAULT_LINK, GeometryType } from '@/types';
+import { DEFAULT_JOINT, DEFAULT_LINK, GeometryType, JointType } from '@/types';
 import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
 import { parseURDF } from '@/core/parsers/urdf/parser';
 import { buildRuntimeRobotFromState } from './buildRuntimeRobotFromState';
@@ -73,6 +73,100 @@ test('buildRuntimeRobotFromState preserves link and joint hierarchy from parsed 
   assert.equal(joint.limit?.upper, 1);
   assert.equal(joint.limit?.effort, 2);
   assert.equal(joint.limit?.velocity, 3);
+});
+
+test('buildRuntimeRobotFromState preserves authored joint names when runtime ids differ', async () => {
+  const robot = await buildRuntimeRobotFromState({
+    robotName: 'state_robot',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+      },
+      child_link_1743499999999: {
+        ...DEFAULT_LINK,
+        id: 'child_link_1743499999999',
+        name: 'link_1',
+      },
+    },
+    joints: {
+      joint_1743499999999: {
+        ...DEFAULT_JOINT,
+        id: 'joint_1743499999999',
+        name: 'joint_1',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link_1743499999999',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -1, upper: 1, effort: 2, velocity: 3 },
+      },
+    },
+    manager: new THREE.LoadingManager(),
+    loadMeshCb: (_path, _manager, done) => done(null),
+  });
+
+  const joint = robot.joints.joint_1743499999999 as THREE.Object3D & {
+    urdfName?: string;
+    userData: {
+      displayName?: string;
+      jointId?: string;
+    };
+  };
+
+  assert.equal(joint.name, 'joint_1');
+  assert.equal(joint.urdfName, 'joint_1');
+  assert.equal(joint.userData.displayName, 'joint_1');
+  assert.equal(joint.userData.jointId, 'joint_1743499999999');
+});
+
+test('buildRuntimeRobotFromState renders collision boxes as cylinders while keeping box semantics', async () => {
+  const robot = await buildRuntimeRobotFromState({
+    robotName: 'collision_box_display_robot',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+        },
+        collision: {
+          ...DEFAULT_LINK.collision,
+          type: GeometryType.BOX,
+          dimensions: { x: 0.2, y: 0.4, z: 1.2 },
+        },
+      },
+    },
+    joints: {},
+    manager: new THREE.LoadingManager(),
+    loadMeshCb: (_path, _manager, done) => done(null),
+  });
+
+  const baseLink = robot.links.base_link as THREE.Object3D | undefined;
+  assert.ok(baseLink, 'expected base link');
+
+  const collisionGroup = baseLink.children.find((child: any) => child.isURDFCollider) as
+    | THREE.Object3D
+    | undefined;
+  assert.ok(collisionGroup, 'expected collision group');
+  assert.equal(collisionGroup.children.length, 1);
+
+  const collisionMesh = collisionGroup.children[0] as THREE.Mesh;
+  assert.equal(collisionMesh.geometry.type, 'CylinderGeometry');
+  assert.deepEqual(
+    collisionMesh.scale.toArray().map((value) => Number(value.toFixed(4))),
+    [0.1, 1.2, 0.2],
+  );
+  assert.equal(Number(collisionMesh.rotation.x.toFixed(4)), Number((Math.PI / 2).toFixed(4)));
+  assert.equal(Number(collisionMesh.rotation.y.toFixed(4)), 0);
+  assert.equal(Number(collisionMesh.rotation.z.toFixed(4)), 0);
 });
 
 test('buildRuntimeRobotFromState applies mesh scale and visual color overrides on state-built meshes', async () => {
@@ -375,4 +469,51 @@ test('buildRuntimeRobotFromState keeps placeholder meshes for missing visual ass
     placeholderMesh.userData?.missingMeshPath,
     'package://aliengo_description/meshes/hip.dae',
   );
+});
+
+test('buildRuntimeRobotFromState logs when a mesh callback completes without an object', async () => {
+  const robotState = {
+    name: 'missing_visual_mesh_object',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.MESH,
+          meshPath: 'package://aliengo_description/meshes/hip.dae',
+        },
+      },
+    },
+    joints: {},
+  };
+
+  const originalConsoleError = console.error;
+  const loggedErrors: unknown[][] = [];
+  console.error = (...args) => {
+    loggedErrors.push(args);
+  };
+
+  try {
+    await buildRuntimeRobotFromState({
+      robotName: robotState.name,
+      links: robotState.links,
+      joints: robotState.joints,
+      manager: new THREE.LoadingManager(),
+      loadMeshCb: (_path, _manager, done) => {
+        done(undefined, undefined);
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(loggedErrors.length, 1);
+  assert.match(
+    String(loggedErrors[0]?.[0] || ''),
+    /Mesh loader completed without an object for robot state geometry/,
+  );
+  assert.equal(loggedErrors[0]?.[1], 'package://aliengo_description/meshes/hip.dae');
 });

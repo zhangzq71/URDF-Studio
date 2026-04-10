@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { DEFAULT_LINK, type RobotState } from '@/types';
 
-import { resolveUnifiedViewerVisualizerRobot } from './unifiedViewerSceneRobots.ts';
+import { resolveUnifiedViewerEditorRobot } from './unifiedViewerSceneRobots.ts';
 
 function createRobotState(name: string, rootLinkId: string): RobotState {
   return {
@@ -21,12 +21,12 @@ function createRobotState(name: string, rootLinkId: string): RobotState {
   };
 }
 
-test('resolveUnifiedViewerVisualizerRobot keeps the live robot outside assembly workspace mode', () => {
+test('resolveUnifiedViewerEditorRobot keeps the live robot outside assembly workspace mode', () => {
   const robot = createRobotState('merged-assembly', 'merged_root');
   const viewerRobot = createRobotState('workspace-display', '__workspace_world__');
 
   assert.equal(
-    resolveUnifiedViewerVisualizerRobot({
+    resolveUnifiedViewerEditorRobot({
       robot,
       viewerRobot,
       assemblyWorkspaceActive: false,
@@ -35,12 +35,12 @@ test('resolveUnifiedViewerVisualizerRobot keeps the live robot outside assembly 
   );
 });
 
-test('resolveUnifiedViewerVisualizerRobot uses the stable workspace display robot in assembly workspace mode', () => {
+test('resolveUnifiedViewerEditorRobot uses the stable workspace display robot in assembly workspace mode', () => {
   const robot = createRobotState('merged-assembly', 'merged_root');
   const viewerRobot = createRobotState('workspace-display', '__workspace_world__');
 
   assert.equal(
-    resolveUnifiedViewerVisualizerRobot({
+    resolveUnifiedViewerEditorRobot({
       robot,
       viewerRobot,
       assemblyWorkspaceActive: true,

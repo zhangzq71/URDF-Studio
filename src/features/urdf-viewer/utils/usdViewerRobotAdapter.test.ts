@@ -372,6 +372,136 @@ test('keeps authored visual and collision slots grouped when a single USD visual
   assert.equal(result.robotData.materials?.base_link?.color, '#7c8995');
 });
 
+test('preserves multiple authored materials when one USD visual scope emits multiple mesh descriptors', () => {
+  const result = adaptUsdViewerSnapshotToRobotData(
+    {
+      stageSourcePath: '/robots/unitree/go2_multi_material.usd',
+      stage: {
+        defaultPrimPath: '/Robot',
+      },
+      robotTree: {
+        linkParentPairs: [['/Robot/base_link', null]],
+        rootLinkPaths: ['/Robot/base_link'],
+      },
+      robotMetadataSnapshot: {
+        stageSourcePath: '/robots/unitree/go2_multi_material.usd',
+        linkParentPairs: [['/Robot/base_link', null]],
+        jointCatalogEntries: [],
+        meshCountsByLinkPath: {
+          '/Robot/base_link': {
+            visualMeshCount: 2,
+            collisionMeshCount: 0,
+          },
+        },
+      },
+      render: {
+        meshDescriptors: [
+          {
+            meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+            sectionName: 'visuals',
+            resolvedPrimPath: '/Robot/base_link/visuals/visual_0/Scene/body_shell',
+            primType: 'mesh',
+            materialId: '/Looks/Body',
+          },
+          {
+            meshId: '/Robot/base_link/visuals.proto_mesh_id1',
+            sectionName: 'visuals',
+            resolvedPrimPath: '/Robot/base_link/visuals/visual_0/Scene/trim_shell',
+            primType: 'mesh',
+            materialId: '/Looks/Trim',
+          },
+        ],
+        materials: [
+          {
+            materialId: '/Looks/Body',
+            color: [1, 0, 0, 1],
+          },
+          {
+            materialId: '/Looks/Trim',
+            color: [0, 1, 0, 1],
+          },
+        ],
+      },
+    },
+    {
+      fileName: 'go2_multi_material.usd',
+    },
+  );
+
+  assert.ok(result);
+  assert.equal(result.robotData.links.base_link.visual.color, undefined);
+  assert.equal(result.robotData.links.base_link.visual.materialSource, 'named');
+  assert.deepEqual(
+    result.robotData.links.base_link.visual.authoredMaterials?.map((material) => material.color),
+    ['#ff0000', '#00ff00'],
+  );
+  assert.equal(result.robotData.materials?.base_link, undefined);
+});
+
+test('preserves multiple authored materials from USD geom subset sections on a single link', () => {
+  const result = adaptUsdViewerSnapshotToRobotData(
+    {
+      stageSourcePath: '/robots/unitree/go2_subset_materials.usd',
+      stage: {
+        defaultPrimPath: '/Robot',
+      },
+      robotTree: {
+        linkParentPairs: [['/Robot/base_link', null]],
+        rootLinkPaths: ['/Robot/base_link'],
+      },
+      robotMetadataSnapshot: {
+        stageSourcePath: '/robots/unitree/go2_subset_materials.usd',
+        linkParentPairs: [['/Robot/base_link', null]],
+        jointCatalogEntries: [],
+        meshCountsByLinkPath: {
+          '/Robot/base_link': {
+            visualMeshCount: 1,
+            collisionMeshCount: 0,
+          },
+        },
+      },
+      render: {
+        meshDescriptors: [
+          {
+            meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+            sectionName: 'visuals',
+            resolvedPrimPath: '/Robot/base_link/visuals/mesh_0',
+            primType: 'mesh',
+            geometry: {
+              geomSubsetSections: [
+                { start: 0, length: 3, materialId: '/Looks/Body' },
+                { start: 3, length: 3, materialId: '/Looks/Trim' },
+              ],
+            },
+          },
+        ],
+        materials: [
+          {
+            materialId: '/Looks/Body',
+            color: [0.1, 0.2, 0.3, 1],
+          },
+          {
+            materialId: '/Looks/Trim',
+            color: [0.8, 0.8, 0.8, 1],
+          },
+        ],
+      },
+    },
+    {
+      fileName: 'go2_subset_materials.usd',
+    },
+  );
+
+  assert.ok(result);
+  assert.equal(result.robotData.links.base_link.visual.color, undefined);
+  assert.equal(result.robotData.links.base_link.visual.materialSource, 'named');
+  assert.deepEqual(
+    result.robotData.links.base_link.visual.authoredMaterials?.map((material) => material.color),
+    ['#597c95', '#e7e7e7'],
+  );
+  assert.equal(result.robotData.materials?.base_link, undefined);
+});
+
 test('keeps USD mesh descriptors as mesh visuals when no mesh asset path exists', () => {
   const result = adaptUsdViewerSnapshotToRobotData(
     {

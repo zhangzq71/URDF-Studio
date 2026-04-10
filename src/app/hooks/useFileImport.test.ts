@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import JSZip from 'jszip';
 
 import { useFileImport } from './useFileImport.ts';
+import { disposeImportPreparationWorker } from './importPreparationWorkerBridge.ts';
 import { disposeRobotImportWorker } from './robotImportWorkerBridge.ts';
 import { hydrateDeferredImportAssets, prepareImportPayload } from '@/app/utils/importPreparation';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
@@ -197,7 +198,7 @@ function renderHook(options?: Parameters<typeof useFileImport>[0]) {
 
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
 
-function installRobotImportWorkerMock() {
+function installRobotImportWorkerMock(options: { failHydrate?: boolean } = {}) {
   const originalWorker = globalThis.Worker;
   let resolveRequestCount = 0;
   let prepareRequestCount = 0;
@@ -273,6 +274,19 @@ function installRobotImportWorkerMock() {
 
       if (message?.type === 'hydrate-deferred-import-assets') {
         queueMicrotask(async () => {
+          if (options.failHydrate) {
+            this.listeners.get('message')?.forEach((handler) => {
+              handler({
+                data: {
+                  type: 'hydrate-deferred-import-assets-error',
+                  requestId: message.requestId,
+                  error: 'Deferred asset hydration failed',
+                },
+              });
+            });
+            return;
+          }
+
           const assetFiles = await hydrateDeferredImportAssets(
             message.archiveFile,
             message.assetFiles,
@@ -297,7 +311,7 @@ function installRobotImportWorkerMock() {
 
       resolveRequestCount += 1;
       const context = message.contextId ? this.contextSnapshots.get(message.contextId) : undefined;
-      const options = {
+      const resolveOptions = {
         ...context,
         ...message.options,
         availableFiles: message.options?.availableFiles ?? context?.availableFiles,
@@ -306,7 +320,7 @@ function installRobotImportWorkerMock() {
       };
 
       queueMicrotask(() => {
-        const result = resolveRobotFileData(message.file, options);
+        const result = resolveRobotFileData(message.file, resolveOptions);
         this.listeners.get('message')?.forEach((handler) => {
           handler({
             data: {
@@ -336,6 +350,7 @@ function installRobotImportWorkerMock() {
       return prepareRequestCount;
     },
     restore() {
+      disposeImportPreparationWorker();
       disposeRobotImportWorker();
       restoreGlobalProperty('Worker', originalWorker);
     },
@@ -624,7 +639,6 @@ test('useFileImport does not warn when an archive already contains deferred MJCF
       <compiler meshdir="assets" texturedir="assets" />
       <asset>
         <mesh name="body_mesh" file="body.obj" />
-        <texture name="body_orm" type="2d" file="body_orm.png" />
       </asset>
       <worldbody>
         <body name="base_link">
@@ -634,7 +648,7 @@ test('useFileImport does not warn when an archive already contains deferred MJCF
     </mujoco>`,
   );
   zip.file('demo/assets/body.obj', 'o Mesh');
-  zip.file('demo/assets/body_orm.png', new Uint8Array([137, 80, 78, 71]));
+  zip.file('demo/assets/unused.png', new Uint8Array([137, 80, 78, 71]));
 
   const importedFile = new File([await zip.generateAsync({ type: 'uint8array' })], 'bundle.zip', {
     type: 'application/zip',
@@ -673,6 +687,67 @@ test('useFileImport does not warn when an archive already contains deferred MJCF
   }
 });
 
+test('useFileImport fails the archive import when deferred asset hydration fails', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const workerMock = installRobotImportWorkerMock({ failHydrate: true });
+
+  let alertMessage = '';
+  Object.defineProperty(globalThis, 'alert', {
+    configurable: true,
+    writable: true,
+    value: (message?: unknown) => {
+      alertMessage = String(message ?? '');
+    },
+  });
+
+  const zip = new JSZip();
+  zip.file(
+    'demo/demo.xml',
+    `<mujoco model="demo_bundle">
+      <compiler meshdir="assets" texturedir="assets" />
+      <asset>
+        <mesh name="body_mesh" file="body.obj" />
+        <texture name="body_orm" type="2d" file="body_orm.png" />
+      </asset>
+      <worldbody>
+        <body name="base_link">
+          <geom type="mesh" mesh="body_mesh" />
+        </body>
+      </worldbody>
+    </mujoco>`,
+  );
+  zip.file('demo/assets/body.obj', 'o Mesh');
+  zip.file('demo/assets/body_orm.png', new Uint8Array([137, 80, 78, 71]));
+
+  const importedFile = new File([await zip.generateAsync({ type: 'uint8array' })], 'bundle.zip', {
+    type: 'application/zip',
+  });
+
+  const loadCalls: RobotFile[] = [];
+  const rendered = renderHook({
+    onLoadRobot: (file) => {
+      loadCalls.push(file);
+    },
+  });
+
+  try {
+    const result = await rendered.hook.handleImport([importedFile] as unknown as FileList);
+
+    assert.equal(result.status, 'failed');
+    assert.equal(loadCalls.length, 0);
+    assert.equal(useAssetsStore.getState().availableFiles.length, 0);
+    assert.equal(Object.keys(useAssetsStore.getState().assets).length, 0);
+    assert.match(alertMessage, /Deferred asset hydration failed/i);
+  } finally {
+    rendered.cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    workerMock.restore();
+    domEnvironment.restore();
+    resetStoresToBaseline();
+  }
+});
+
 test('useFileImport imports supported zip archives into the asset library without alerting', async () => {
   resetStoresToBaseline();
   const domEnvironment = installDomEnvironment();
@@ -701,9 +776,46 @@ test('useFileImport imports supported zip archives into the asset library withou
     assert.ok(
       useAssetsStore
         .getState()
-        .availableFiles.some(
-          (file) => file.name.endsWith('/world.xml') || file.name.endsWith('/xuebao.xml'),
-        ),
+        .availableFiles.some((file) => file.name.endsWith('/xuebao_unified.xml')),
+    );
+  } finally {
+    rendered.cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    workerMock.restore();
+    domEnvironment.restore();
+    resetStoresToBaseline();
+  }
+});
+
+test('useFileImport seeds a multi-component workspace from the first imported archive', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const workerMock = installRobotImportWorkerMock();
+
+  const zip = new JSZip();
+  zip.file('demo_bundle/base/base.urdf', '<robot name="base"><link name="base_link" /></robot>');
+  zip.file('demo_bundle/tool/tool.urdf', '<robot name="tool"><link name="tool_link" /></robot>');
+
+  const importedFile = new File(
+    [await zip.generateAsync({ type: 'uint8array' })],
+    'demo_bundle.zip',
+    { type: 'application/zip' },
+  );
+
+  const rendered = renderHook();
+
+  try {
+    const result = await rendered.hook.handleImport([importedFile] as unknown as FileList);
+    const assemblyState = useAssemblyStore.getState().assemblyState;
+    const assemblySourceFiles = Object.values(assemblyState?.components ?? {}).map(
+      (component) => component.sourceFile,
+    );
+
+    assert.equal(result.status, 'completed');
+    assert.equal(useUIStore.getState().sidebarTab, 'workspace');
+    assert.deepEqual(
+      assemblySourceFiles.sort((left, right) => left.localeCompare(right)),
+      ['demo_bundle/base/base.urdf', 'demo_bundle/tool/tool.urdf'],
     );
   } finally {
     rendered.cleanup();

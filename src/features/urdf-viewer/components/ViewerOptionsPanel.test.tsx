@@ -88,10 +88,6 @@ async function renderPanel(
         setShowVisual: () => {},
         showCollision: false,
         setShowCollision: () => {},
-        showIkHandles: false,
-        setShowIkHandles: () => {},
-        showIkHandlesAlwaysOnTop: true,
-        setShowIkHandlesAlwaysOnTop: () => {},
         showCollisionAlwaysOnTop: false,
         setShowCollisionAlwaysOnTop: () => {},
         modelOpacity: 0.5,
@@ -242,28 +238,12 @@ test('ViewerOptionsPanel only shows the MJCF site toggle when the source is MJCF
   dom.window.close();
 });
 
-test('ViewerOptionsPanel exposes the IK always-on-top toggle when IK handles are visible', async () => {
+test('ViewerOptionsPanel no longer renders the IK row', async () => {
   const { dom, container, root } = createComponentRoot();
-  let nextAlwaysOnTopValue: boolean | null = null;
 
-  await renderPanel(root, false, {
-    showIkHandles: true,
-    showIkHandlesAlwaysOnTop: false,
-    setShowIkHandlesAlwaysOnTop: (nextValue) => {
-      nextAlwaysOnTopValue = nextValue;
-    },
-  });
+  await renderPanel(root, false);
 
-  const alwaysOnTopButton = container.querySelector<HTMLButtonElement>(
-    'button[title="Always on top"]',
-  );
-  assert.ok(alwaysOnTopButton, 'IK row should render an always-on-top button');
-
-  await act(async () => {
-    alwaysOnTopButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-  });
-
-  assert.equal(nextAlwaysOnTopValue, true);
+  assert.equal(container.textContent?.includes('Show IK Handles'), false);
 
   await act(async () => {
     root.unmount();

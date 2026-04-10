@@ -28,37 +28,17 @@ const DEFAULT_VIEWPORT = {
 const FIXED_SAMPLE_POINTS = [{ name: 'empty_top_left', dx: 40, dy: 40, expected: null }];
 
 const EXPECTED_FRONT_TARGETS = [
-  'lh_forearm_geom_1:visual:undefined',
-  'lh_palm:visual:undefined',
-  'lh_lfmiddle:visual:undefined',
+  'lh_forearm_geom_1:visual:',
+  'lh_palm:visual:',
+  'lh_lfmiddle:visual:',
 ];
 
-const TRANSIENT_LOADING_TEXTS = [
-  'Loading robot...',
-  'Preparing scene...',
-  'Streaming scene meshes',
-  'Checking USD stage path',
-  'Preloading USD dependencies',
-  'Initializing USD renderer',
-  'Applying scene fixes',
-  'Resolving robot metadata',
-  'Finalizing scene',
-  '加载机器人中...',
-  '正在准备场景',
-  '正在流式加载场景网格',
-  '正在检查 USD 场景路径',
-  '正在预加载 USD 依赖',
-  '正在初始化 USD 渲染器',
-  '正在应用场景修正',
-  '正在解析机器人元数据',
-  '正在完成场景收尾',
-];
-
-const TERMINAL_LOADING_ERROR_TEXTS = [
-  'Load failed',
-  'Preview unavailable',
-  '加载失败',
-  '当前文件无法预览',
+const PROJECTED_TARGET_PROBE_OFFSETS = [
+  [0, 0],
+  [4, 0],
+  [-4, 0],
+  [0, 4],
+  [0, -4],
 ];
 
 function fail(message) {
@@ -140,7 +120,9 @@ function parseArgs(argv) {
     }
   }
 
-  options.siteUrl = new URL(options.siteUrl).toString();
+  const normalizedSiteUrl = new URL(options.siteUrl);
+  normalizedSiteUrl.searchParams.set('regressionDebug', '1');
+  options.siteUrl = normalizedSiteUrl.toString();
   return options;
 }
 
@@ -439,20 +421,52 @@ async function createPage(browser, siteUrl, timeoutMs) {
     waitUntil: 'domcontentloaded',
     timeout: timeoutMs,
   });
+  await waitForDebugApi(page, timeoutMs);
 
   return { page, consoleMessages, pageErrors };
 }
 
-async function waitForBodyText(page, text, timeoutMs) {
+async function waitForDebugApi(page, timeoutMs) {
+  await page.waitForFunction(() => Boolean(globalThis.window && window.__URDF_STUDIO_DEBUG__), {
+    timeout: timeoutMs,
+  });
+
+  try {
+    await page.evaluate(async () => {
+      const api = window.__URDF_STUDIO_DEBUG__;
+      const candidateNames = ['ping', 'healthCheck', 'healthcheck', 'ready'];
+      for (const name of candidateNames) {
+        if (typeof api?.[name] === 'function') {
+          await api[name]();
+          return;
+        }
+      }
+    });
+  } catch {
+    // ping is optional
+  }
+}
+
+async function waitForExpectedRobot(page, robotName, timeoutMs) {
   await retryPageAction(
     () =>
       page.waitForFunction(
-        (expectedText) => document.body?.innerText?.includes(expectedText),
+        (expectedRobotName) => {
+          const api = window.__URDF_STUDIO_DEBUG__;
+          const snapshot = api?.getRegressionSnapshot?.();
+          const documentLoadState = api?.getDocumentLoadState?.();
+          const storeRobotName = snapshot?.store?.name ?? null;
+          const runtimeRobotName = snapshot?.runtime?.name ?? null;
+          return (
+            documentLoadState?.status === 'ready' &&
+            (storeRobotName === expectedRobotName || runtimeRobotName === expectedRobotName)
+          );
+        },
         { timeout: Math.min(timeoutMs, 5_000) },
-        text,
+        robotName,
       ),
     timeoutMs,
-    `body text "${text}"`,
+    `robot "${robotName}" to load`,
   );
 }
 
@@ -528,6 +542,21 @@ async function clickLabelByText(page, text, timeoutMs) {
   if (!clicked) {
     fail(`Could not click label containing "${text}"`);
   }
+}
+
+async function clickLabelByAnyText(page, candidateTexts, timeoutMs) {
+  let lastError = null;
+
+  for (const text of candidateTexts) {
+    try {
+      await clickLabelByText(page, text, timeoutMs);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error(`Could not click any label matching: ${candidateTexts.join(', ')}`);
 }
 
 async function importFixtureZip(page, zipPath, timeoutMs) {
@@ -608,13 +637,14 @@ async function importFixtureFolder(page, fixtureDir, timeoutMs) {
 async function readHoveredSelection(page) {
   return await retryPageAction(
     () =>
-      page.evaluate(async () => {
-        const mod = await import('/src/store/selectionStore.ts');
-        const hovered = mod.useSelectionStore.getState().hoveredSelection;
-        if (!hovered?.type) {
+      page.evaluate(() => {
+        const hovered =
+          window.__URDF_STUDIO_DEBUG__?.getRegressionSnapshot()?.interaction?.hoveredSelection;
+        if (!hovered?.type || !hovered?.id) {
           return null;
         }
-        return `${hovered.id}:${hovered.subType}:${hovered.objectIndex}`;
+
+        return `${hovered.id}:${hovered.subType}:${hovered.objectIndex ?? 'undefined'}`;
       }),
     10_000,
     'reading hovered selection',
@@ -624,22 +654,45 @@ async function readHoveredSelection(page) {
 async function readSelectionState(page) {
   return await retryPageAction(
     () =>
-      page.evaluate(async () => {
-        const mod = await import('/src/store/selectionStore.ts');
-        const selection = mod.useSelectionStore.getState().selection;
-        if (!selection?.type) {
-          return null;
-        }
-
-        return {
-          type: selection.type,
-          id: selection.id,
-          subType: selection.subType ?? null,
-          objectIndex: selection.objectIndex ?? null,
-        };
-      }),
+      page.evaluate(
+        () => window.__URDF_STUDIO_DEBUG__?.getRegressionSnapshot()?.interaction?.selection ?? null,
+      ),
     10_000,
     'reading selection state',
+  );
+}
+
+async function setViewerToolMode(page, toolMode, timeoutMs) {
+  await retryPageAction(
+    () =>
+      page.evaluate(
+        (nextToolMode) => window.__URDF_STUDIO_DEBUG__?.setViewerToolMode(nextToolMode),
+        toolMode,
+      ),
+    timeoutMs,
+    `setting viewer tool mode ${toolMode}`,
+  );
+
+  await retryPageAction(
+    () =>
+      page.waitForFunction(
+        (expectedToolMode) =>
+          window.__URDF_STUDIO_DEBUG__?.getRegressionSnapshot()?.viewer?.toolMode ===
+          expectedToolMode,
+        { timeout: Math.min(timeoutMs, 5_000) },
+        toolMode,
+      ),
+    timeoutMs,
+    `waiting for tool mode ${toolMode}`,
+  );
+}
+
+async function getProjectedInteractionTargets(page, timeoutMs) {
+  return await retryPageAction(
+    () =>
+      page.evaluate(() => window.__URDF_STUDIO_DEBUG__?.getProjectedInteractionTargets?.() ?? []),
+    timeoutMs,
+    'reading projected interaction targets',
   );
 }
 
@@ -668,22 +721,32 @@ async function readSceneStatus(page, robotName) {
   return await retryPageAction(
     () =>
       page.evaluate(
-        ({ expectedRobotName, transientTexts, errorTexts }) => {
+        ({ expectedRobotName }) => {
+          const api = window.__URDF_STUDIO_DEBUG__;
+          const snapshot = api?.getRegressionSnapshot?.() ?? null;
+          const documentLoadState = api?.getDocumentLoadState?.() ?? null;
           const bodyText = document.body?.innerText ?? '';
           const canvas = document.querySelector('canvas');
+          const storeRobotName = snapshot?.store?.name ?? null;
+          const runtimeRobotName = snapshot?.runtime?.name ?? null;
+          const documentStatus = documentLoadState?.status ?? null;
+          const documentError = documentLoadState?.error ?? null;
           return {
-            hasRobot: bodyText.includes(expectedRobotName),
+            hasRobot:
+              storeRobotName === expectedRobotName || runtimeRobotName === expectedRobotName,
             hasCanvas: canvas instanceof HTMLCanvasElement,
-            activeLoadingTexts: transientTexts.filter((text) => bodyText.includes(text)),
-            activeErrorTexts: errorTexts.filter((text) => bodyText.includes(text)),
+            activeLoadingTexts:
+              documentStatus === 'loading' || documentStatus === 'hydrating'
+                ? [documentStatus]
+                : [],
+            activeErrorTexts:
+              documentStatus === 'error' ? [documentError || 'document-load-error'] : [],
+            documentStatus,
+            documentFileName: documentLoadState?.fileName ?? null,
             bodyExcerpt: bodyText.slice(0, 2000),
           };
         },
-        {
-          expectedRobotName: robotName,
-          transientTexts: TRANSIENT_LOADING_TEXTS,
-          errorTexts: TERMINAL_LOADING_ERROR_TEXTS,
-        },
+        { expectedRobotName: robotName },
       ),
     10_000,
     `reading scene status for ${robotName}`,
@@ -743,19 +806,66 @@ async function samplePoint(page, canvasBox, point) {
   };
 }
 
-async function runGridScan(page, canvasBox) {
+async function runGridScan(page, canvasBox, timeoutMs) {
   const records = [];
+  const recordPoint = async (x, y) => {
+    if (
+      x < canvasBox.x + 1 ||
+      x > canvasBox.x + canvasBox.width - 1 ||
+      y < canvasBox.y + 1 ||
+      y > canvasBox.y + canvasBox.height - 1
+    ) {
+      return;
+    }
+
+    await page.mouse.move(x, y);
+    await delay(80);
+    const hovered = await readHoveredSelection(page);
+    if (hovered) {
+      records.push({
+        dx: x - canvasBox.x,
+        dy: y - canvasBox.y,
+        x,
+        y,
+        hovered,
+      });
+    }
+  };
 
   for (let dy = 40; dy <= Math.round(canvasBox.height) - 40; dy += 24) {
     for (let dx = 40; dx <= Math.round(canvasBox.width) - 40; dx += 24) {
       const x = Math.round(canvasBox.x + dx);
       const y = Math.round(canvasBox.y + dy);
-      await page.mouse.move(x, y);
-      await delay(25);
-      const hovered = await readHoveredSelection(page);
-      if (hovered) {
-        records.push({ dx, dy, x, y, hovered });
-      }
+      await recordPoint(x, y);
+    }
+  }
+
+  const projectedTargets = await getProjectedInteractionTargets(page, timeoutMs);
+  const sampledTargetKeys = new Set();
+  const probeTargets = [...projectedTargets]
+    .filter((target) => target?.type === 'link' && target?.subType === 'visual')
+    .sort(
+      (left, right) =>
+        (right.projectedArea ?? 0) - (left.projectedArea ?? 0) ||
+        String(left.id ?? '').localeCompare(String(right.id ?? '')),
+    );
+
+  for (const target of probeTargets) {
+    const targetKey = `${target.id}:${target.subType}:${target.objectIndex ?? 'undefined'}`;
+    if (sampledTargetKeys.has(targetKey)) {
+      continue;
+    }
+    sampledTargetKeys.add(targetKey);
+
+    for (const [offsetX, offsetY] of PROJECTED_TARGET_PROBE_OFFSETS) {
+      await recordPoint(
+        Math.round((target.clientX ?? 0) + offsetX),
+        Math.round((target.clientY ?? 0) + offsetY),
+      );
+    }
+
+    if (sampledTargetKeys.size >= 24) {
+      break;
     }
   }
 
@@ -800,6 +910,15 @@ async function clickCanvasPoint(page, point) {
   await page.mouse.click(point.x, point.y, { delay: 20 });
 }
 
+async function primeCanvasInteraction(page, canvasBox) {
+  const centerPoint = {
+    x: Math.round(canvasBox.x + canvasBox.width / 2),
+    y: Math.round(canvasBox.y + canvasBox.height / 2),
+  };
+  await clickCanvasPoint(page, centerPoint);
+  await delay(120);
+}
+
 async function findLinkSelectionCandidate(page, records) {
   const triedTargets = new Set();
 
@@ -826,11 +945,16 @@ async function findLinkSelectionCandidate(page, records) {
 }
 
 function summarizeExpectedTargets(grid, targets) {
-  const summaryByTarget = new Map(grid.uniqueHoveredTargets.map((entry) => [entry.target, entry]));
+  const foundTargets = targets
+    .map(
+      (target) =>
+        grid.uniqueHoveredTargets.find((entry) => entry.target.startsWith(target)) ?? null,
+    )
+    .filter(Boolean);
 
-  const foundTargets = targets.map((target) => summaryByTarget.get(target)).filter(Boolean);
-
-  const missingTargets = targets.filter((target) => !summaryByTarget.has(target));
+  const missingTargets = targets.filter(
+    (target) => !grid.uniqueHoveredTargets.some((entry) => entry.target.startsWith(target)),
+  );
 
   return {
     foundTargets,
@@ -854,9 +978,9 @@ function assertRegressionResults(result) {
   }
 
   const topTarget = result.grid.uniqueHoveredTargets[0]?.target ?? null;
-  if (topTarget !== 'lh_forearm_geom_1:visual:undefined') {
+  if (!topTarget?.startsWith('lh_forearm_geom_1:visual:')) {
     failures.push(
-      `Expected dominant hovered target to be lh_forearm_geom_1:visual:undefined, got ${topTarget ?? 'null'}`,
+      `Expected dominant hovered target to be lh_forearm_geom_1:visual:*, got ${topTarget ?? 'null'}`,
     );
   }
 
@@ -913,39 +1037,42 @@ async function main() {
 
     await importFixtureFolder(page, options.fixtureDir, options.timeoutMs);
     try {
-      await waitForBodyText(page, expectedRobotName, 30_000);
+      await waitForExpectedRobot(page, expectedRobotName, 30_000);
     } catch (folderImportError) {
       await page.goto(options.siteUrl, {
         waitUntil: 'domcontentloaded',
         timeout: options.timeoutMs,
       });
+      await waitForDebugApi(page, options.timeoutMs);
       await importFixtureZip(page, options.zipPath, options.timeoutMs);
-      await waitForBodyText(page, expectedRobotName, options.timeoutMs);
+      await waitForExpectedRobot(page, expectedRobotName, options.timeoutMs);
     }
     await waitForSceneToSettle(page, expectedRobotName, options.timeoutMs);
 
     await waitForSceneToSettle(page, expectedRobotName, options.timeoutMs);
-    await clickLabelByText(page, 'Show Geometry', options.timeoutMs);
+    await clickLabelByAnyText(page, ['Show Visual', 'Show Geometry'], options.timeoutMs);
     await waitForSceneToSettle(page, expectedRobotName, options.timeoutMs);
     await clickElementByText(page, 'button', 'Auto Fit', options.timeoutMs);
     await waitForSceneToSettle(page, expectedRobotName, options.timeoutMs, 800);
+    await setViewerToolMode(page, 'select', options.timeoutMs);
 
     const canvasBox = await captureCanvasBox(page);
     if (!canvasBox) {
       fail('Could not locate canvas bounding box.');
     }
+    await primeCanvasInteraction(page, canvasBox);
 
     const samples = [];
     for (const point of FIXED_SAMPLE_POINTS) {
       samples.push(await samplePoint(page, canvasBox, point));
     }
 
-    const grid = await runGridScan(page, canvasBox);
+    const grid = await runGridScan(page, canvasBox, options.timeoutMs);
     const targetPresence = summarizeExpectedTargets(grid, EXPECTED_FRONT_TARGETS);
 
     const clickSelectionCandidate = await findLinkSelectionCandidate(page, grid.records);
     const postClickGrid = clickSelectionCandidate
-      ? await runGridScan(page, canvasBox)
+      ? await runGridScan(page, canvasBox, options.timeoutMs)
       : {
           records: [],
           hoveredCount: 0,

@@ -18,6 +18,10 @@ import {
 export type HandoffOfferMessage = PopupHandoffOfferMessage;
 export type HandoffPayloadMessage = PopupHandoffPayloadMessage;
 export type HandoffRejectCode = PopupHandoffRejectCode;
+type PopupHandoffPayloadValidationError = Extract<
+  ReturnType<typeof validatePopupHandoffPayload>,
+  { ok: false }
+>;
 
 export function createReadyMessage(): PopupHandoffReadyMessage {
   return {
@@ -79,29 +83,16 @@ export function isHandoffPayloadMessage(value: unknown): value is HandoffPayload
 }
 
 export function validateHandoffOffer(message: HandoffOfferMessage): string | null {
-  const validation = validatePopupHandoffPayload({
-    fileName: message.fileName,
-    mimeType: message.mimeType,
-    sizeBytes: message.sizeBytes,
-  });
-  if (validation.ok) {
-    return null;
-  }
-  return validation.message;
+  return validatePopupHandoffPayloadMessage(message);
 }
 
 export function validateHandoffPayload(
   message: HandoffPayloadMessage,
   expectedOffer: HandoffOfferMessage,
 ): string | null {
-  const validation = validatePopupHandoffPayload({
-    fileName: message.fileName,
-    mimeType: message.mimeType,
-    sizeBytes: message.sizeBytes,
-  });
-
-  if (validation.ok === false) {
-    return validation.message;
+  const payloadValidationError = validatePopupHandoffPayloadMessage(message);
+  if (payloadValidationError) {
+    return payloadValidationError;
   }
 
   if (
@@ -110,6 +101,17 @@ export function validateHandoffPayload(
     message.sizeBytes !== expectedOffer.sizeBytes
   ) {
     return 'The sender payload did not match the accepted offer.';
+  }
+
+  return null;
+}
+
+function validatePopupHandoffPayloadMessage(
+  message: Pick<HandoffOfferMessage, 'fileName' | 'mimeType' | 'sizeBytes'>,
+): string | null {
+  const validationResult = validatePopupHandoffPayload(message);
+  if (validationResult.ok === false) {
+    return validationResult.message;
   }
 
   return null;

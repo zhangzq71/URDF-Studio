@@ -22,6 +22,7 @@ test('joint panel store patches angles and active joint independently', () => {
   const snapshot = store.getSnapshot();
   assert.deepEqual(snapshot.jointAngles, { shoulder_joint: 0.5 });
   assert.equal(snapshot.activeJoint, 'shoulder_joint');
+  assert.equal(snapshot.activeJointAutoScroll, true);
   assert.equal(notifications, 2);
 
   unsubscribe();
@@ -44,4 +45,22 @@ test('joint panel store reset replaces previous snapshot', () => {
   const snapshot = store.getSnapshot();
   assert.deepEqual(snapshot.jointAngles, { wrist_joint: -0.3 });
   assert.equal(snapshot.activeJoint, null);
+  assert.equal(snapshot.activeJointAutoScroll, false);
+});
+
+test('joint panel store preserves explicit auto-scroll suppression for same active joint', () => {
+  const store = createJointPanelStore();
+
+  assert.equal(store.setActiveJoint('shoulder_joint', { autoScroll: false }), true);
+  assert.equal(store.setActiveJoint('shoulder_joint'), false);
+
+  let snapshot = store.getSnapshot();
+  assert.equal(snapshot.activeJoint, 'shoulder_joint');
+  assert.equal(snapshot.activeJointAutoScroll, false);
+
+  assert.equal(store.setActiveJoint('elbow_joint'), true);
+
+  snapshot = store.getSnapshot();
+  assert.equal(snapshot.activeJoint, 'elbow_joint');
+  assert.equal(snapshot.activeJointAutoScroll, true);
 });

@@ -4,7 +4,7 @@ import {
   inferUsdBundleVirtualDirectory,
   isUsdPathWithinBundleDirectory,
   toVirtualUsdPath,
-} from '@/features/urdf-viewer';
+} from '@/features/editor';
 
 interface UsdRoundtripStageExport {
   content: string;
@@ -26,7 +26,10 @@ export interface UsdRoundtripArchive {
 }
 
 function normalizePathKey(path: string): string {
-  return String(path || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+  return String(path || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '');
 }
 
 function getDirectoryPath(path: string): string {
@@ -88,17 +91,19 @@ function getArchiveRootDirectory(bundleDirectory: string): string {
   return segments[segments.length - 1] || '';
 }
 
-function toArchiveRelativePath(virtualPath: string, bundleDirectory: string, archiveRoot: string): string {
+function toArchiveRelativePath(
+  virtualPath: string,
+  bundleDirectory: string,
+  archiveRoot: string,
+): string {
   const normalizedVirtualPath = normalizePathKey(virtualPath);
   const normalizedBundleDirectory = normalizePathKey(bundleDirectory).replace(/\/+$/, '');
-  const relativePath = normalizedBundleDirectory
-    && normalizedVirtualPath.startsWith(`${normalizedBundleDirectory}/`)
-    ? normalizedVirtualPath.slice(normalizedBundleDirectory.length + 1)
-    : normalizedVirtualPath;
+  const relativePath =
+    normalizedBundleDirectory && normalizedVirtualPath.startsWith(`${normalizedBundleDirectory}/`)
+      ? normalizedVirtualPath.slice(normalizedBundleDirectory.length + 1)
+      : normalizedVirtualPath;
 
-  return archiveRoot
-    ? `${archiveRoot}/${relativePath}`
-    : relativePath;
+  return archiveRoot ? `${archiveRoot}/${relativePath}` : relativePath;
 }
 
 export async function buildUsdRoundtripArchive({
@@ -122,7 +127,12 @@ export async function buildUsdRoundtripArchive({
     }
 
     const normalizedPath = normalizePathKey(virtualPath);
-    if (!normalizedPath || normalizedPath === sourceRootPath || normalizedPath === outputRootPath || addedPaths.has(normalizedPath)) {
+    if (
+      !normalizedPath ||
+      normalizedPath === sourceRootPath ||
+      normalizedPath === outputRootPath ||
+      addedPaths.has(normalizedPath)
+    ) {
       return;
     }
 
@@ -134,10 +144,7 @@ export async function buildUsdRoundtripArchive({
   };
 
   for (const file of availableFiles) {
-    await addArchiveBlob(
-      file.name,
-      createUsdPreloadSource(file, assets).loadBlob,
-    );
+    await addArchiveBlob(file.name, createUsdPreloadSource(file, assets).loadBlob);
   }
 
   for (const [path, content] of Object.entries(allFileContents)) {
@@ -148,16 +155,13 @@ export async function buildUsdRoundtripArchive({
   }
 
   for (const [path, blobUrl] of Object.entries(assets)) {
-    await addArchiveBlob(
-      path,
-      async () => {
-        const response = await fetch(blobUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch USD bundle asset: ${path}`);
-        }
-        return response.blob();
-      },
-    );
+    await addArchiveBlob(path, async () => {
+      const response = await fetch(blobUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch USD bundle asset: ${path}`);
+      }
+      return response.blob();
+    });
   }
 
   archiveFiles.set(

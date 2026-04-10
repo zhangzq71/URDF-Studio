@@ -30,10 +30,10 @@ import {
   PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
   PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS,
   PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS,
+  PropertyEditorSelect,
   ReadonlyValueField,
   PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
   PROPERTY_EDITOR_SECTION_TITLE_CLASS,
-  PROPERTY_EDITOR_SELECT_CLASS,
 } from './FormControls';
 
 import { MeshPreview } from './MeshPreview';
@@ -282,6 +282,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textureFileInputRef = useRef<HTMLInputElement>(null);
   const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
+  const [previewTexturePath, setPreviewTexturePath] = useState<string | null>(null);
   const geometryActionRowRef = useRef<HTMLDivElement>(null);
   const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
   const meshAnalysisKeyRef = useRef<string | null>(null);
@@ -349,6 +350,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           ? t.materialSourceGazebo
           : null;
   const currentGeometryType = geomData.type || GeometryType.CYLINDER;
+  const geometryNameValue = geomData.name?.trim() ?? '';
   const geometryTypeOptions =
     EDITABLE_GEOMETRY_TYPES.includes(currentGeometryType) ||
     currentGeometryType === GeometryType.NONE
@@ -460,7 +462,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       : null;
   const effectiveTexturePath =
     category === 'visual' ? resolvedVisualMaterial?.texture?.trim() || '' : '';
+  const displayedTexturePath = previewTexturePath || effectiveTexturePath;
+  const displayedTextureAssetUrl = displayedTexturePath ? assets[displayedTexturePath] : null;
   const isTextureReadonly = category === 'visual' && !canEditGeometryBaseTexture(geomData);
+  const effectiveColorValue =
+    category === 'visual'
+      ? resolvedVisualMaterial?.color?.trim() || geomData.color || '#ffffff'
+      : geomData.color || '#ffffff';
   const describeMeshPath = (filePath: string) => {
     const normalizedPath = filePath.replace(/\\/g, '/');
     const pathSegments = normalizedPath.split('/');
@@ -587,6 +595,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   }, [geomData, snapshotKey]);
 
   useEffect(() => {
+    setPreviewTexturePath(null);
+  }, [category, data.id, selectedVisualObjectIndex]);
+
+  useEffect(() => {
     if (geomData.type !== GeometryType.MESH || !geomData.meshPath) {
       return;
     }
@@ -708,7 +720,53 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       return;
     }
 
+    if (resolvedVisualMaterial?.source === 'legacy-link' && isPrimaryVisualSelection) {
+      const nextTexture = String(texturePath || '').trim() || undefined;
+      const nextColor = resolvedVisualMaterial.color?.trim() || undefined;
+      const nextAuthoredMaterials =
+        nextColor || nextTexture
+          ? [
+              {
+                ...(nextColor ? { color: nextColor } : {}),
+                ...(nextTexture ? { texture: nextTexture } : {}),
+              },
+            ]
+          : undefined;
+
+      if (selectedVisualGeometry) {
+        onUpdate(
+          updateVisualGeometryByObjectIndex(data, selectedVisualObjectIndex, {
+            authoredMaterials: nextAuthoredMaterials,
+          }),
+        );
+        return;
+      }
+
+      onUpdate({
+        ...data,
+        visual: {
+          ...data.visual,
+          authoredMaterials: nextAuthoredMaterials,
+        },
+      });
+      return;
+    }
+
     onUpdate(updateVisualBaseTextureByObjectIndex(data, selectedVisualObjectIndex, texturePath));
+  };
+
+  const handleApplyTexture = () => {
+    if (!previewTexturePath) {
+      return;
+    }
+
+    if (previewTexturePath === effectiveTexturePath) {
+      setPreviewTexturePath(null);
+      return;
+    }
+
+    applyVisualTexture(previewTexturePath);
+    setPreviewTexturePath(null);
   };
 
   const handleTextureFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -718,7 +776,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     }
 
     onUploadAsset(file);
-    applyVisualTexture(file.name);
+    setPreviewTexturePath(file.name);
     e.target.value = '';
   };
 
@@ -738,7 +796,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   };
 
   const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newType = e.target.value as GeometryType;
+    const newType = e.currentTarget.value as GeometryType;
     const currentType = geomData.type || GeometryType.CYLINDER;
     if (newType === currentType) return;
 
@@ -885,12 +943,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
       <InlineInputGroup label={t.type} labelWidthClassName="w-11">
         <div ref={geometryActionRowRef} className="flex items-center gap-1">
-          <select
+          <PropertyEditorSelect
             value={currentGeometryType}
-            onChange={handleTypeChange}
-            className={`${PROPERTY_EDITOR_SELECT_CLASS} min-w-0 flex-1`}
-          >
-            {geometryTypeOptions.map((typeOption) => {
+            aria-label={t.type}
+            options={geometryTypeOptions.map((typeOption) => {
               const label =
                 typeOption === GeometryType.BOX
                   ? t.box
@@ -912,13 +968,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                   ? t.mesh
                                   : t.none;
 
-              return (
-                <option key={typeOption} value={typeOption}>
-                  {label}
-                </option>
-              );
+              return {
+                value: typeOption,
+                label,
+              };
             })}
-          </select>
+            onChange={handleTypeChange}
+            className="min-w-0 flex-1"
+          />
           {geomData.type !== GeometryType.NONE && (
             <button
               type="button"
@@ -950,6 +1007,21 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           )}
         </div>
       </InlineInputGroup>
+
+      {category === 'collision' && geomData.type !== GeometryType.NONE && (
+        <InlineInputGroup label={t.name} labelWidthClassName="w-11">
+          <input
+            type="text"
+            value={geometryNameValue}
+            onChange={(e) => {
+              const nextName = e.target.value.trim();
+              update({ name: nextName || undefined });
+            }}
+            className={PROPERTY_EDITOR_INPUT_CLASS}
+            spellCheck={false}
+          />
+        </InlineInputGroup>
+      )}
 
       {/* Mesh Selection UI */}
       {geomData.type === GeometryType.MESH && (
@@ -1390,7 +1462,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
-                    value={geomData.color || '#ffffff'}
+                    value={effectiveColorValue}
                     onChange={(e) => update({ color: e.target.value })}
                     className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
                     spellCheck={false}
@@ -1402,9 +1474,11 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                   </span>
                   <input
                     type="color"
-                    value={getColorPickerHexValue(geomData.color)}
+                    value={getColorPickerHexValue(effectiveColorValue)}
                     onChange={(e) =>
-                      update({ color: mergeColorPickerHexValue(e.target.value, geomData.color) })
+                      update({
+                        color: mergeColorPickerHexValue(e.target.value, effectiveColorValue),
+                      })
                     }
                     aria-label={t.color}
                     className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
@@ -1417,7 +1491,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div className="flex items-center gap-1.5">
                   <ReadonlyValueField className="min-w-0 flex-1 bg-element-bg text-[10px] font-medium">
-                    <span className="block truncate">{effectiveTexturePath || t.none}</span>
+                    <span className="block truncate">{displayedTexturePath || t.none}</span>
                   </ReadonlyValueField>
                   <input
                     type="file"
@@ -1439,7 +1513,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                   {!isTextureReadonly && effectiveTexturePath && (
                     <button
                       type="button"
-                      onClick={() => applyVisualTexture(undefined)}
+                      onClick={() => {
+                        setPreviewTexturePath(null);
+                        applyVisualTexture(undefined);
+                      }}
                       className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
                     >
                       <Trash2 className="h-3 w-3" />
@@ -1478,21 +1555,27 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                       </div>
                     )}
                     {textureFiles.map((filePath) => {
-                      const isSelected = effectiveTexturePath === filePath;
+                      const isApplied = effectiveTexturePath === filePath && !previewTexturePath;
+                      const isPreviewing = previewTexturePath === filePath;
                       const { fileName, parentPath } = describeMeshPath(filePath);
 
                       return (
-                        <button
+                        <div
                           key={filePath}
-                          type="button"
                           title={filePath}
-                          onClick={() => applyVisualTexture(filePath)}
+                          onClick={() => setPreviewTexturePath(filePath)}
+                          onDoubleClick={() => {
+                            applyVisualTexture(filePath);
+                            setPreviewTexturePath(null);
+                          }}
                           className={`
                             grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition-colors
                             ${
-                              isSelected
+                              isApplied
                                 ? 'border-system-blue/35 bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
-                                : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
+                                : isPreviewing
+                                  ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                  : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
                             }
                           `}
                         >
@@ -1508,7 +1591,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                           <span className="min-w-0">
                             <span
                               className={`block truncate text-[10px] font-medium ${
-                                isSelected ? 'text-system-blue' : 'text-text-primary'
+                                isApplied ? 'text-system-blue' : 'text-text-primary'
                               }`}
                             >
                               {fileName}
@@ -1519,14 +1602,55 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                               </span>
                             )}
                           </span>
-                          {isSelected ? <Check className="h-3 w-3 shrink-0" /> : null}
-                        </button>
+                          {isApplied ? (
+                            <Check className="h-3 w-3 shrink-0" />
+                          ) : isPreviewing ? (
+                            <Eye className="h-3 w-3 shrink-0" />
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>
                 </div>
               </div>
             )}
+
+            {displayedTexturePath ? (
+              <div className="flex flex-col gap-1 rounded-md border border-border-black/60 bg-element-bg/70 p-1">
+                <div className="overflow-hidden rounded-md border border-border-black/60 bg-panel-bg/80">
+                  {displayedTextureAssetUrl ? (
+                    <img
+                      src={displayedTextureAssetUrl}
+                      alt={`${t.preview}: ${displayedTexturePath}`}
+                      className="block max-h-40 w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex min-h-28 items-center justify-center px-2 py-3 text-center">
+                      <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>{t.noPreviewImage}</div>
+                    </div>
+                  )}
+                </div>
+                {previewTexturePath ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={handleApplyTexture}
+                      className={`${PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS} flex-1`}
+                    >
+                      <Check className="h-2.5 w-2.5" />
+                      {t.apply}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTexturePath(null)}
+                      className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} flex-1`}
+                    >
+                      {t.cancel}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       )}

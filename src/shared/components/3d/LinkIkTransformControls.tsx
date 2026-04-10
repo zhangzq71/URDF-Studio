@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -11,11 +11,8 @@ import type {
   UrdfLink,
 } from '@/types';
 import { useRobotStore } from '@/store/robotStore';
+import { UnifiedTransformControls } from './UnifiedTransformControls';
 
-import {
-  UnifiedTransformControls,
-  VISUALIZER_UNIFIED_GIZMO_SIZE,
-} from './UnifiedTransformControls';
 import {
   cloneLinkIkDragKinematicState,
   createEmptyLinkIkDragKinematicState,
@@ -32,6 +29,8 @@ import {
 interface LinkIkTransformControlsProps {
   selectedLinkId: string | null;
   selectedHandle: THREE.Object3D | null;
+  selectedLinkObject?: THREE.Object3D | null;
+  selectedAnchorLocal?: { x: number; y: number; z: number } | null;
   coordinateRoot: THREE.Object3D | null;
   ikRobotState: Pick<
     RobotState,
@@ -46,6 +45,8 @@ interface LinkIkTransformControlsProps {
   }) => void;
   onClearPreviewKinematicOverrides?: () => void;
 }
+
+const SELECTED_IK_GIZMO_SIZE = 1.05;
 
 interface RobotHistorySnapshot {
   name: string;
@@ -71,6 +72,8 @@ function createHistorySnapshot(): RobotHistorySnapshot {
 export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   selectedLinkId,
   selectedHandle,
+  selectedLinkObject = null,
+  selectedAnchorLocal = null,
   coordinateRoot,
   ikRobotState,
   enabled = true,
@@ -88,6 +91,7 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   const historySnapshotRef = useRef<RobotHistorySnapshot | null>(null);
   const worldPositionRef = useRef(new THREE.Vector3());
   const localPositionRef = useRef(new THREE.Vector3());
+  const handleAnchorLocalRef = useRef(new THREE.Vector3());
   const pendingTargetWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const lastSolvedTargetWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const dragStartWorldPositionRef = useRef<THREE.Vector3 | null>(null);
@@ -102,21 +106,60 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   const previewSolveStateRef = useRef(createEmptyLinkIkDragKinematicState());
   const committedPreviewStateRef = useRef(createEmptyLinkIkDragKinematicState());
   const [translateProxy, setTranslateProxy] = useState<THREE.Group | null>(null);
+  const hasSelectedAnchorTarget = Boolean(
+    selectedHandle || (selectedLinkObject && selectedAnchorLocal),
+  );
+  const proxyPosition = useMemo(() => {
+    if (selectedHandle) {
+      const worldPosition = new THREE.Vector3();
+      selectedHandle.updateMatrixWorld(true);
+      selectedHandle.getWorldPosition(worldPosition);
+      return [worldPosition.x, worldPosition.y, worldPosition.z] as const;
+    }
+
+    if (selectedLinkObject && selectedAnchorLocal) {
+      const worldPosition = new THREE.Vector3(
+        selectedAnchorLocal.x,
+        selectedAnchorLocal.y,
+        selectedAnchorLocal.z,
+      );
+      selectedLinkObject.updateMatrixWorld(true);
+      selectedLinkObject.localToWorld(worldPosition);
+      return [worldPosition.x, worldPosition.y, worldPosition.z] as const;
+    }
+
+    return null;
+  }, [selectedAnchorLocal, selectedHandle, selectedLinkObject]);
 
   const syncTranslateProxy = useCallback(
-    (proxyTarget: THREE.Object3D | null, handle = selectedHandle) => {
-      if (!proxyTarget || !handle) {
+    (
+      proxyTarget: THREE.Object3D | null,
+      handle = selectedHandle,
+      linkObject = selectedLinkObject,
+      anchorLocal = selectedAnchorLocal,
+    ) => {
+      if (!proxyTarget) {
         return;
       }
 
-      handle.updateMatrixWorld(true);
-      handle.getWorldPosition(worldPositionRef.current);
+      if (handle) {
+        handle.updateMatrixWorld(true);
+        handle.getWorldPosition(worldPositionRef.current);
+      } else if (linkObject && anchorLocal) {
+        linkObject.updateMatrixWorld(true);
+        handleAnchorLocalRef.current.set(anchorLocal.x, anchorLocal.y, anchorLocal.z);
+        worldPositionRef.current.copy(handleAnchorLocalRef.current);
+        linkObject.localToWorld(worldPositionRef.current);
+      } else {
+        return;
+      }
+
       proxyTarget.position.copy(worldPositionRef.current);
       proxyTarget.quaternion.identity();
       proxyTarget.scale.setScalar(1);
       proxyTarget.updateMatrixWorld(true);
     },
-    [selectedHandle],
+    [selectedAnchorLocal, selectedHandle, selectedLinkObject],
   );
 
   const handleTranslateProxyRef = useCallback(
@@ -378,7 +421,13 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   }, [applyIkToTarget, cancelScheduledSolve, readProxyWorldPosition]);
 
   const beginDrag = useCallback(() => {
-    if (!enabled || !selectedLinkId || !selectedHandle || !coordinateRoot || !ikRobotState) {
+    if (
+      !enabled ||
+      !selectedLinkId ||
+      !hasSelectedAnchorTarget ||
+      !coordinateRoot ||
+      !ikRobotState
+    ) {
       return false;
     }
 
@@ -403,10 +452,10 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   }, [
     coordinateRoot,
     enabled,
+    hasSelectedAnchorTarget,
     ikRobotState,
     readProxyWorldPosition,
     resetSolveQueue,
-    selectedHandle,
     selectedLinkId,
     setIsDragging,
   ]);
@@ -506,24 +555,24 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     }
   }, 1000);
 
-  if (!enabled || !selectedLinkId || !selectedHandle || !coordinateRoot || !ikRobotState) {
+  if (!enabled || !selectedLinkId || !hasSelectedAnchorTarget || !coordinateRoot || !ikRobotState) {
     return null;
   }
 
   return (
     <>
-      <group ref={handleTranslateProxyRef} visible={false} />
+      <group ref={handleTranslateProxyRef} position={proxyPosition ?? undefined} />
       {translateProxy ? (
         <UnifiedTransformControls
           ref={transformRef}
           object={translateProxy}
           mode="translate"
-          size={VISUALIZER_UNIFIED_GIZMO_SIZE}
+          size={SELECTED_IK_GIZMO_SIZE}
           translateSpace="world"
-          hoverStyle="single-axis"
-          displayStyle="thick-primary"
+          hoverStyle="stock"
+          displayStyle="stock"
           enabled={enabled}
-          onChange={handleObjectChange}
+          onObjectChange={handleObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />
       ) : null}
