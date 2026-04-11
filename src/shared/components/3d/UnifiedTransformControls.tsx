@@ -293,6 +293,7 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       const controlsWithEvents = defaultControls as THREE.EventDispatcher & {
         addEventListener?: (type: string, listener: (...args: any[]) => void) => void;
         removeEventListener?: (type: string, listener: (...args: any[]) => void) => void;
+        domElement?: HTMLElement;
       };
 
       if (
@@ -315,8 +316,38 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
         syncControlEnabledState();
       };
 
+      // When the user right-clicks or middle-clicks near the gizmo, the
+      // per-frame hover suppression may have already disabled orbit controls
+      // (via the useFrame(1100) loop).  OrbitControls won't fire its `start`
+      // event while disabled, so the passthrough mechanism above never
+      // activates — a deadlock.  Break it by detecting orbit-initiating
+      // buttons (non-left-click) in the capture phase and proactively
+      // enabling the passthrough + restoring orbit before OrbitControls
+      // processes the event.
+      const handleOrbitIntentCapture = (event: PointerEvent) => {
+        if (event.button === 0) return; // left-click is handled by the gizmo
+        if (translateRef.current?.dragging || effectiveRotateRef.current?.dragging) return;
+
+        orbitPassthroughRef.current = true;
+        clearHoveredAxes();
+        syncControlEnabledState();
+
+        // Re-enable orbit controls immediately so OrbitControls can
+        // process the current pointerdown.
+        if (hasEnabledFlag(defaultControls) && defaultControlsSuppressedRef.current) {
+          defaultControls.enabled = defaultControlsEnabledBeforeSuppressRef.current;
+          defaultControlsSuppressedRef.current = false;
+        }
+      };
+
       controlsWithEvents.addEventListener('start', handleViewDragStart);
       controlsWithEvents.addEventListener('end', handleViewDragEnd);
+
+      const domElement = controlsWithEvents.domElement;
+      if (domElement) {
+        domElement.addEventListener('pointerdown', handleOrbitIntentCapture, true);
+      }
+
       window.addEventListener('pointerup', handleViewDragEnd);
       window.addEventListener('pointercancel', handleViewDragEnd);
       window.addEventListener('blur', handleViewDragEnd);
@@ -324,6 +355,9 @@ export const UnifiedTransformControls = forwardRef<any, UnifiedTransformControls
       return () => {
         controlsWithEvents.removeEventListener?.('start', handleViewDragStart);
         controlsWithEvents.removeEventListener?.('end', handleViewDragEnd);
+        if (domElement) {
+          domElement.removeEventListener('pointerdown', handleOrbitIntentCapture, true);
+        }
         window.removeEventListener('pointerup', handleViewDragEnd);
         window.removeEventListener('pointercancel', handleViewDragEnd);
         window.removeEventListener('blur', handleViewDragEnd);

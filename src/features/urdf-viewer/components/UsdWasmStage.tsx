@@ -680,14 +680,25 @@ async function writeUsdBytesToVirtualPath(
       runtime.USD.FS_writeFile(normalizedVirtualPath, bytes);
       runtime.usdFsHelper.trackVirtualFilePath?.(normalizedVirtualPath);
       return runtime.usdFsHelper.hasVirtualFilePath(normalizedVirtualPath);
-    } catch {
+    } catch (err) {
       // Fall back to the older unlink/createDataFile path if direct writes fail.
+      console.debug(
+        '[UsdWasmStage] FS_writeFile failed, falling back to createDataFile:',
+        normalizedVirtualPath,
+        err,
+      );
     }
   }
 
   try {
     runtime.USD.FS_unlink(normalizedVirtualPath);
-  } catch {}
+  } catch (err) {
+    console.debug(
+      '[UsdWasmStage] FS_unlink failed (expected if path does not exist):',
+      normalizedVirtualPath,
+      err,
+    );
+  }
   runtime.usdFsHelper.untrackVirtualFilePath?.(normalizedVirtualPath);
   runtime.USD.FS_createDataFile(directory, fileName, bytes, true, true, true);
   runtime.usdFsHelper.trackVirtualFilePath?.(normalizedVirtualPath);

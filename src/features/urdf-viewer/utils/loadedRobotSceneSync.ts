@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isProtectedMaterial } from '@/core/utils/three/materialProtection';
 import { GeometryType, type UrdfLink } from '@/types';
 
 import {
@@ -57,8 +58,7 @@ function meshNeedsMaterialUpgrade(mesh: THREE.Mesh): boolean {
 
   return materials.some((material) => {
     if (!material) return false;
-    if ((material as any).userData?.isCollisionMaterial) return false;
-    if ((material as any).userData?.isSharedMaterial) return false;
+    if (isProtectedMaterial(material)) return false;
     if (!(material instanceof THREE.MeshStandardMaterial)) return true;
 
     const materialWithPbrState = material as THREE.MeshStandardMaterial & {

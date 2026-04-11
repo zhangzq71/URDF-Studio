@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 type UIStoreModule = typeof import('./uiStore.ts');
-const UI_STORE_PERSIST_VERSION = 15;
+const UI_STORE_PERSIST_VERSION = 16;
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -91,11 +91,11 @@ test('view options restore persisted world-origin axes and usage-guide preferenc
   dom.window.close();
 });
 
-test('MJCF world visibility defaults to hidden for fresh sessions', async () => {
+test('MJCF world visibility defaults to visible for fresh sessions', async () => {
   const { dom, useUIStore } = await loadUIStore();
 
   const state = useUIStore.getState();
-  assert.equal(state.viewOptions.showMjcfWorldLink, false);
+  assert.equal(state.viewOptions.showMjcfWorldLink, true);
   assert.equal(state.viewOptions.showIkHandles, false);
 
   dom.window.close();
@@ -132,7 +132,7 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
   dom.window.close();
 });
 
-test('migration resets legacy MJCF world-link visibility to the hidden default', async () => {
+test('migration resets legacy MJCF world-link visibility to visible default', async () => {
   const { dom, useUIStore } = await loadUIStore(
     {
       viewOptions: {
@@ -151,7 +151,7 @@ test('migration resets legacy MJCF world-link visibility to the hidden default',
   );
 
   const state = useUIStore.getState();
-  assert.equal(state.viewOptions.showMjcfWorldLink, false);
+  assert.equal(state.viewOptions.showMjcfWorldLink, true);
 
   const raw = dom.window.localStorage.getItem('urdf-studio-ui');
   assert.ok(raw, 'persisted ui store payload should be written');
@@ -165,7 +165,7 @@ test('migration resets legacy MJCF world-link visibility to the hidden default',
   };
 
   assert.equal(persisted.version, UI_STORE_PERSIST_VERSION);
-  assert.equal(persisted.state?.viewOptions?.showMjcfWorldLink, false);
+  assert.equal(persisted.state?.viewOptions?.showMjcfWorldLink, true);
 
   dom.window.close();
 });

@@ -17,22 +17,51 @@ const workerScope = globalThis as unknown as DedicatedWorkerGlobalScope;
 
 let binaryUsdRuntimePromise: Promise<BinaryReadyUsdRuntime> | null = null;
 
-type UsdBindingsModule = {
-  getUsdModule: (options?: Record<string, unknown>) => Promise<BinaryReadyUsdRuntime['USD']>;
-};
+type GetUsdModuleFn = (options?: Record<string, unknown>) => Promise<BinaryReadyUsdRuntime['USD']>;
+
+function resolveGetUsdModuleFn(): GetUsdModuleFn | null {
+  const g = globalThis as Record<string, unknown>;
+  const getter = g['USD_WASM_MODULE'];
+  if (typeof getter === 'function') {
+    return getter as GetUsdModuleFn;
+  }
+  return null;
+}
+
+let classicScriptLoadPromise: Promise<void> | null = null;
+
+async function ensureBindingsClassicScriptLoaded(): Promise<void> {
+  if (!classicScriptLoadPromise) {
+    classicScriptLoadPromise = (async () => {
+      const baseHref = String(globalThis.location?.href || 'http://localhost/');
+      const scriptUrl = new URL('/usd/bindings/emHdBindings.js', baseHref).href;
+      const response = await fetch(scriptUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch USD bindings script: ${scriptUrl}`);
+      }
+      const source = await response.text();
+      const globalEval = globalThis.eval.bind(globalThis) as (code: string) => unknown;
+      globalEval(`${source}\n//# sourceURL=${scriptUrl}`);
+    })().catch((error) => {
+      classicScriptLoadPromise = null;
+      throw error;
+    });
+  }
+  return classicScriptLoadPromise;
+}
 
 async function loadBinaryUsdRuntime(): Promise<BinaryReadyUsdRuntime> {
   if (!binaryUsdRuntimePromise) {
     binaryUsdRuntimePromise = (async () => {
-      const bindingsModuleUrl = new URL(
-        '/usd/bindings/index.js',
-        globalThis.location?.href ?? self.location.href,
-      ).href;
-      const bindingsModule = await import(
-        /* @vite-ignore */ bindingsModuleUrl
-      ) as UsdBindingsModule;
+      await ensureBindingsClassicScriptLoaded();
 
-      const USD = await bindingsModule.getUsdModule({
+      const getUsdModuleFn = resolveGetUsdModuleFn();
+      if (!getUsdModuleFn) {
+        throw new Error('USD WASM loader is unavailable after loading emHdBindings.js');
+      }
+
+      const USD = await getUsdModuleFn({
+        mainScriptUrlOrBlob: '/usd/bindings/emHdBindings.js',
         PTHREAD_POOL_LIMIT: 1,
         PTHREAD_POOL_SIZE: 1,
         PTHREAD_NUM_CORES: 1,
@@ -41,7 +70,7 @@ async function loadBinaryUsdRuntime(): Promise<BinaryReadyUsdRuntime> {
         printErr: (...args: unknown[]) => {
           const message = args.map((entry) => String(entry ?? '')).join(' ');
           if (!message) return;
-          if (message.includes('Selected hydra renderer doesn\'t support prim type')) return;
+          if (message.includes("Selected hydra renderer doesn't support prim type")) return;
           if (message.includes('Unsupported interpolation type')) return;
           if (message.includes('pluginFactory') && message.includes('Failed verification')) return;
           console.error(...args);
@@ -58,44 +87,47 @@ async function loadBinaryUsdRuntime(): Promise<BinaryReadyUsdRuntime> {
   return binaryUsdRuntimePromise;
 }
 
-workerScope.addEventListener('message', (event: MessageEvent<ConvertUsdArchiveFilesToBinaryWorkerRequest>) => {
-  const message = event.data;
-  if (!message) {
-    return;
-  }
-
-  void (async () => {
-    try {
-      const archiveFiles = hydrateUsdBinaryArchiveFilesFromWorker(message.archiveFiles);
-      const result = await convertUsdArchiveFilesToBinaryCore(archiveFiles, {
-        loadRuntime: loadBinaryUsdRuntime,
-        onProgress: ({ current, total, filePath }) => {
-          const progressResponse: UsdBinaryArchiveWorkerResponse = {
-            type: 'convert-usd-archive-files-to-binary-progress',
-            requestId: message.requestId,
-            current,
-            total,
-            filePath,
-          };
-          workerScope.postMessage(progressResponse);
-        },
-      });
-      const serialized = await serializeUsdBinaryArchiveFilesForWorker(result);
-      const response: UsdBinaryArchiveWorkerResponse = {
-        type: 'convert-usd-archive-files-to-binary-result',
-        requestId: message.requestId,
-        result: serialized.payload,
-      };
-      workerScope.postMessage(response, serialized.transferables);
-    } catch (error) {
-      const response: UsdBinaryArchiveWorkerResponse = {
-        type: 'convert-usd-archive-files-to-binary-error',
-        requestId: message.requestId,
-        error: error instanceof Error ? error.message : 'USD binary archive worker failed',
-      };
-      workerScope.postMessage(response);
+workerScope.addEventListener(
+  'message',
+  (event: MessageEvent<ConvertUsdArchiveFilesToBinaryWorkerRequest>) => {
+    const message = event.data;
+    if (!message) {
+      return;
     }
-  })();
-});
+
+    void (async () => {
+      try {
+        const archiveFiles = hydrateUsdBinaryArchiveFilesFromWorker(message.archiveFiles);
+        const result = await convertUsdArchiveFilesToBinaryCore(archiveFiles, {
+          loadRuntime: loadBinaryUsdRuntime,
+          onProgress: ({ current, total, filePath }) => {
+            const progressResponse: UsdBinaryArchiveWorkerResponse = {
+              type: 'convert-usd-archive-files-to-binary-progress',
+              requestId: message.requestId,
+              current,
+              total,
+              filePath,
+            };
+            workerScope.postMessage(progressResponse);
+          },
+        });
+        const serialized = await serializeUsdBinaryArchiveFilesForWorker(result);
+        const response: UsdBinaryArchiveWorkerResponse = {
+          type: 'convert-usd-archive-files-to-binary-result',
+          requestId: message.requestId,
+          result: serialized.payload,
+        };
+        workerScope.postMessage(response, serialized.transferables);
+      } catch (error) {
+        const response: UsdBinaryArchiveWorkerResponse = {
+          type: 'convert-usd-archive-files-to-binary-error',
+          requestId: message.requestId,
+          error: error instanceof Error ? error.message : 'USD binary archive worker failed',
+        };
+        workerScope.postMessage(response);
+      }
+    })();
+  },
+);
 
 export {};

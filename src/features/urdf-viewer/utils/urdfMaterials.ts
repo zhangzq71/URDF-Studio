@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 import { getVisualGeometryEntries } from '@/core/robot';
 import type { UrdfLink, UrdfVisual, UrdfVisualMaterial } from '@/types';
+import { isProtectedMaterial } from '@/core/utils/three/materialProtection';
 import { disposeMaterial } from './dispose';
 
 // ============================================================
@@ -102,10 +103,7 @@ function findURDFMaterialByName(
 }
 
 function disposeTransientViewerMaterial(material: THREE.Material): void {
-  if (
-    (material as any).userData?.isSharedMaterial ||
-    (material as any).userData?.isCollisionMaterial
-  ) {
+  if (isProtectedMaterial(material)) {
     return;
   }
 

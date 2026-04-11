@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { isProtectedMaterial } from '@/core/utils/three/materialProtection';
 import { createJointAxisVisualization } from '../utils/visualizationFactories';
 import { syncRobotGeometryVisibility } from '../utils/robotGeometryVisibilitySync';
 import { getRobotSceneNodeIndex } from '../utils/robotSceneNodeIndex';
@@ -488,12 +489,7 @@ export function useVisualizationEffects({
 
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       materials.forEach((mat: any) => {
-        if (
-          mat &&
-          !mat.userData?.isSharedMaterial &&
-          !mat.userData?.isCollisionMaterial &&
-          mat.depthTest !== false
-        ) {
+        if (mat && !isProtectedMaterial(mat) && mat.depthTest !== false) {
           const baseState = getVisualMaterialState(mat);
           const nextOpacity = THREE.MathUtils.clamp(baseState.opacity * modelOpacity, 0, 1);
           const nextTransparent = baseState.transparent || nextOpacity < 1.0;

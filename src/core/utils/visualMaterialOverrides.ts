@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createMatteMaterial } from './materialFactory';
+import { isProtectedMaterial } from './three/materialProtection';
 import { parseThreeColorWithOpacity } from './color.ts';
 import type { UrdfVisual } from '@/types';
 
@@ -47,10 +48,7 @@ function disposeTransientMaterial(material: THREE.Material | undefined): void {
     return;
   }
 
-  if (
-    (material as any).userData?.isSharedMaterial ||
-    (material as any).userData?.isCollisionMaterial
-  ) {
+  if (isProtectedMaterial(material)) {
     return;
   }
 

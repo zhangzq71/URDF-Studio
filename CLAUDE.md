@@ -618,6 +618,7 @@ Zustand 关键 Store：
 
 ## 14. 浏览器/MCP 截图与收尾清理
 
+- 启动浏览器时默认使用无头模式（`headless: true` / `--headless`），除非用户明确要求打开可见浏览器窗口。
 - 若任务中使用了 Chrome DevTools、Playwright、浏览器自动化或其他 MCP 工具，浏览器验证产物默认统一写入仓库内 `tmp/`，可按需放在 `tmp/screenshots/`、`tmp/playwright/`、`tmp/chrome-devtools/` 等子目录。
 - 禁止将浏览器截图或其他临时验证产物直接写到仓库根目录。
 - `output/` 仅用于用户可见导出结果、回归归档或明确要保留的产物；临时截图/trace 不要默认写入 `output/`。

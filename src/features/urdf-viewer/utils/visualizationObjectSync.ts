@@ -738,7 +738,12 @@ export function syncOriginAxesVisualizationForLinks({
       }
 
       if (child.isMesh) {
-        changed = updateRenderOrder(child, showOriginsOverlay ? 10001 : 0) || changed;
+        const nextRenderOrder = showOriginsOverlay ? 10001 : 0;
+        const didChange = updateRenderOrder(child, nextRenderOrder);
+        changed = didChange || changed;
+        if (didChange || child.renderOrder === nextRenderOrder) {
+          child.userData.__interactionBaseRenderOrder = nextRenderOrder;
+        }
       }
     });
   });
@@ -805,7 +810,12 @@ export function syncJointAxesVisualizationForJoints({
       }
 
       if (child.isMesh) {
-        changed = updateRenderOrder(child, showJointAxesOverlay ? 10001 : 0) || changed;
+        const nextRenderOrder = showJointAxesOverlay ? 10001 : 0;
+        const didChange = updateRenderOrder(child, nextRenderOrder);
+        changed = didChange || changed;
+        if (didChange || child.renderOrder === nextRenderOrder) {
+          child.userData.__interactionBaseRenderOrder = nextRenderOrder;
+        }
       }
     });
   });
@@ -881,7 +891,12 @@ export function syncInertiaVisualizationForLinks({
         }
 
         if (child.isMesh) {
-          changed = updateRenderOrder(child, showCoMOverlay ? 10001 : 0) || changed;
+          const nextRenderOrder = showCoMOverlay ? 10001 : 0;
+          const didChange = updateRenderOrder(child, nextRenderOrder);
+          changed = didChange || changed;
+          if (didChange || child.renderOrder === nextRenderOrder) {
+            child.userData.__interactionBaseRenderOrder = nextRenderOrder;
+          }
         }
       });
     }
@@ -944,7 +959,12 @@ export function syncInertiaVisualizationForLinks({
           }
 
           if (child.isMesh || child.type === 'LineSegments') {
-            changed = updateRenderOrder(child, showInertiaOverlay ? 10001 : 0) || changed;
+            const nextRenderOrder = showInertiaOverlay ? 10001 : 0;
+            const didChange = updateRenderOrder(child, nextRenderOrder);
+            changed = didChange || changed;
+            if (didChange || child.renderOrder === nextRenderOrder) {
+              child.userData.__interactionBaseRenderOrder = nextRenderOrder;
+            }
           }
         });
       }

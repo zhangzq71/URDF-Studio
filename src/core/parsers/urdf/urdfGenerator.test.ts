@@ -217,7 +217,7 @@ test('generateURDF fails fast for unsupported URDF joint types', () => {
   );
 });
 
-test('generateURDF fails fast for unsupported URDF geometry types', () => {
+test('generateURDF converts plane geometry to thin box', () => {
   const robot: RobotState = {
     name: 'plane_geom_demo',
     rootLinkId: 'base_link',
@@ -231,7 +231,7 @@ test('generateURDF fails fast for unsupported URDF geometry types', () => {
           ...DEFAULT_LINK.collision,
           name: 'ground_plane',
           type: GeometryType.PLANE,
-          dimensions: { x: 1, y: 1, z: 1 },
+          dimensions: { x: 6, y: 4, z: 0 },
         },
       },
     },
@@ -239,8 +239,32 @@ test('generateURDF fails fast for unsupported URDF geometry types', () => {
     materials: {},
   };
 
-  assert.throws(
-    () => generateURDF(robot),
-    /\[URDF export\] collision geometry on "ground_plane" uses unsupported plane type\./,
-  );
+  const result = generateURDF(robot);
+  assert.ok(result.includes('<box size="6 4 0.001" />'));
+  assert.ok(result.includes('<link name="base_link"'));
+});
+
+test('generateURDF downgrades ellipsoid geometry to bounding box', () => {
+  const robot: RobotState = {
+    name: 'ellipsoid_demo',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        ...DEFAULT_LINK,
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          ...DEFAULT_LINK.visual,
+          type: GeometryType.ELLIPSOID,
+          dimensions: { x: 0.5, y: 0.3, z: 0.2 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const result = generateURDF(robot);
+  assert.ok(result.includes('<box size="0.5 0.3 0.2" />'));
 });

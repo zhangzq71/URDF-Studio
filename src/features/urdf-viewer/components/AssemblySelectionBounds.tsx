@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { HELPER_RENDER_ORDER } from '@/shared/components/3d/unified-transform-controls/gizmoCore';
 import { computeVisibleMeshBounds } from '@/shared/utils/threeBounds';
 
 const DEFAULT_SELECTION_BOUNDS_COLOR = '#fbbf24';
@@ -21,7 +22,7 @@ export const AssemblySelectionBounds = memo(function AssemblySelectionBounds({
 
     next.name = 'AssemblySelectionBounds';
     next.frustumCulled = false;
-    next.renderOrder = 999;
+    next.renderOrder = HELPER_RENDER_ORDER;
     next.visible = false;
     next.userData.isHelper = true;
     next.userData.excludeFromSceneBounds = true;

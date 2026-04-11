@@ -38,7 +38,9 @@ const SUPPORTED_URDF_JOINT_TYPES = new Set([
   'floating',
   'planar',
 ]);
-const SUPPORTED_URDF_GEOMETRY_TYPES = new Set([
+// Geometry types with dedicated URDF export handling.
+// Types NOT in this set are downgraded to a thin bounding box.
+const EXACT_URDF_GEOMETRY_TYPES = new Set([
   GeometryType.BOX,
   GeometryType.CYLINDER,
   GeometryType.SPHERE,
@@ -263,12 +265,16 @@ function generateUrdfGeometryXml(
     kind: 'visual' | 'collision';
   },
 ): string {
-  if (!SUPPORTED_URDF_GEOMETRY_TYPES.has(geometry.type)) {
-    throw new Error(
-      `[URDF export] ${exportContext.kind} geometry on "${exportContext.ownerName}" uses unsupported ${geometry.type} type.`,
-    );
+  if (geometry.type === GeometryType.NONE) {
+    return '';
   }
 
+  if (geometry.type === GeometryType.PLANE) {
+    // URDF has no <plane> element; emit a thin box preserving width/depth.
+    const w = Math.max(geometry.dimensions.x || 0, 0);
+    const d = Math.max(geometry.dimensions.y || 0, 0);
+    return `        <box size="${formatters.formatShape(w)} ${formatters.formatShape(d)} 0.001" />\n`;
+  }
   if (geometry.type === GeometryType.BOX) {
     return `        <box size="${formatters.vecStr(geometry.dimensions)}" />\n`;
   }
@@ -282,18 +288,27 @@ function generateUrdfGeometryXml(
     return generateCapsuleCompatibilityGeometryXml(geometry.dimensions, formatters.formatShape);
   }
 
-  const meshPath = geometry.meshPath
-    ? exportContext.preserveMeshPaths
-      ? geometry.meshPath.replace(/\\/g, '/')
-      : normalizeMeshPathForExport(geometry.meshPath)
-    : exportContext.fallbackFileName;
-  const filename = exportContext.preserveMeshPaths
-    ? meshPath || exportContext.fallbackFileName
-    : exportContext.useRelativePaths
-      ? `meshes/${meshPath || exportContext.fallbackFileName}`
-      : `package://${exportContext.robotName}/meshes/${meshPath || exportContext.fallbackFileName}`;
-  const scaleAttribute = formatUrdfMeshScaleAttribute(geometry.dimensions, formatters.formatShape);
-  return `        <mesh filename="${filename}"${scaleAttribute} />\n`;
+  if (geometry.type === GeometryType.MESH) {
+    const meshPath = geometry.meshPath
+      ? exportContext.preserveMeshPaths
+        ? geometry.meshPath.replace(/\\/g, '/')
+        : normalizeMeshPathForExport(geometry.meshPath)
+      : exportContext.fallbackFileName;
+    const filename = exportContext.preserveMeshPaths
+      ? meshPath || exportContext.fallbackFileName
+      : exportContext.useRelativePaths
+        ? `meshes/${meshPath || exportContext.fallbackFileName}`
+        : `package://${exportContext.robotName}/meshes/${meshPath || exportContext.fallbackFileName}`;
+    const scaleAttribute = formatUrdfMeshScaleAttribute(
+      geometry.dimensions,
+      formatters.formatShape,
+    );
+    return `        <mesh filename="${filename}"${scaleAttribute} />\n`;
+  }
+
+  // Remaining types (ELLIPSOID, HFIELD, SDF, etc.) have no URDF equivalent.
+  // Downgrade to a bounding box using available dimensions.
+  return `        <box size="${formatters.vecStr(geometry.dimensions)}" />\n`;
 }
 
 const generateCollisionElement = (

@@ -6,6 +6,10 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
 import type { UrdfLink } from '@/types';
+import {
+  GIZMO_BASE_RENDER_ORDER,
+  COM_VISUAL_RENDER_ORDER,
+} from '@/shared/components/3d/unified-transform-controls/gizmoCore';
 
 interface CenterOfMassProps {
   link: UrdfLink;
@@ -28,11 +32,11 @@ export const LinkCenterOfMass = React.memo(
     return (
       <group position={[pos.x, pos.y, pos.z]} scale={isActive ? 1.08 : 1}>
         {/* Keep a wider invisible hit shell so CoM hover does not fall through to collision meshes behind it. */}
-        <mesh renderOrder={10000}>
+        <mesh renderOrder={GIZMO_BASE_RENDER_ORDER}>
           <sphereGeometry args={[pickRadius, 16, 16]} />
           <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
         </mesh>
-        <mesh renderOrder={10001}>
+        <mesh renderOrder={COM_VISUAL_RENDER_ORDER}>
           <sphereGeometry args={[radius * 1.9, 20, 20]} />
           <meshBasicMaterial
             color={hovered ? '#fb7185' : '#ef4444'}
@@ -43,36 +47,36 @@ export const LinkCenterOfMass = React.memo(
           />
         </mesh>
         {/* 8 octants forming a sphere */}
-        <mesh rotation={[0, 0, 0]} renderOrder={10002}>
+        <mesh rotation={[0, 0, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#000000" depthTest={false} />
         </mesh>
-        <mesh rotation={[0, Math.PI / 2, 0]} renderOrder={10002}>
+        <mesh rotation={[0, Math.PI / 2, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#ffffff" depthTest={false} />
         </mesh>
-        <mesh rotation={[0, Math.PI, 0]} renderOrder={10002}>
+        <mesh rotation={[0, Math.PI, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#000000" depthTest={false} />
         </mesh>
-        <mesh rotation={[0, -Math.PI / 2, 0]} renderOrder={10002}>
+        <mesh rotation={[0, -Math.PI / 2, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#ffffff" depthTest={false} />
         </mesh>
 
-        <mesh rotation={[Math.PI, 0, 0]} renderOrder={10002}>
+        <mesh rotation={[Math.PI, 0, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#000000" depthTest={false} />
         </mesh>
-        <mesh rotation={[Math.PI, Math.PI / 2, 0]} renderOrder={10002}>
+        <mesh rotation={[Math.PI, Math.PI / 2, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#ffffff" depthTest={false} />
         </mesh>
-        <mesh rotation={[Math.PI, Math.PI, 0]} renderOrder={10002}>
+        <mesh rotation={[Math.PI, Math.PI, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#000000" depthTest={false} />
         </mesh>
-        <mesh rotation={[Math.PI, -Math.PI / 2, 0]} renderOrder={10002}>
+        <mesh rotation={[Math.PI, -Math.PI / 2, 0]} renderOrder={COM_VISUAL_RENDER_ORDER + 1}>
           <sphereGeometry args={[radius, 16, 16, 0, Math.PI / 2, 0, Math.PI / 2]} />
           <meshBasicMaterial color="#ffffff" depthTest={false} />
         </mesh>

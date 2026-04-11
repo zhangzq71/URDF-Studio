@@ -10,7 +10,14 @@ import { JSDOM } from 'jsdom';
 import { useFileExport } from './useFileExport.ts';
 import { useAssemblyStore, useAssetsStore, useRobotStore, useUIStore } from '@/store';
 import { processXacro } from '@/core/parsers/xacro/xacroParser.ts';
-import { DEFAULT_JOINT, DEFAULT_LINK, GeometryType, JointType, type RobotFile } from '@/types';
+import {
+  DEFAULT_JOINT,
+  DEFAULT_LINK,
+  GeometryType,
+  JointType,
+  type RobotData,
+  type RobotFile,
+} from '@/types';
 import type { ExportDialogConfig } from '@/features/file-io';
 
 function restoreGlobalProperty<T extends keyof typeof globalThis>(
@@ -296,6 +303,49 @@ function createExportConfig(
   };
 }
 
+function createClosedLoopRobotData(robotName: string): RobotData {
+  const baseLinkId = `${robotName}_base_link`;
+  const closingLinkId = `${robotName}_closing_link`;
+
+  return {
+    name: robotName,
+    rootLinkId: baseLinkId,
+    links: {
+      [baseLinkId]: {
+        ...DEFAULT_LINK,
+        id: baseLinkId,
+        name: baseLinkId,
+      },
+      [closingLinkId]: {
+        ...DEFAULT_LINK,
+        id: closingLinkId,
+        name: closingLinkId,
+      },
+    },
+    joints: {
+      [`${robotName}_hinge_joint`]: {
+        ...DEFAULT_JOINT,
+        id: `${robotName}_hinge_joint`,
+        name: `${robotName}_hinge_joint`,
+        type: JointType.REVOLUTE,
+        parentLinkId: baseLinkId,
+        childLinkId: closingLinkId,
+      },
+    },
+    closedLoopConstraints: [
+      {
+        id: `${robotName}_closed_loop_constraint`,
+        type: 'connect',
+        linkAId: baseLinkId,
+        linkBId: closingLinkId,
+        anchorWorld: { x: 0, y: 0, z: 0 },
+        anchorLocalA: { x: 0, y: 0, z: 0 },
+        anchorLocalB: { x: 0, y: 0, z: 0 },
+      },
+    ],
+  };
+}
+
 test('useFileExport packages selected xacro sources as an exportable xacro zip', async () => {
   resetStoresToBaseline();
   const domEnvironment = installDomEnvironment();
@@ -336,36 +386,39 @@ test('useFileExport packages selected xacro sources as an exportable xacro zip',
   useAssetsStore.getState().setOriginalUrdfContent('');
   useAssetsStore.getState().setOriginalFileFormat('xacro');
 
-  useRobotStore.getState().setRobot({
-    name: 'demo_robot',
-    rootLinkId: 'base_link',
-    links: {
-      base_link: {
-        ...DEFAULT_LINK,
-        id: 'base_link',
-        name: 'base_link',
-        visual: {
-          ...DEFAULT_LINK.visual,
-          type: GeometryType.BOX,
-          dimensions: { x: 0.2, y: 0.2, z: 0.2 },
-        },
-        collision: {
-          ...DEFAULT_LINK.collision,
-          type: GeometryType.BOX,
-          dimensions: { x: 0.5, y: 0.25, z: 0.15 },
-          origin: {
-            xyz: { x: 0, y: 0, z: 0 },
-            rpy: { r: 0, p: 0, y: 0 },
+  useRobotStore.getState().setRobot(
+    {
+      name: 'demo_robot',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.5, y: 0.25, z: 0.15 },
+            origin: {
+              xyz: { x: 0, y: 0, z: 0 },
+              rpy: { r: 0, p: 0, y: 0 },
+            },
           },
         },
       },
+      joints: {},
     },
-    joints: {},
-  }, {
-    skipHistory: true,
-    resetHistory: true,
-    label: 'Load xacro export test robot',
-  });
+    {
+      skipHistory: true,
+      resetHistory: true,
+      label: 'Load xacro export test robot',
+    },
+  );
 
   const downloadMocks = installDownloadMocks();
   const rendered = renderHook();
@@ -379,7 +432,9 @@ test('useFileExport packages selected xacro sources as an exportable xacro zip',
     assert.ok(downloadMocks.capturedBlob, 'expected a zip blob to be generated');
 
     const archive = await JSZip.loadAsync(await downloadMocks.capturedBlob.arrayBuffer());
-    const exportedXacroPath = Object.keys(archive.files).find((path) => path.endsWith('.urdf.xacro'));
+    const exportedXacroPath = Object.keys(archive.files).find((path) =>
+      path.endsWith('.urdf.xacro'),
+    );
     assert.ok(exportedXacroPath, 'expected exactly one exported xacro file in the archive');
     const exportedXacro = archive.file(exportedXacroPath);
     assert.ok(exportedXacro, 'expected xacro export inside the archive');
@@ -388,8 +443,14 @@ test('useFileExport packages selected xacro sources as an exportable xacro zip',
     assert.match(exportedXml, /xmlns:xacro="http:\/\/www\.ros\.org\/wiki\/xacro"/);
     assert.match(exportedXml, /<xacro:arg name="ros_profile" default="ros2"\s*\/>/);
     assert.match(exportedXml, /<xacro:arg name="ros_hardware_interface" default="effort"\s*\/>/);
-    assert.match(exportedXml, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros1' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/);
-    assert.match(exportedXml, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros2' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/);
+    assert.match(
+      exportedXml,
+      /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros1' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/,
+    );
+    assert.match(
+      exportedXml,
+      /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros2' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/,
+    );
     assert.match(exportedXml, /<box size="0\.5 0\.25 0\.15"\s*\/>/);
     assert.doesNotMatch(exportedXml, /xacro:property name="box_size"/);
     assert.doesNotMatch(exportedXml, /\$\{box_size\}/);
@@ -397,14 +458,45 @@ test('useFileExport packages selected xacro sources as an exportable xacro zip',
     const expandedXml = processXacro(exportedXml);
     assert.match(expandedXml, /<ros2_control name="demo_robot" type="system">/);
     assert.match(expandedXml, /<plugin>gazebo_ros2_control\/GazeboSystem<\/plugin>/);
-    assert.match(expandedXml, /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/);
+    assert.match(
+      expandedXml,
+      /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/,
+    );
     assert.match(expandedXml, /<robot_param>robot_description<\/robot_param>/);
     assert.match(expandedXml, /<robot_param_node>robot_state_publisher<\/robot_param_node>/);
     assert.doesNotMatch(expandedXml, /<transmission\b/);
 
     const ros1ExpandedXml = processXacro(exportedXml, { ros_profile: 'ros1' });
-    assert.match(ros1ExpandedXml, /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/);
+    assert.match(
+      ros1ExpandedXml,
+      /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/,
+    );
     assert.doesNotMatch(ros1ExpandedXml, /<ros2_control\b/);
+  } finally {
+    rendered.cleanup();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    downloadMocks.restore();
+    domEnvironment.restore();
+    resetStoresToBaseline();
+  }
+});
+
+test('useFileExport rejects xacro export when the current robot contains closed-loop constraints', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  useRobotStore.getState().resetRobot(createClosedLoopRobotData('closed_loop_xacro_robot'));
+
+  const downloadMocks = installDownloadMocks();
+  const rendered = renderHook();
+
+  try {
+    await assert.rejects(
+      rendered.hook.handleExportWithConfig(createExportConfig()),
+      /closed-loop constraint/i,
+    );
+
+    assert.equal(downloadMocks.clicked, false, 'expected xacro export to abort before downloading');
+    assert.equal(downloadMocks.capturedBlob, null, 'expected no zip blob on failed xacro export');
   } finally {
     rendered.cleanup();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -418,43 +510,48 @@ test('useFileExport fails fast when xacro mesh packaging is incomplete', async (
   resetStoresToBaseline();
   const domEnvironment = installDomEnvironment();
 
-  useRobotStore.getState().setRobot({
-    name: 'missing_mesh_robot',
-    rootLinkId: 'base_link',
-    links: {
-      base_link: {
-        ...DEFAULT_LINK,
-        id: 'base_link',
-        name: 'base_link',
-        visual: {
-          ...DEFAULT_LINK.visual,
-          type: GeometryType.MESH,
-          meshPath: 'package://demo/meshes/base.stl',
-          dimensions: { x: 1, y: 1, z: 1 },
-        },
-        collision: {
-          ...DEFAULT_LINK.collision,
-          type: GeometryType.MESH,
-          meshPath: 'package://demo/meshes/base.stl',
-          dimensions: { x: 1, y: 1, z: 1 },
+  useRobotStore.getState().setRobot(
+    {
+      name: 'missing_mesh_robot',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.MESH,
+            meshPath: 'package://demo/meshes/base.stl',
+            dimensions: { x: 1, y: 1, z: 1 },
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.MESH,
+            meshPath: 'package://demo/meshes/base.stl',
+            dimensions: { x: 1, y: 1, z: 1 },
+          },
         },
       },
+      joints: {},
     },
-    joints: {},
-  }, {
-    skipHistory: true,
-    resetHistory: true,
-    label: 'Load xacro mesh failure export test robot',
-  });
+    {
+      skipHistory: true,
+      resetHistory: true,
+      label: 'Load xacro mesh failure export test robot',
+    },
+  );
 
   const downloadMocks = installDownloadMocks();
   const rendered = renderHook();
 
   try {
     await assert.rejects(
-      rendered.hook.handleExportWithConfig(createExportConfig({
-        includeMeshes: true,
-      })),
+      rendered.hook.handleExportWithConfig(
+        createExportConfig({
+          includeMeshes: true,
+        }),
+      ),
       /Mesh asset not found: package:\/\/demo\/meshes\/base\.stl/,
     );
 
@@ -510,62 +607,69 @@ test('useFileExport packages ROS1 xacro exports with gazebo_ros_control metadata
   useAssetsStore.getState().setOriginalUrdfContent('');
   useAssetsStore.getState().setOriginalFileFormat('xacro');
 
-  useRobotStore.getState().setRobot({
-    name: 'demo_robot',
-    rootLinkId: 'base_link',
-    links: {
-      base_link: {
-        ...DEFAULT_LINK,
-        id: 'base_link',
-        name: 'base_link',
-      },
-      tip_link: {
-        ...DEFAULT_LINK,
-        id: 'tip_link',
-        name: 'tip_link',
-      },
-    },
-    joints: {
-      shoulder_joint: {
-        ...DEFAULT_JOINT,
-        id: 'shoulder_joint',
-        name: 'shoulder_joint',
-        type: JointType.REVOLUTE,
-        parentLinkId: 'base_link',
-        childLinkId: 'tip_link',
-        origin: {
-          xyz: { x: 0, y: 0, z: 0 },
-          rpy: { r: 0, p: 0, y: 0 },
+  useRobotStore.getState().setRobot(
+    {
+      name: 'demo_robot',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
         },
-        axis: { x: 0, y: 0, z: 1 },
-        limit: {
-          lower: -1,
-          upper: 1,
-          effort: 10,
-          velocity: 5,
+        tip_link: {
+          ...DEFAULT_LINK,
+          id: 'tip_link',
+          name: 'tip_link',
         },
       },
+      joints: {
+        shoulder_joint: {
+          ...DEFAULT_JOINT,
+          id: 'shoulder_joint',
+          name: 'shoulder_joint',
+          type: JointType.REVOLUTE,
+          parentLinkId: 'base_link',
+          childLinkId: 'tip_link',
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+          axis: { x: 0, y: 0, z: 1 },
+          limit: {
+            lower: -1,
+            upper: 1,
+            effort: 10,
+            velocity: 5,
+          },
+        },
+      },
     },
-  }, {
-    skipHistory: true,
-    resetHistory: true,
-    label: 'Load ROS1 xacro export test robot',
-  });
+    {
+      skipHistory: true,
+      resetHistory: true,
+      label: 'Load ROS1 xacro export test robot',
+    },
+  );
 
   const downloadMocks = installDownloadMocks();
   const rendered = renderHook();
 
   try {
-    await rendered.hook.handleExportWithConfig(createExportConfig({
-      rosVersion: 'ros1',
-      rosHardwareInterface: 'effort',
-    }));
+    await rendered.hook.handleExportWithConfig(
+      createExportConfig({
+        rosVersion: 'ros1',
+        rosHardwareInterface: 'effort',
+      }),
+    );
 
     assert.equal(downloadMocks.clicked, true, 'expected the generated archive to be downloaded');
     assert.ok(downloadMocks.capturedBlob, 'expected a zip blob to be generated');
 
     const archive = await JSZip.loadAsync(await downloadMocks.capturedBlob.arrayBuffer());
-    const exportedXacroPath = Object.keys(archive.files).find((path) => path.endsWith('.urdf.xacro'));
+    const exportedXacroPath = Object.keys(archive.files).find((path) =>
+      path.endsWith('.urdf.xacro'),
+    );
     assert.ok(exportedXacroPath, 'expected exactly one exported xacro file in the archive');
     const exportedXacro = archive.file(exportedXacroPath);
     assert.ok(exportedXacro, 'expected xacro export inside the archive');
@@ -574,14 +678,26 @@ test('useFileExport packages ROS1 xacro exports with gazebo_ros_control metadata
     assert.match(exportedXml, /xmlns:xacro="http:\/\/www\.ros\.org\/wiki\/xacro"/);
     assert.match(exportedXml, /<xacro:arg name="ros_profile" default="ros1"\s*\/>/);
     assert.match(exportedXml, /<xacro:arg name="ros_hardware_interface" default="effort"\s*\/>/);
-    assert.match(exportedXml, /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros1' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/);
+    assert.match(
+      exportedXml,
+      /<xacro:if value="\$\{xacro\.arg\('ros_profile'\) == 'ros1' and xacro\.arg\('ros_hardware_interface'\) == 'effort'\}">/,
+    );
 
     const expandedXml = processXacro(exportedXml);
     assert.match(expandedXml, /<transmission name="shoulder_joint_trans">/);
-    assert.match(expandedXml, /<hardwareInterface>hardware_interface\/EffortJointInterface<\/hardwareInterface>/);
-    assert.match(expandedXml, /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/);
+    assert.match(
+      expandedXml,
+      /<hardwareInterface>hardware_interface\/EffortJointInterface<\/hardwareInterface>/,
+    );
+    assert.match(
+      expandedXml,
+      /<plugin name="gazebo_ros_control" filename="libgazebo_ros_control\.so">/,
+    );
     assert.match(expandedXml, /<robotNamespace>\/demo_robot_gazebo<\/robotNamespace>/);
-    assert.match(expandedXml, /<robotSimType>gazebo_ros_control\/DefaultRobotHWSim<\/robotSimType>/);
+    assert.match(
+      expandedXml,
+      /<robotSimType>gazebo_ros_control\/DefaultRobotHWSim<\/robotSimType>/,
+    );
     assert.doesNotMatch(expandedXml, /<ros2_control\b/);
 
     const ros2ExpandedXml = processXacro(exportedXml, {
@@ -592,7 +708,10 @@ test('useFileExport packages ROS1 xacro exports with gazebo_ros_control metadata
     assert.doesNotMatch(ros2ExpandedXml, /<state_interface name="effort"\/>/);
 
     assert.match(ros2ExpandedXml, /<ros2_control name="demo_robot" type="system">/);
-    assert.match(ros2ExpandedXml, /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/);
+    assert.match(
+      ros2ExpandedXml,
+      /<plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control\.so">/,
+    );
   } finally {
     rendered.cleanup();
     await new Promise((resolve) => setTimeout(resolve, 0));

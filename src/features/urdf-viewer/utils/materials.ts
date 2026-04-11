@@ -3,11 +3,12 @@ import { disposeMaterial } from './dispose';
 export { disposeMaterial } from './dispose';
 import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
 import { parseThreeColorWithOpacity } from '@/core/utils/color.ts';
+import { isProtectedMaterial, markMaterialAsShared } from '@/core/utils/three/materialProtection';
 
-// Re-export shared material factory so existing consumers keep working
-export { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
-export type { CreateMaterialOptions } from '@/shared/utils/materialFactory';
-import { MATERIAL_CONFIG, createMatteMaterial } from '@/shared/utils/materialFactory';
+// Re-export core material factory so existing consumers keep working
+export { MATERIAL_CONFIG, createMatteMaterial } from '@/core/utils/materialFactory';
+export type { CreateMaterialOptions } from '@/core/utils/materialFactory';
+import { MATERIAL_CONFIG, createMatteMaterial } from '@/core/utils/materialFactory';
 import {
   COLLISION_STANDARD_RENDER_ORDER,
   COLLISION_OVERLAY_RENDER_ORDER,
@@ -110,8 +111,7 @@ export function applyMatteMaterialToMesh(
     const mats = Array.isArray(originalMaterial) ? originalMaterial : [originalMaterial];
     mats.forEach((mat) => {
       if (!mat) return;
-      if ((mat as any).userData?.isSharedMaterial || (mat as any).userData?.isCollisionMaterial)
-        return;
+      if (isProtectedMaterial(mat)) return;
       disposeMaterial(mat, false);
     });
   }
@@ -277,17 +277,17 @@ export function createHighlightOverrideMaterial(
   highlightMaterialOverride.needsUpdate = true;
   return highlightMaterialOverride;
 }
-highlightMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(highlightMaterial);
 highlightMaterial.userData.isHighlightMaterial = true;
-highlightFaceMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(highlightFaceMaterial);
 highlightFaceMaterial.userData.isHighlightMaterial = true;
-collisionHighlightMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(collisionHighlightMaterial);
 collisionHighlightMaterial.userData.isHighlightMaterial = true;
-measureFirstHighlightMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(measureFirstHighlightMaterial);
 measureFirstHighlightMaterial.userData.isHighlightMaterial = true;
-measureSecondHighlightMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(measureSecondHighlightMaterial);
 measureSecondHighlightMaterial.userData.isHighlightMaterial = true;
-measureHoverHighlightMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(measureHoverHighlightMaterial);
 measureHoverHighlightMaterial.userData.isHighlightMaterial = true;
 
 // Empty raycast function to disable raycast on collision meshes
@@ -316,9 +316,7 @@ export const enhanceMaterials = (robotObject: THREE.Object3D, envMap?: THREE.Tex
       totalMeshes++;
 
       const originalMaterial = child.material as THREE.Material | THREE.Material[] | undefined;
-      const shouldSkipEnhance = (mat: THREE.Material): boolean =>
-        Boolean((mat as any).userData?.isSharedMaterial) ||
-        Boolean((mat as any).userData?.isCollisionMaterial);
+      const shouldSkipEnhance = (mat: THREE.Material): boolean => isProtectedMaterial(mat);
 
       if (Array.isArray(child.material)) {
         child.material = child.material.map((mat: THREE.Material) => {

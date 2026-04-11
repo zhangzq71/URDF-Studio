@@ -450,6 +450,12 @@ export function useFileExport() {
       throw new Error(t.exportFailedParse);
     }
     const { robot, exportName, extraMeshFiles } = exportContext;
+    assertUrdfExportSupported(
+      robot,
+      exportName,
+      replaceTemplate,
+      t.exportClosedLoopUrdfUnsupported,
+    );
     const zip = new JSZip();
     const archiveRoot = createArchiveRoot(zip, exportName);
     const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles);
@@ -468,6 +474,7 @@ export function useFileExport() {
     buildUrdfSourceExportContent,
     addMeshesToZip,
     downloadBlob,
+    t.exportClosedLoopUrdfUnsupported,
     t.exportFailedParse,
   ]);
 
@@ -516,6 +523,12 @@ export function useFileExport() {
       throw new Error(t.exportFailedParse);
     }
     const { robot, exportName, extraMeshFiles } = exportContext;
+    assertUrdfExportSupported(
+      robot,
+      exportName,
+      replaceTemplate,
+      t.exportClosedLoopUrdfUnsupported,
+    );
     const mjcfMeshExport = await prepareMjcfMeshExportAssets({
       robot,
       assets,
@@ -567,6 +580,7 @@ export function useFileExport() {
     buildBomCsv,
     addMeshesToZip,
     downloadBlob,
+    t.exportClosedLoopUrdfUnsupported,
     t.exportFailedParse,
   ]);
 
@@ -1087,6 +1101,12 @@ export function useFileExport() {
           compressSTL,
           stlQuality,
         } = config.xacro;
+        assertUrdfExportSupported(
+          exportRobot,
+          exportName,
+          replaceTemplate,
+          t.exportClosedLoopUrdfUnsupported,
+        );
         const generatedUrdfOptions = await buildGeneratedUrdfOptions(extraMeshFiles, {
           useRelativePaths,
         });

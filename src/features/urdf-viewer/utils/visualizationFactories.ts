@@ -1,6 +1,16 @@
 import * as THREE from 'three';
 import { createThreeColorFromSRGB } from '@/core/utils/color.ts';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import {
+  HELPER_RENDER_ORDER,
+  INERTIA_BOX_RENDER_ORDER,
+  GIZMO_BASE_RENDER_ORDER,
+  COM_VISUAL_RENDER_ORDER,
+  MJCF_SITE_FILL_RENDER_ORDER,
+  MJCF_SITE_WIREFRAME_RENDER_ORDER,
+  IK_HANDLE_RENDER_ORDER,
+} from '@/shared/components/3d/unified-transform-controls/gizmoCore';
+import { markMaterialAsShared } from '@/core/utils/three/materialProtection';
 import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
 import { narrowLineRaycast } from '@/shared/utils/three/narrowLineRaycast';
 
@@ -158,10 +168,10 @@ function applyMjcfSiteMaterial(
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    fillMaterial.userData = { isSharedMaterial: true };
+    markMaterialAsShared(fillMaterial);
 
     child.material = fillMaterial;
-    child.renderOrder = 10002;
+    child.renderOrder = MJCF_SITE_FILL_RENDER_ORDER;
     child.raycast = ignoreRaycast;
     child.userData = { ...helperUserData };
 
@@ -176,8 +186,8 @@ function applyMjcfSiteMaterial(
           depthWrite: false,
         }),
       );
-      (wireframe.material as THREE.LineBasicMaterial).userData = { isSharedMaterial: true };
-      wireframe.renderOrder = 10003;
+      markMaterialAsShared(wireframe.material as THREE.LineBasicMaterial);
+      wireframe.renderOrder = MJCF_SITE_WIREFRAME_RENDER_ORDER;
       wireframe.raycast = ignoreRaycast;
       wireframe.userData = { ...helperUserData };
       child.add(wireframe);
@@ -362,7 +372,7 @@ export function createOriginAxes(size: number): THREE.Group {
   xAxis.rotation.set(0, 0, -Math.PI / 2);
   xAxis.position.set(size / 2, 0, 0);
   xAxis.userData = createSelectableHelperUserData();
-  xAxis.renderOrder = 999;
+  xAxis.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(xAxis);
 
   const xConeGeom = new THREE.ConeGeometry(headRadius, headSize, 12);
@@ -370,7 +380,7 @@ export function createOriginAxes(size: number): THREE.Group {
   xCone.rotation.set(0, 0, -Math.PI / 2);
   xCone.position.set(size, 0, 0);
   xCone.userData = createSelectableHelperUserData();
-  xCone.renderOrder = 999;
+  xCone.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(xCone);
 
   // Y Axis - Green
@@ -379,14 +389,14 @@ export function createOriginAxes(size: number): THREE.Group {
   const yAxis = new THREE.Mesh(yAxisGeom, yAxisMat);
   yAxis.position.set(0, size / 2, 0);
   yAxis.userData = createSelectableHelperUserData();
-  yAxis.renderOrder = 999;
+  yAxis.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(yAxis);
 
   const yConeGeom = new THREE.ConeGeometry(headRadius, headSize, 12);
   const yCone = new THREE.Mesh(yConeGeom, yAxisMat);
   yCone.position.set(0, size, 0);
   yCone.userData = createSelectableHelperUserData();
-  yCone.renderOrder = 999;
+  yCone.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(yCone);
 
   // Z Axis - Blue
@@ -396,7 +406,7 @@ export function createOriginAxes(size: number): THREE.Group {
   zAxis.rotation.set(Math.PI / 2, 0, 0);
   zAxis.position.set(0, 0, size / 2);
   zAxis.userData = createSelectableHelperUserData();
-  zAxis.renderOrder = 999;
+  zAxis.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(zAxis);
 
   const zConeGeom = new THREE.ConeGeometry(headRadius, headSize, 12);
@@ -404,7 +414,7 @@ export function createOriginAxes(size: number): THREE.Group {
   zCone.rotation.set(Math.PI / 2, 0, 0);
   zCone.position.set(0, 0, size);
   zCone.userData = createSelectableHelperUserData();
-  zCone.renderOrder = 999;
+  zCone.renderOrder = HELPER_RENDER_ORDER;
   originAxes.add(zCone);
 
   return originAxes;
@@ -444,7 +454,7 @@ export function createJointAxisViz(
   shaft.rotation.set(Math.PI / 2, 0, 0);
   shaft.position.set(0, 0, (arrowLength - arrowHeadLength) / 2);
   shaft.userData = createSelectableHelperUserData();
-  shaft.renderOrder = 999;
+  shaft.renderOrder = HELPER_RENDER_ORDER;
   jointAxisViz.add(shaft);
 
   // Arrow head
@@ -453,7 +463,7 @@ export function createJointAxisViz(
   head.rotation.set(Math.PI / 2, 0, 0);
   head.position.set(0, 0, arrowLength - arrowHeadLength / 2);
   head.userData = createSelectableHelperUserData();
-  head.renderOrder = 999;
+  head.renderOrder = HELPER_RENDER_ORDER;
   jointAxisViz.add(head);
 
   // For revolute/continuous joints, add rotation indicator (torus)
@@ -464,7 +474,7 @@ export function createJointAxisViz(
     const torusGeom = new THREE.TorusGeometry(torusRadius, tubeRadius, 8, 32, torusArc);
     const torus = new THREE.Mesh(torusGeom, shaftMat);
     torus.userData = createSelectableHelperUserData();
-    torus.renderOrder = 999;
+    torus.renderOrder = HELPER_RENDER_ORDER;
     jointAxisViz.add(torus);
 
     // Small arrow on torus to indicate rotation direction
@@ -473,7 +483,7 @@ export function createJointAxisViz(
     miniCone.position.set(torusRadius, 0, 0);
     miniCone.rotation.set(Math.PI / 2, 0, -Math.PI / 2);
     miniCone.userData = createSelectableHelperUserData();
-    miniCone.renderOrder = 999;
+    miniCone.renderOrder = HELPER_RENDER_ORDER;
     jointAxisViz.add(miniCone);
   }
 
@@ -490,7 +500,7 @@ export function createJointAxisViz(
     shaft2.rotation.set(-Math.PI / 2, 0, 0);
     shaft2.position.set(0, 0, -(arrowLength - arrowHeadLength) / 2);
     shaft2.userData = createSelectableHelperUserData();
-    shaft2.renderOrder = 999;
+    shaft2.renderOrder = HELPER_RENDER_ORDER;
     jointAxisViz.add(shaft2);
 
     const head2Geom = new THREE.ConeGeometry(arrowHeadWidth, arrowHeadLength, 8);
@@ -498,7 +508,7 @@ export function createJointAxisViz(
     head2.rotation.set(-Math.PI / 2, 0, 0);
     head2.position.set(0, 0, -(arrowLength - arrowHeadLength / 2));
     head2.userData = createSelectableHelperUserData();
-    head2.renderOrder = 999;
+    head2.renderOrder = HELPER_RENDER_ORDER;
     jointAxisViz.add(head2);
   }
 
@@ -525,14 +535,14 @@ export function createCoMVisual(): THREE.Group {
     transparent: true,
     opacity: 0.8,
   });
-  matBlack.userData = { isSharedMaterial: true }; // Prevent opacity modification
+  markMaterialAsShared(matBlack); // Prevent opacity modification
   const matWhite = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     depthTest: false,
     transparent: true,
     opacity: 0.8,
   });
-  matWhite.userData = { isSharedMaterial: true }; // Prevent opacity modification
+  markMaterialAsShared(matWhite); // Prevent opacity modification
 
   const positions = [
     [0, 0, 0],
@@ -548,7 +558,7 @@ export function createCoMVisual(): THREE.Group {
   positions.forEach((rot, i) => {
     const mesh = new THREE.Mesh(geometry, i % 2 === 0 ? matBlack : matWhite);
     mesh.rotation.set(rot[0], rot[1], rot[2]);
-    mesh.renderOrder = 10001;
+    mesh.renderOrder = COM_VISUAL_RENDER_ORDER;
     mesh.userData = createSelectableHelperUserData();
     comVisual.add(mesh);
   });
@@ -578,11 +588,12 @@ export function createInertiaBox(
     depthWrite: false,
     depthTest: false,
   });
-  mat.userData = { isSharedMaterial: true }; // Prevent opacity modification
+  markMaterialAsShared(mat);
   const mesh = new THREE.Mesh(geom, mat);
+
   mesh.quaternion.copy(rotation);
   mesh.userData = createSelectableHelperUserData();
-  mesh.renderOrder = 9999;
+  mesh.renderOrder = INERTIA_BOX_RENDER_ORDER;
   mesh.raycast = ignoreRaycast;
   inertiaBox.add(mesh);
 
@@ -594,11 +605,11 @@ export function createInertiaBox(
     depthWrite: false,
     depthTest: false,
   });
-  lineMat.userData = { isSharedMaterial: true }; // Prevent opacity modification
+  markMaterialAsShared(lineMat);
   const line = new THREE.LineSegments(edges, lineMat);
   line.quaternion.copy(rotation);
   line.userData = createSelectableHelperUserData();
-  line.renderOrder = 10000;
+  line.renderOrder = GIZMO_BASE_RENDER_ORDER;
   // Let the visible outline own picking with a narrow threshold so hover/click
   // stays close to the 2D silhouette users actually see on screen.
   line.raycast = narrowLineRaycast;
@@ -634,7 +645,7 @@ export function createLinkIkHandle(radius: number): THREE.Group {
   pickTarget.userData = createSelectableHelperUserData({
     viewerHelperKind: 'ik-handle',
   });
-  pickTarget.renderOrder = 10030;
+  pickTarget.renderOrder = IK_HANDLE_RENDER_ORDER;
   ikHandle.add(pickTarget);
 
   return ikHandle;

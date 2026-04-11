@@ -363,35 +363,39 @@ function createBuiltinCheckerTexture(textureDef: MJCFTexture): THREE.Texture {
   const primaryColor = resolveBuiltinTextureColor(textureDef.rgb1, [0.2, 0.3, 0.4]);
   const secondaryColor = resolveBuiltinTextureColor(textureDef.rgb2, [0.1, 0.2, 0.3]);
   const edgeColor = resolveBuiltinTextureColor(textureDef.markrgb, primaryColor);
-  const cellsX = 10;
-  const cellsY = 10;
-  const edgeThicknessX = Math.max(1, Math.round(width / cellsX));
-  const edgeThicknessY = Math.max(1, Math.round(height / cellsY));
+  // MuJoCo uses 2x2 cells per texture tile (not 10x10). Combined with
+  // texrepeat (e.g. 5x5) this produces a clear, readable checker grid.
+  const cellsX = 2;
+  const cellsY = 2;
+  const cellWidth = width / cellsX;
+  const cellHeight = height / cellsY;
   const hasEdgeMark =
     String(textureDef.mark || '')
       .trim()
       .toLowerCase() === 'edge';
 
-  return createBuiltinDataTexture(
-    width,
-    height,
-    (x, y) => {
-      if (
-        hasEdgeMark &&
-        (x < edgeThicknessX ||
-          x >= width - edgeThicknessX ||
-          y < edgeThicknessY ||
-          y >= height - edgeThicknessY)
-      ) {
+  const texture = createBuiltinDataTexture(width, height, (x, y) => {
+    const cellX = Math.floor(x / cellWidth);
+    const cellY = Math.floor(y / cellHeight);
+
+    if (hasEdgeMark) {
+      const localX = x - cellX * cellWidth;
+      const localY = y - cellY * cellHeight;
+      if (localX < 1 || localY < 1) {
         return edgeColor;
       }
+    }
 
-      const cellX = Math.floor((x / width) * cellsX);
-      const cellY = Math.floor((y / height) * cellsY);
-      return (cellX + cellY) % 2 === 0 ? primaryColor : secondaryColor;
-    },
-    { nearest: true },
-  );
+    return (cellX + cellY) % 2 === 0 ? primaryColor : secondaryColor;
+  });
+
+  // Enable mipmaps so the checker looks smooth on the angled ground plane
+  // instead of flickering / moiré from NearestFilter.
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function createBuiltinFlatTexture(textureDef: MJCFTexture): THREE.Texture {

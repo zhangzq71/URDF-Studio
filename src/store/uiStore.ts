@@ -158,7 +158,7 @@ const defaultViewOptions: ViewOptions = {
   showGrid: true,
   showAxes: true,
   showUsageGuide: true,
-  showMjcfWorldLink: false,
+  showMjcfWorldLink: true,
   showIkHandles: false,
   showJointAxes: false,
   showInertia: false,
@@ -483,7 +483,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 15,
+      version: 16,
       migrate: (persistedState: unknown, persistedVersion) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
@@ -515,6 +515,13 @@ export const useUIStore = create<UIState>()(
         // always-visible, which leaves a green helper ball on first load.
         if ((persistedVersion ?? 0) < 15) {
           migratedViewOptions.showIkHandles = false;
+        }
+
+        // MJCF world link (ground plane) should be visible by default.
+        // Earlier migrations (v14) forced this to false; reset to true so
+        // imported MJCF scenes show their floor immediately.
+        if ((persistedVersion ?? 0) < 16) {
+          migratedViewOptions.showMjcfWorldLink = true;
         }
 
         return {

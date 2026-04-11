@@ -312,13 +312,14 @@ function collectReferencedTextMeshPathsForPreferredImport(
       });
     }
   } catch (error) {
+    // Best-effort text-mesh collection: continue with fallback references even if parse fails.
     scheduleFailFastInDev(
       'importPreparation:collectReferencedTextMeshPathsForPreferredImport',
       new Error(
         `Failed to pre-parse MJCF import "${preferredFile.name}" while collecting text-mesh dependencies.`,
         { cause: error },
       ),
-      'warn',
+      'error',
     );
   }
 

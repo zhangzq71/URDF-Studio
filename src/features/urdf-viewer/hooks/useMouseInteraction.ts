@@ -1071,6 +1071,14 @@ export function useMouseInteraction({
       pointerButtonsRef.current = 0;
       let shouldResetSelectionMissGuard = justSelectedRef?.current === true;
 
+      // Capture empty-click state before the refs below are cleared.
+      // An empty click is one where no gizmo, mesh, or helper was hit,
+      // no deferred selection is pending, and no joint drag is active.
+      const wasEmptyClick =
+        !pendingPointerSelectionRef.current &&
+        !isDraggingJoint.current &&
+        !justSelectedRef?.current;
+
       if (pendingPointerSelectionRef.current) {
         const pendingSelection = pendingPointerSelectionRef.current;
         const shouldCommitPendingSelection = !pointerExceededClickThresholdRef.current;
@@ -1109,6 +1117,16 @@ export function useMouseInteraction({
         });
       } else {
         clearSelectionMissGuardTimer(selectionResetTimerRef);
+      }
+
+      // When clicking on empty space (no gizmo hit, no mesh hit, no joint
+      // drag), clear the selection so the transform gizmo disappears.  This
+      // provides a fallback deselection path that works even if R3F's
+      // onPointerMissed does not fire (e.g. when gizmo picker meshes cause
+      // useFrame hover suppression to disable orbit controls, which can
+      // interfere with R3F's click-detection cycle).
+      if (wasEmptyClick) {
+        onSelect?.('link', '');
       }
 
       setOrbitControlsEnabled(true);

@@ -4,6 +4,7 @@ import type { UrdfVisual, UrdfVisualMaterial, UrdfVisualMeshMaterialGroup } from
 import { getGeometryMeshMaterialGroupsForMesh } from '@/core/robot/visualMeshMaterialGroups';
 import { getGeometryAuthoredMaterials } from '@/core/robot/visualMaterials';
 import { createMatteMaterial } from './materialFactory';
+import { isProtectedMaterial } from './three/materialProtection';
 import { parseThreeColorWithOpacity } from './color.ts';
 
 export type MeshFaceSelectionScope = 'face' | 'island';
@@ -387,10 +388,7 @@ export function applyVisualMeshMaterialGroupsToObject(
   });
 
   replacedMaterials.forEach((material) => {
-    if (
-      (material as any).userData?.isSharedMaterial ||
-      (material as any).userData?.isCollisionMaterial
-    ) {
+    if (isProtectedMaterial(material)) {
       return;
     }
 
