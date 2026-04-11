@@ -68,6 +68,7 @@ export interface AppExposedActions {
   openAIConversation: () => void;
   openIkTool: () => void;
   openCollisionOptimizer: () => void;
+  openTool: (key: string) => void;
 }
 
 interface AppContentProps {
@@ -1177,7 +1178,8 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
   const layoutActionsRef = useRef<{
     openIkTool: () => void;
     openCollisionOptimizer: () => void;
-  }>({ openIkTool: () => {}, openCollisionOptimizer: () => {} });
+    openTool: (key: string) => void;
+  }>({ openIkTool: () => {}, openCollisionOptimizer: () => {}, openTool: () => {} });
 
   const exposedActionsRef = useRef<AppExposedActions | null>(null);
   exposedActionsRef.current = {
@@ -1187,6 +1189,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     openAIConversation: handleOpenAIConversation,
     openIkTool: () => layoutActionsRef.current.openIkTool(),
     openCollisionOptimizer: () => layoutActionsRef.current.openCollisionOptimizer(),
+    openTool: (key: string) => layoutActionsRef.current.openTool(key),
   };
 
   useEffect(() => {

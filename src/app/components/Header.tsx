@@ -16,6 +16,7 @@ import type {
   HeaderMenuKey,
   HeaderViewAvailability,
   HeaderViewConfig,
+  ToolboxItem,
 } from './header/types';
 
 interface HeaderProps {
@@ -24,10 +25,9 @@ interface HeaderProps {
   onImportFolder: () => void;
   onOpenExport: () => void;
   onExportProject: () => void;
-  // Modal actions
-  onOpenAIInspection: () => void;
-  onOpenAIConversation: () => void;
-  onOpenIkTool: () => void;
+  // Toolbox items
+  toolboxItems: ToolboxItem[];
+  // Other actions
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
@@ -35,7 +35,6 @@ interface HeaderProps {
   secondaryAction?: HeaderAction;
   // Snapshot
   onSnapshot: () => void;
-  onOpenCollisionOptimizer: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
@@ -51,16 +50,13 @@ export function Header({
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAIInspection,
-  onOpenAIConversation,
-  onOpenIkTool,
+  toolboxItems,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
   quickAction,
   secondaryAction,
   onSnapshot,
-  onOpenCollisionOptimizer,
   viewConfig,
   viewAvailability = { jointPanel: true },
   setViewConfig,
@@ -138,10 +134,7 @@ export function Header({
           onImportFolder={onImportFolder}
           onOpenExport={onOpenExport}
           onExportProject={onExportProject}
-          onOpenAIInspection={onOpenAIInspection}
-          onOpenAIConversation={onOpenAIConversation}
-          onOpenIkTool={onOpenIkTool}
-          onOpenCollisionOptimizer={onOpenCollisionOptimizer}
+          toolboxItems={toolboxItems}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           undo={undo}

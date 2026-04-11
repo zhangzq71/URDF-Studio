@@ -307,7 +307,7 @@ Linus taste 落地检查：
 - `src/app/components/ConnectedDocumentLoadingOverlay.tsx` / `src/app/components/DocumentLoadingOverlay.tsx` / `src/app/components/ImportPreparationOverlay.tsx`：导入准备、文档加载与 worker 进度反馈
 - `src/app/components/SnapshotDialog.tsx`：统一快照导出与预览弹层
 - `src/app/components/unified-viewer/*`：统一 viewer 的 scene root、overlay、derived state、mode module loader 与 joints panel 适配
-- `src/app/components/header/*`：Header actions/menus/overflow/toolbox 等子结构
+- `src/app/components/header/*`：Header actions/menus/overflow/toolbox 等子结构；`ToolboxMenu` 为纯渲染器（接收 `items: ToolboxItem[]`），`ToolboxItem` 类型收口在 `header/types.ts`
 - `src/app/components/settings/*`：设置面板子页与 about pane
 
 当前 `app/hooks/*` 职责：
@@ -324,6 +324,7 @@ Linus taste 落地检查：
 - `src/app/hooks/useEditableSourcePatches.ts` / `src/app/hooks/useUnsavedChangesPrompt.ts`：编辑源码 patch 生命周期与离开保护
 - `useCollisionOptimizationWorkflow.ts`：碰撞优化 UI 流程与状态协调
 - `usePendingHistoryCoordinator.ts`：pending history 与 viewer/export 生命周期协同
+- `useToolItems.tsx`：工具箱工具注册表；定义有哪些工具、每个工具怎么打开，返回 `items` 与 `openTool(key)` 统一路由。新增内部工具时**唯一需要改的文件**
 - `robotImportWorkerBridge.ts` / `importPreparationWorkerBridge.ts`：App 层 worker bridge，连接导入准备与 robot import worker
 
 当前 `app/utils/*` 重点：
@@ -838,3 +839,4 @@ npm run codex:key-router:deploy:dry
 - `test/` 中包含外部工程镜像和大型样本，修改前先确认是否真的是本次任务范围。
 - 2026-03-30：USD runtime metadata 的 folded collision semantic child link 修复已明确收口到 `runtime/hydra/render-delegate/*` 的 worker/runtime 链路，不应再把同类问题修到主线程 adapter、UI store 或 regression bridge。
 - 2026-03-30：`test/unitree_model` 目前是 USD worker/stage metadata 链路的主浏览器回归样本集；后续改动该链路时，默认要补跑整套 Unitree 验证，而不是只跑单个 Go2 fixture。
+- 2026-04-11：ToolboxMenu 引入工具注册表模式。`useToolItems` hook（`app/hooks/useToolItems.tsx`）作为工具定义与路由的单一入口，新增内部工具只需改该文件 + i18n。`ToolboxMenu` 改为纯渲染器，接收 `items: ToolboxItem[]`。`AppExposedActions` 新增 `openTool(key)` 统一路由。已有 `openAIInspection` / `openAIConversation` / `openIkTool` / `openCollisionOptimizer` 字段全部保留（向后兼容）。

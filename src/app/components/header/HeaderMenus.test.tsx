@@ -9,6 +9,8 @@ import { translations } from '@/shared/i18n';
 
 import { HeaderMenus } from './HeaderMenus.tsx';
 
+const noopToolboxItems: import('./types').ToolboxItem[] = [];
+
 function renderViewMenu({
   showJointPanel = true,
   jointPanelAvailable = true,
@@ -38,10 +40,7 @@ function renderViewMenu({
       onImportFolder: () => {},
       onOpenExport: () => {},
       onExportProject: () => {},
-      onOpenAIInspection: () => {},
-      onOpenAIConversation: () => {},
-      onOpenIkTool: () => {},
-      onOpenCollisionOptimizer: () => {},
+      toolboxItems: noopToolboxItems,
       onOpenCodeViewer: () => {},
       onPrefetchCodeViewer: () => {},
       undo: () => {},

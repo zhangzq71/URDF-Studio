@@ -1,35 +1,12 @@
 import React from 'react';
-import {
-  Activity,
-  ArrowUpRight,
-  Box,
-  Crosshair,
-  MessageSquare,
-  RefreshCw,
-  ScanSearch,
-} from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
-import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
+import type { ToolboxItem } from './types';
 
 interface ToolboxMenuProps {
   t: TranslationKeys;
   onClose: () => void;
-  onOpenAIInspection: () => void;
-  onOpenAIConversation: () => void;
-  onOpenIkTool: () => void;
-  onOpenCollisionOptimizer: () => void;
-}
-
-type ToolboxItemTone = 'primary' | 'neutral' | 'logo';
-
-interface ToolboxItem {
-  key: string;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  external?: boolean;
-  tone?: ToolboxItemTone;
+  items: ToolboxItem[];
 }
 
 function ToolboxItemCard({
@@ -37,11 +14,13 @@ function ToolboxItemCard({
   isActive,
   onHoverStart,
   onHoverEnd,
+  onClose,
 }: {
   item: ToolboxItem;
   isActive: boolean;
   onHoverStart: (item: ToolboxItem) => void;
   onHoverEnd: () => void;
+  onClose: () => void;
 }) {
   const iconToneClassName =
     item.tone === 'primary'
@@ -53,7 +32,10 @@ function ToolboxItemCard({
   return (
     <button
       type="button"
-      onClick={item.onClick}
+      onClick={() => {
+        onClose();
+        item.onClick();
+      }}
       onPointerEnter={() => onHoverStart(item)}
       onPointerLeave={onHoverEnd}
       onFocus={() => onHoverStart(item)}
@@ -92,141 +74,8 @@ function ToolboxItemCard({
   );
 }
 
-export function ToolboxMenu({
-  t,
-  onClose,
-  onOpenAIInspection,
-  onOpenAIConversation,
-  onOpenIkTool,
-  onOpenCollisionOptimizer,
-}: ToolboxMenuProps) {
+export function ToolboxMenu({ t, onClose, items }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
-  const effectiveTheme = useEffectiveTheme();
-  const motrixLogoSrc =
-    effectiveTheme === 'dark' ? '/logos/motrix-logo-white.svg' : '/logos/motrix-logo.svg';
-
-  const openExternal = React.useCallback(
-    (url: string) => {
-      onClose();
-      window.open(url, '_blank', 'noopener,noreferrer');
-    },
-    [onClose],
-  );
-
-  const openAIInspection = React.useCallback(() => {
-    onClose();
-    onOpenAIInspection();
-  }, [onClose, onOpenAIInspection]);
-
-  const openAIConversation = React.useCallback(() => {
-    onClose();
-    onOpenAIConversation();
-  }, [onClose, onOpenAIConversation]);
-
-  const openCollisionOptimizer = React.useCallback(() => {
-    onClose();
-    onOpenCollisionOptimizer();
-  }, [onClose, onOpenCollisionOptimizer]);
-
-  const openIkTool = React.useCallback(() => {
-    onClose();
-    onOpenIkTool();
-  }, [onClose, onOpenIkTool]);
-
-  const items: ToolboxItem[] = [
-    {
-      key: 'ai-inspection',
-      title: t.aiInspection,
-      description: t.aiInspectionDesc,
-      icon: <ScanSearch className="h-[18px] w-[18px]" />,
-      onClick: openAIInspection,
-      tone: 'primary',
-    },
-    {
-      key: 'ai-conversation',
-      title: t.aiConversation,
-      description: t.aiConversationDesc,
-      icon: <MessageSquare className="h-[18px] w-[18px]" />,
-      onClick: openAIConversation,
-      tone: 'primary',
-    },
-    {
-      key: 'ik-tool',
-      title: t.ikTool,
-      description: t.ikToolboxDesc,
-      icon: <Crosshair className="h-[18px] w-[18px]" />,
-      onClick: openIkTool,
-      tone: 'primary',
-    },
-    {
-      key: 'collision-optimizer',
-      title: t.collisionOptimizerDialog,
-      description: t.collisionOptimizerToolboxDesc,
-      icon: <Box className="h-[18px] w-[18px]" />,
-      onClick: openCollisionOptimizer,
-      tone: 'primary',
-    },
-    {
-      key: 'motion-tracking',
-      title: t.robotRedirect,
-      description: t.motionTrackingDesc,
-      icon: <RefreshCw className="h-[18px] w-[18px]" />,
-      onClick: () => openExternal('https://motion-tracking.axell.top/'),
-      external: true,
-      tone: 'neutral',
-    },
-    {
-      key: 'step2urdf',
-      title: t.step2urdf,
-      description: t.step2urdfDesc,
-      icon: <img src="/logos/step2urdf-logo.svg" alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://step2urdf.top/'),
-      external: true,
-      tone: 'logo',
-    },
-    {
-      key: 'robogo',
-      title: t.robogo,
-      description: t.robogoDesc,
-      icon: (
-        <img
-          src="/logos/d-robotics-logo.jpg"
-          alt=""
-          className="h-5 w-5 rounded-[0.5rem] object-contain"
-        />
-      ),
-      onClick: () => openExternal('https://robogo.d-robotics.cc/'),
-      external: true,
-      tone: 'logo',
-    },
-    {
-      key: 'motrix',
-      title: t.motrix,
-      description: t.motrixDesc,
-      icon: <img src={motrixLogoSrc} alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://motrix.motphys.com/'),
-      external: true,
-      tone: 'logo',
-    },
-    {
-      key: 'trajectory-editing',
-      title: t.trajectoryEditing,
-      description: t.trajectoryEditingDesc,
-      icon: <Activity className="h-[18px] w-[18px]" />,
-      onClick: () => openExternal('https://motion-editor.cyoahs.dev/'),
-      external: true,
-      tone: 'neutral',
-    },
-    {
-      key: 'bridgedp',
-      title: t.bridgedpEngine,
-      description: t.bridgedpEngineDesc,
-      icon: <img src="/logos/bridgedp-logo.png" alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://engine.bridgedp.com/'),
-      external: true,
-      tone: 'logo',
-    },
-  ];
 
   const hoveredItem = React.useMemo(
     () => items.find((item) => item.key === hoveredItemKey) ?? null,
@@ -247,6 +96,7 @@ export function ToolboxMenu({
               onHoverEnd={() =>
                 setHoveredItemKey((currentKey) => (currentKey === item.key ? null : currentKey))
               }
+              onClose={onClose}
             />
           ))}
         </div>

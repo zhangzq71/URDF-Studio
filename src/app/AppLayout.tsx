@@ -32,6 +32,7 @@ import {
   usePreviewFileWithFeedback,
   usePreparedUsdViewerAssets,
   useSourceCodeEditorWarmup,
+  useToolItems,
   useUsdDocumentLifecycle,
   useWorkspaceAssemblyRenderFailureNotice,
   useViewerOrchestration,
@@ -113,6 +114,7 @@ interface AppLayoutProps {
   onExposeLayoutActions?: (actions: {
     openIkTool: () => void;
     openCollisionOptimizer: () => void;
+    openTool: (key: string) => void;
   }) => void;
 }
 
@@ -791,13 +793,22 @@ export function AppLayout({
     setIsIkToolPanelOpen(true);
   }, [handleSetIkDragActive, setViewConfig]);
 
+  const { items: toolboxItems, openTool } = useToolItems({
+    t,
+    openAIInspection: onOpenAIInspection,
+    openAIConversation: onOpenAIConversation,
+    openIkTool: handleOpenIkTool,
+    openCollisionOptimizer: handleOpenCollisionOptimizer,
+  });
+
   // Expose layout-level handlers to the parent
   useEffect(() => {
     onExposeLayoutActions?.({
       openIkTool: handleOpenIkTool,
       openCollisionOptimizer: handleOpenCollisionOptimizer,
+      openTool,
     });
-  }, [onExposeLayoutActions, handleOpenIkTool, handleOpenCollisionOptimizer]);
+  }, [onExposeLayoutActions, handleOpenIkTool, handleOpenCollisionOptimizer, openTool]);
 
   const handleSetDetailOptionsPanelVisibility = useCallback(
     (show: boolean) => {
@@ -915,16 +926,13 @@ export function AppLayout({
         onImportFolder={() => importFolderInputRef.current?.click()}
         onOpenExport={onOpenExport}
         onExportProject={onExportProject}
-        onOpenAIInspection={onOpenAIInspection}
-        onOpenAIConversation={onOpenAIConversation}
-        onOpenIkTool={handleOpenIkTool}
+        toolboxItems={toolboxItems}
         onOpenCodeViewer={handleOpenCodeViewer}
         onPrefetchCodeViewer={handlePrefetchCodeViewer}
         onOpenSettings={onOpenSettings}
         quickAction={headerQuickAction}
         secondaryAction={headerSecondaryAction}
         onSnapshot={handleSnapshot}
-        onOpenCollisionOptimizer={handleOpenCollisionOptimizer}
         viewConfig={viewConfig}
         viewAvailability={{ jointPanel: jointPanelAvailable }}
         setViewConfig={setViewConfig}

@@ -21,6 +21,7 @@ import type {
   HeaderTranslations,
   HeaderViewAvailability,
   HeaderViewConfig,
+  ToolboxItem,
 } from './types';
 
 interface HeaderMenusProps {
@@ -38,10 +39,7 @@ interface HeaderMenusProps {
   onImportFolder: () => void;
   onOpenExport: () => void;
   onExportProject: () => void;
-  onOpenAIInspection: () => void;
-  onOpenAIConversation: () => void;
-  onOpenIkTool: () => void;
-  onOpenCollisionOptimizer: () => void;
+  toolboxItems: ToolboxItem[];
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   undo: () => void;
@@ -69,10 +67,7 @@ export function HeaderMenus({
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAIInspection,
-  onOpenAIConversation,
-  onOpenIkTool,
-  onOpenCollisionOptimizer,
+  toolboxItems,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   undo,
@@ -254,14 +249,7 @@ export function HeaderMenus({
         </HeaderButton>
 
         {activeMenu === 'toolbox' && (
-          <ToolboxMenu
-            t={t}
-            onClose={() => setActiveMenu(null)}
-            onOpenAIInspection={onOpenAIInspection}
-            onOpenAIConversation={onOpenAIConversation}
-            onOpenIkTool={onOpenIkTool}
-            onOpenCollisionOptimizer={onOpenCollisionOptimizer}
-          />
+          <ToolboxMenu t={t} onClose={() => setActiveMenu(null)} items={toolboxItems} />
         )}
       </div>
 
