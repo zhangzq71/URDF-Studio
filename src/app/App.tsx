@@ -69,6 +69,7 @@ export interface AppExposedActions {
   openIkTool: () => void;
   openCollisionOptimizer: () => void;
   openTool: (key: string) => void;
+  exportProjectBlob: () => Promise<Blob>;
 }
 
 interface AppContentProps {
@@ -1181,6 +1182,11 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     openTool: (key: string) => void;
   }>({ openIkTool: () => {}, openCollisionOptimizer: () => {}, openTool: () => {} });
 
+  const handleExportProjectBlob = useCallback(async (): Promise<Blob> => {
+    const result = await runProjectExport({ skipDownload: true });
+    return result.blob;
+  }, [runProjectExport]);
+
   const exposedActionsRef = useRef<AppExposedActions | null>(null);
   exposedActionsRef.current = {
     importFiles: handleImport,
@@ -1190,6 +1196,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     openIkTool: () => layoutActionsRef.current.openIkTool(),
     openCollisionOptimizer: () => layoutActionsRef.current.openCollisionOptimizer(),
     openTool: (key: string) => layoutActionsRef.current.openTool(key),
+    exportProjectBlob: handleExportProjectBlob,
   };
 
   useEffect(() => {
