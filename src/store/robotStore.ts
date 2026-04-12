@@ -12,14 +12,32 @@ import type {
   UrdfLink,
   UrdfJoint,
 } from '@/types';
-import { DEFAULT_LINK, DEFAULT_JOINT, DEFAULT_VISUAL_COLOR } from '@/types';
-import { resolveClosedLoopDrivenJointMotion } from '@/core/robot';
+import { DEFAULT_JOINT, DEFAULT_VISUAL_COLOR } from '@/types';
+import {
+  createAttachedChildLink,
+  resolveClosedLoopDrivenJointMotion,
+  resolveDefaultChildJointOrigin,
+} from '@/core/robot';
 import {
   syncRobotMaterialsForLinkUpdate,
   syncRobotVisualColorsFromMaterials,
 } from '@/core/robot/materials';
 
 const INITIAL_LINK_ID = 'base_link';
+const createInitialRootLink = (): UrdfLink => {
+  const link = createAttachedChildLink({
+    id: INITIAL_LINK_ID,
+    name: 'base_link',
+  });
+
+  return {
+    ...link,
+    visual: {
+      ...link.visual,
+      color: DEFAULT_VISUAL_COLOR,
+    },
+  };
+};
 
 // Robot data without selection (selection is in selectionStore)
 export interface RobotData {
@@ -109,12 +127,7 @@ interface RobotActions {
 const INITIAL_ROBOT_DATA: RobotData = {
   name: 'my_robot',
   links: {
-    [INITIAL_LINK_ID]: {
-      ...DEFAULT_LINK,
-      id: INITIAL_LINK_ID,
-      name: 'base_link',
-      visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR },
-    },
+    [INITIAL_LINK_ID]: createInitialRootLink(),
   },
   joints: {},
   rootLinkId: INITIAL_LINK_ID,
@@ -153,9 +166,17 @@ export const useRobotStore = create<
 
     // Helper to save current state to history
     const saveToHistory = (label: string) => {
-      const { name, links, joints, rootLinkId, materials, closedLoopConstraints } = get();
+      const {
+        name,
+        links,
+        joints,
+        rootLinkId,
+        materials,
+        closedLoopConstraints,
+        inspectionContext,
+      } = get();
       appendHistorySnapshot(
-        { name, links, joints, rootLinkId, materials, closedLoopConstraints },
+        { name, links, joints, rootLinkId, materials, closedLoopConstraints, inspectionContext },
         label,
       );
     };
@@ -191,6 +212,7 @@ export const useRobotStore = create<
           state.rootLinkId = normalizedData.rootLinkId;
           state.materials = normalizedData.materials;
           state.closedLoopConstraints = normalizedData.closedLoopConstraints;
+          state.inspectionContext = normalizedData.inspectionContext;
           if (shouldResetHistory) {
             state._history = { past: [], future: [] };
             state._activity = [...state._activity, createChangeLogEntry(historyLabel)].slice(
@@ -209,6 +231,7 @@ export const useRobotStore = create<
           state.rootLinkId = newData.rootLinkId;
           state.materials = newData.materials;
           state.closedLoopConstraints = newData.closedLoopConstraints;
+          state.inspectionContext = newData.inspectionContext;
           state._history = { past: [], future: [] };
         });
       },
@@ -363,12 +386,15 @@ export const useRobotStore = create<
         // Calculate offset for new child
         const siblings = Object.values(state.joints).filter((j) => j.parentLinkId === parentLinkId);
         const yOffset = siblings.length * 0.5;
+        const parentLink = state.links[parentLinkId];
 
-        const newLink: UrdfLink = {
-          ...DEFAULT_LINK,
+        const newLink: UrdfLink = createAttachedChildLink({
           id: newLinkId,
           name: `link_${Object.keys(state.links).length + 1}`,
-          visual: { ...DEFAULT_LINK.visual, color: DEFAULT_VISUAL_COLOR },
+        });
+        newLink.visual = {
+          ...newLink.visual,
+          color: DEFAULT_VISUAL_COLOR,
         };
 
         const newJoint: UrdfJoint = {
@@ -377,10 +403,7 @@ export const useRobotStore = create<
           name: `joint_${Object.keys(state.joints).length + 1}`,
           parentLinkId,
           childLinkId: newLinkId,
-          origin: {
-            xyz: { x: 0, y: yOffset, z: 0.5 },
-            rpy: { r: 0, p: 0, y: 0 },
-          },
+          origin: resolveDefaultChildJointOrigin(parentLink, yOffset),
         };
 
         saveToHistory('Add child subtree');
@@ -427,8 +450,16 @@ export const useRobotStore = create<
 
       // History operations
       undo: () => {
-        const { _history, name, links, joints, rootLinkId, materials, closedLoopConstraints } =
-          get();
+        const {
+          _history,
+          name,
+          links,
+          joints,
+          rootLinkId,
+          materials,
+          closedLoopConstraints,
+          inspectionContext,
+        } = get();
         if (_history.past.length === 0) return;
 
         const previous = cloneRobotData(_history.past[_history.past.length - 1]);
@@ -439,6 +470,7 @@ export const useRobotStore = create<
           rootLinkId,
           materials,
           closedLoopConstraints,
+          inspectionContext,
         });
 
         set((state) => {
@@ -448,14 +480,23 @@ export const useRobotStore = create<
           state.rootLinkId = previous.rootLinkId;
           state.materials = previous.materials;
           state.closedLoopConstraints = previous.closedLoopConstraints;
+          state.inspectionContext = previous.inspectionContext;
           state._history.past = state._history.past.slice(-(MAX_HISTORY + 1), -1);
           state._history.future = [currentData, ...state._history.future].slice(0, MAX_HISTORY);
         });
       },
 
       redo: () => {
-        const { _history, name, links, joints, rootLinkId, materials, closedLoopConstraints } =
-          get();
+        const {
+          _history,
+          name,
+          links,
+          joints,
+          rootLinkId,
+          materials,
+          closedLoopConstraints,
+          inspectionContext,
+        } = get();
         if (_history.future.length === 0) return;
 
         const next = cloneRobotData(_history.future[0]);
@@ -466,6 +507,7 @@ export const useRobotStore = create<
           rootLinkId,
           materials,
           closedLoopConstraints,
+          inspectionContext,
         });
 
         set((state) => {
@@ -475,6 +517,7 @@ export const useRobotStore = create<
           state.rootLinkId = next.rootLinkId;
           state.materials = next.materials;
           state.closedLoopConstraints = next.closedLoopConstraints;
+          state.inspectionContext = next.inspectionContext;
           state._history.past = [...state._history.past, currentData].slice(-MAX_HISTORY);
           state._history.future = state._history.future.slice(1, MAX_HISTORY + 1);
         });

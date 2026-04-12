@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { resolveRobotFileData } from '@/core/parsers/importRobotFile';
+import { describeRobotImportFailure, resolveRobotFileData } from '@/core/parsers/importRobotFile';
 import { prepareAssemblyRobotData } from '@/core/robot/assemblyComponentPreparation';
 import { buildDefaultAssemblyComponentPlacementTransform } from '@/core/robot/assemblyPlacement';
 import { parseEditableRobotSource } from '@/app/utils/parseEditableRobotSource';
@@ -8,6 +8,7 @@ import { computeRobotRenderableBoundsFromAssets } from '@/app/utils/assemblyRend
 import type {
   PrepareAssemblyComponentWorkerResponse,
   RobotImportWorkerContextSnapshot,
+  ResolveRobotImportProgressWorkerResponse,
   ResolveRobotImportWorkerResponse,
   ParseEditableRobotSourceWorkerResponse,
   RobotImportWorkerRequest,
@@ -85,6 +86,14 @@ async function handleWorkerMessage(event: MessageEvent<RobotImportWorkerRequest>
       const result = resolveRobotFileData(
         message.file,
         applyWorkerContextSnapshot(message.options, message.contextId),
+        (progress) => {
+          const response: ResolveRobotImportProgressWorkerResponse = {
+            type: 'resolve-robot-file-progress',
+            requestId: message.requestId,
+            progress,
+          };
+          workerScope.postMessage(response);
+        },
       );
       const response: ResolveRobotImportWorkerResponse = {
         type: 'resolve-robot-file-result',
@@ -103,7 +112,9 @@ async function handleWorkerMessage(event: MessageEvent<RobotImportWorkerRequest>
         const response: PrepareAssemblyComponentWorkerResponse = {
           type: 'prepare-assembly-component-error',
           requestId: message.requestId,
-          error: `Failed to prepare assembly component from "${message.file.name}".`,
+          error: `Failed to prepare assembly component from "${message.file.name}". ${describeRobotImportFailure(
+            resolvedImportResult,
+          )}`,
         };
         workerScope.postMessage(response);
         return;

@@ -1,5 +1,7 @@
 import { validateMJCFImportExternalAssets } from '@/core/parsers/mjcf/mjcfImportValidation';
 import { resolveGazeboScriptMaterial } from '@/core/parsers/sdf/gazeboMaterialScripts';
+import type { RobotFile } from '@/types';
+import { isAssetLibraryOnlyFormat } from '@/shared/utils/robotFileSupport';
 
 export interface PackageAssetReferenceSource {
   name?: string;
@@ -19,6 +21,18 @@ export interface StandaloneImportAssetWarning {
 export interface StandaloneImportAssetReferenceOptions {
   allFileContents?: Record<string, string>;
   sourcePath?: string;
+}
+
+export function collectStandaloneImportSupportAssetPaths(
+  assetUrls: Record<string, string>,
+  availableFiles: readonly Pick<RobotFile, 'name' | 'format'>[],
+): string[] {
+  return uniqueSorted([
+    ...Object.keys(assetUrls),
+    ...availableFiles
+      .filter((file) => file.format === 'mesh' || isAssetLibraryOnlyFormat(file.format))
+      .map((file) => file.name),
+  ]);
 }
 
 const PACKAGE_ASSET_URI_PATTERN = /\b(?:package|model):\/\/([^\s"'<>]+)/g;

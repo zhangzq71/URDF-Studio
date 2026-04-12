@@ -13,7 +13,7 @@ import { normalizeLoadingProgress } from '@/shared/components/3d/loadingHudState
 import { JointType, type RobotFile } from '@/types';
 import type {
   ToolMode,
-  URDFViewerProps,
+  ViewerProps,
   ViewerDocumentLoadEvent,
   ViewerInteractiveLayer,
   ViewerRuntimeStageBridge,
@@ -32,6 +32,12 @@ import { createUsdViewerRuntimeRobot } from '../utils/usdViewerRuntimeRobot';
 import { buildViewerLoadingHudState } from '../utils/viewerLoadingHud';
 import { supportsUsdWorkerRenderer } from '../utils/usdWorkerRendererSupport';
 import { unwrapContinuousJointAngle } from '@/shared/utils/continuousJointAngle';
+import {
+  clampUsdRuntimeJointAngleDegrees,
+  createUsdRuntimeJointInfo,
+  radiansToDegrees,
+  type UsdRuntimeJointInfoLike,
+} from '../utils/usdRuntimeJointInfo';
 import {
   disposeUsdOffscreenViewerStageInBackground,
   prepareSharedUsdOffscreenViewerStageOpenDispatch,
@@ -53,11 +59,11 @@ interface UsdOffscreenStageProps {
   loadingPhaseLabels: UsdLoadingPhaseLabels;
   onRobotDataResolved?: (result: ViewerRobotDataResolution) => void;
   onDocumentLoadEvent?: (event: ViewerDocumentLoadEvent) => void;
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  selection?: ViewerProps['selection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   hoverSelectionEnabled?: boolean;
-  onHover?: URDFViewerProps['onHover'];
-  onMeshSelect?: URDFViewerProps['onMeshSelect'];
+  onHover?: ViewerProps['onHover'];
+  onMeshSelect?: ViewerProps['onMeshSelect'];
   interactionLayerPriority?: readonly ViewerInteractiveLayer[];
   toolMode: ToolMode;
   runtimeBridge?: ViewerRuntimeStageBridge;
@@ -66,7 +72,7 @@ interface UsdOffscreenStageProps {
 }
 
 function toOffscreenInteractionSelection(
-  selection?: URDFViewerProps['selection'] | URDFViewerProps['hoveredSelection'],
+  selection?: ViewerProps['selection'] | ViewerProps['hoveredSelection'],
 ): OffscreenViewerInteractionSelection | null {
   if (!selection || !selection.type || !selection.id) {
     return null;
@@ -89,8 +95,8 @@ function buildInitialInteractionState({
   interactionLayerPriority,
 }: {
   toolMode: ToolMode;
-  selection?: URDFViewerProps['selection'];
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  selection?: ViewerProps['selection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   hoverSelectionEnabled: boolean;
   interactionLayerPriority?: readonly ViewerInteractiveLayer[];
 }): UsdOffscreenViewerInteractionState {
@@ -111,32 +117,6 @@ function getCanvasPointerPosition(event: ReactPointerEvent<HTMLCanvasElement>): 
   return {
     x: event.clientX - rect.left,
     y: event.clientY - rect.top,
-  };
-}
-
-function radiansToDegrees(value: number | null | undefined): number | undefined {
-  return Number.isFinite(Number(value)) ? (Number(value) * 180) / Math.PI : undefined;
-}
-
-function getRuntimeJointLimitDegrees(
-  joint:
-    | {
-        type?: string | null;
-        limit?: { lower?: number | null; upper?: number | null } | null;
-      }
-    | null
-    | undefined,
-) {
-  if (joint?.type === JointType.CONTINUOUS) {
-    return {
-      lowerLimitDeg: -180,
-      upperLimitDeg: 180,
-    };
-  }
-
-  return {
-    lowerLimitDeg: radiansToDegrees(joint?.limit?.lower),
-    upperLimitDeg: radiansToDegrees(joint?.limit?.upper),
   };
 }
 
@@ -192,16 +172,7 @@ export function UsdOffscreenStage({
   const onRobotDataResolvedRef = useRef(onRobotDataResolved);
   const onHoverRef = useRef(onHover);
   const onMeshSelectRef = useRef(onMeshSelect);
-  const jointInfoByLinkPathRef = useRef(
-    new Map<
-      string,
-      {
-        angleDeg?: number;
-        lowerLimitDeg?: number;
-        upperLimitDeg?: number;
-      }
-    >(),
-  );
+  const jointInfoByLinkPathRef = useRef(new Map<string, UsdRuntimeJointInfoLike>());
   const lastRobotResolutionRef = useRef<ViewerRobotDataResolution | null>(null);
   const runtimeRobotProxyRef = useRef<any | null>(null);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
@@ -349,15 +320,7 @@ export function UsdOffscreenStage({
                   return [];
                 }
 
-                return [
-                  [
-                    childLinkPath,
-                    {
-                      angleDeg: radiansToDegrees(joint.angle),
-                      ...getRuntimeJointLimitDegrees(joint),
-                    },
-                  ],
-                ];
+                return [[childLinkPath, createUsdRuntimeJointInfo(joint, joint.angle)]];
               },
             ),
           );
@@ -373,18 +336,11 @@ export function UsdOffscreenStage({
                   ([, candidatePath]) => candidatePath === linkPath,
                 )?.[0];
                 const joint = jointId ? resolution?.robotData.joints[jointId] : undefined;
-                const { lowerLimitDeg, upperLimitDeg } = getRuntimeJointLimitDegrees(joint);
-                const clampedAngleDeg =
-                  joint?.type !== JointType.CONTINUOUS &&
-                  Number.isFinite(lowerLimitDeg) &&
-                  Number.isFinite(upperLimitDeg)
-                    ? Math.min(Math.max(angleDeg, lowerLimitDeg!), upperLimitDeg!)
-                    : angleDeg;
-                const nextInfo = {
-                  angleDeg: clampedAngleDeg,
-                  lowerLimitDeg,
-                  upperLimitDeg,
-                };
+                const clampedAngleDeg = clampUsdRuntimeJointAngleDegrees(joint, angleDeg);
+                const nextInfo = createUsdRuntimeJointInfo(
+                  joint,
+                  (clampedAngleDeg * Math.PI) / 180,
+                );
                 jointInfoByLinkPathRef.current.set(linkPath, nextInfo);
 
                 if (jointId) {

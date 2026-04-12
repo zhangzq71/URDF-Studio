@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
-import { applySnapshotSceneVisibility } from './snapshotSceneQuality.ts';
+import {
+  applySnapshotLightingPreset,
+  applySnapshotSceneVisibility,
+  applySnapshotShadowQuality,
+  SNAPSHOT_ENVIRONMENT_PRESET_RENDER_SETTINGS,
+} from './snapshotSceneQuality.ts';
 
 test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-excluded helpers', () => {
   const scene = new THREE.Scene();
@@ -11,6 +16,7 @@ test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-ex
   const helper = new THREE.Object3D();
   const selectableHelper = new THREE.Object3D();
   const groundShadowPlane = new THREE.Object3D();
+  const snapshotGroundShadowPlane = new THREE.Object3D();
   const snapshotContactShadows = new THREE.Object3D();
   const grid = new THREE.Object3D();
 
@@ -19,6 +25,8 @@ test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-ex
   selectableHelper.userData.isSelectableHelper = true;
   groundShadowPlane.name = 'GroundShadowPlane';
   groundShadowPlane.userData.isHelper = true;
+  snapshotGroundShadowPlane.name = 'SnapshotGroundShadowPlane';
+  snapshotGroundShadowPlane.userData.isHelper = true;
   snapshotContactShadows.name = 'SnapshotContactShadows';
   snapshotContactShadows.userData.isHelper = true;
   grid.name = 'ReferenceGrid';
@@ -30,6 +38,7 @@ test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-ex
     helper,
     selectableHelper,
     groundShadowPlane,
+    snapshotGroundShadowPlane,
     snapshotContactShadows,
     grid,
   );
@@ -40,7 +49,8 @@ test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-ex
   assert.equal(collisionMesh.visible, false);
   assert.equal(helper.visible, false);
   assert.equal(selectableHelper.visible, false);
-  assert.equal(groundShadowPlane.visible, true);
+  assert.equal(groundShadowPlane.visible, false);
+  assert.equal(snapshotGroundShadowPlane.visible, true);
   assert.equal(snapshotContactShadows.visible, true);
   assert.equal(grid.visible, true);
 
@@ -50,6 +60,7 @@ test('applySnapshotSceneVisibility keeps visual content while hiding snapshot-ex
   assert.equal(helper.visible, true);
   assert.equal(selectableHelper.visible, true);
   assert.equal(groundShadowPlane.visible, true);
+  assert.equal(snapshotGroundShadowPlane.visible, true);
   assert.equal(snapshotContactShadows.visible, true);
   assert.equal(grid.visible, true);
 });
@@ -86,4 +97,95 @@ test('applySnapshotSceneVisibility hides known runtime helper names and viewer h
 
   assert.equal(namedHelper.visible, true);
   assert.equal(viewerHelper.visible, true);
+});
+
+test('applySnapshotLightingPreset applies a visible rig change and restores it afterwards', () => {
+  const scene = new THREE.Scene();
+  const ambient = new THREE.AmbientLight('#ffffff', 1);
+  const hemisphere = new THREE.HemisphereLight('#ffffff', '#cccccc', 1);
+  const main = new THREE.DirectionalLight('#ffffff', 1);
+  const fill = new THREE.DirectionalLight('#ffffff', 1);
+  const rim = new THREE.DirectionalLight('#ffffff', 1);
+  const camera = new THREE.DirectionalLight('#ffffff', 1);
+
+  main.name = 'MainLight';
+  fill.name = 'FillLightLeft';
+  rim.name = 'RimLight';
+  camera.name = 'CameraKeyLight';
+  scene.add(ambient, hemisphere, main, fill, rim, camera);
+
+  const gl = {
+    toneMappingExposure: 1.1,
+  } as THREE.WebGLRenderer;
+
+  const restore = applySnapshotLightingPreset(scene, gl, 'contrast');
+
+  assert.equal(ambient.intensity, 0.72);
+  assert.equal(hemisphere.intensity, 0.82);
+  assert.equal(main.intensity, 1.24);
+  assert.equal(fill.intensity, 0.82);
+  assert.equal(rim.intensity, 1.42);
+  assert.equal(camera.intensity, 1.08);
+  assert.equal(
+    gl.toneMappingExposure,
+    1.1 * SNAPSHOT_ENVIRONMENT_PRESET_RENDER_SETTINGS.contrast.toneMappingExposureMultiplier,
+  );
+  assert.equal(main.color.getHexString(), 'fff1d6');
+  assert.equal(rim.color.getHexString(), 'cfe1ff');
+
+  restore();
+
+  assert.equal(ambient.intensity, 1);
+  assert.equal(hemisphere.intensity, 1);
+  assert.equal(main.intensity, 1);
+  assert.equal(fill.intensity, 1);
+  assert.equal(rim.intensity, 1);
+  assert.equal(camera.intensity, 1);
+  assert.equal(gl.toneMappingExposure, 1.1);
+  assert.equal(main.color.getHexString(), 'ffffff');
+  assert.equal(rim.color.getHexString(), 'ffffff');
+});
+
+test('applySnapshotShadowQuality switches shadow map strategy for soft captures and restores it', () => {
+  const scene = new THREE.Scene();
+  const light = new THREE.DirectionalLight('#ffffff', 1);
+  light.castShadow = true;
+  light.shadow.mapSize.set(1024, 1024);
+  light.shadow.radius = 2;
+  light.shadow.bias = -0.0001;
+  light.shadow.normalBias = 0.02;
+  (light.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples = 4;
+  scene.add(light);
+
+  const gl = {
+    shadowMap: {
+      enabled: true,
+      autoUpdate: false,
+      needsUpdate: false,
+      type: THREE.PCFSoftShadowMap,
+    },
+    capabilities: {
+      maxTextureSize: 4096,
+    },
+  } as unknown as THREE.WebGLRenderer;
+
+  const restore = applySnapshotShadowQuality(scene, gl, 'high', 'soft');
+
+  assert.equal(gl.shadowMap.type, THREE.VSMShadowMap);
+  assert.equal(light.shadow.mapSize.x, 1741);
+  assert.equal(light.shadow.mapSize.y, 1741);
+  assert.equal(light.shadow.radius, 0);
+  assert.equal(light.shadow.bias, -0.00016);
+  assert.equal(light.shadow.normalBias, 0.035);
+  assert.equal((light.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples, 10);
+
+  restore();
+
+  assert.equal(gl.shadowMap.type, THREE.PCFSoftShadowMap);
+  assert.equal(light.shadow.mapSize.x, 1024);
+  assert.equal(light.shadow.mapSize.y, 1024);
+  assert.equal(light.shadow.radius, 2);
+  assert.equal(light.shadow.bias, -0.0001);
+  assert.equal(light.shadow.normalBias, 0.02);
+  assert.equal((light.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples, 4);
 });

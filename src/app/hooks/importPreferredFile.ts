@@ -3,7 +3,11 @@ import { type RobotImportResult, resolveRobotFileData } from '@/core/parsers';
 import { pickPreferredUsdRootFile } from '@/core/parsers/usd/usdFormatUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
 import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
-import { buildStandaloneImportAssetWarning } from '@/app/utils/importPackageAssetReferences.ts';
+import { isAssetLibraryOnlyFormat } from '@/shared/utils/robotFileSupport';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from '@/app/utils/importPackageAssetReferences.ts';
 
 const PACKAGE_REFERENCE_PATTERN = /package:\/\/([^/\s"'<>]+)/g;
 
@@ -64,7 +68,7 @@ export function isUrdfSelfContainedInImportBundle(
 
   const standaloneAssetWarning = buildStandaloneImportAssetWarning(
     file,
-    filePool.filter((candidate) => candidate.format === 'mesh').map((candidate) => candidate.name),
+    collectStandaloneImportSupportAssetPaths({}, filePool),
   );
   if (standaloneAssetWarning) {
     return false;
@@ -161,10 +165,6 @@ function compareMjcfCandidateStructure(
   left: MjcfCandidateStructure,
   right: MjcfCandidateStructure,
 ): number {
-  if (left.directBodyCount !== right.directBodyCount) {
-    return right.directBodyCount - left.directBodyCount;
-  }
-
   if (left.actuatorCount !== right.actuatorCount) {
     return right.actuatorCount - left.actuatorCount;
   }
@@ -173,6 +173,9 @@ function compareMjcfCandidateStructure(
     return right.attachCount - left.attachCount;
   }
 
+  // Prefer standalone robot entrypoints over wrapper scenes before comparing
+  // body counts. MJCF scene files often add table/object helpers plus a top-
+  // level <include>, which would otherwise outrank the actual robot XML.
   if (left.includeCount !== right.includeCount) {
     return left.includeCount - right.includeCount;
   }
@@ -183,6 +186,10 @@ function compareMjcfCandidateStructure(
 
   if (left.sceneHelperCount !== right.sceneHelperCount) {
     return left.sceneHelperCount - right.sceneHelperCount;
+  }
+
+  if (left.directBodyCount !== right.directBodyCount) {
+    return right.directBodyCount - left.directBodyCount;
   }
 
   return 0;
@@ -603,7 +610,7 @@ export function pickPreferredImportFile(
   resolveRobotImport: RobotImportResolver = createMemoizedRobotImportResolver(filePool),
 ): RobotFile | null {
   const cachedResolveRobotImport = memoizeRobotImportResolver(resolveRobotImport);
-  const robotDefinitionFiles = files.filter((file) => file.format !== 'mesh');
+  const robotDefinitionFiles = files.filter((file) => !isAssetLibraryOnlyFormat(file.format));
   const preferredUrdf = pickPreferredUrdfImportFile(
     robotDefinitionFiles,
     filePool,

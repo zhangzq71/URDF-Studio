@@ -1,6 +1,12 @@
 export interface JointPanelSnapshot {
   jointAngles: Record<string, number>;
   activeJoint: string | null;
+  activeJointAutoScroll: boolean;
+}
+
+export interface JointPanelActiveJointOptions {
+  autoScroll?: boolean;
+  suppressNextAutoScroll?: boolean;
 }
 
 export interface JointPanelStore {
@@ -8,18 +14,21 @@ export interface JointPanelStore {
   subscribe: (listener: () => void) => () => void;
   patchJointAngles: (nextJointAngles: Record<string, number>) => boolean;
   replaceJointAngles: (nextJointAngles: Record<string, number>) => boolean;
-  setActiveJoint: (jointName: string | null) => boolean;
+  setActiveJoint: (jointName: string | null, options?: JointPanelActiveJointOptions) => boolean;
   reset: (nextSnapshot?: Partial<JointPanelSnapshot>) => boolean;
 }
 
 function sanitizeJointAngles(nextJointAngles: Record<string, number>) {
-  return Object.entries(nextJointAngles).reduce<Record<string, number>>((sanitized, [jointName, angle]) => {
-    const numericAngle = Number(angle);
-    if (Number.isFinite(numericAngle)) {
-      sanitized[jointName] = numericAngle;
-    }
-    return sanitized;
-  }, {});
+  return Object.entries(nextJointAngles).reduce<Record<string, number>>(
+    (sanitized, [jointName, angle]) => {
+      const numericAngle = Number(angle);
+      if (Number.isFinite(numericAngle)) {
+        sanitized[jointName] = numericAngle;
+      }
+      return sanitized;
+    },
+    {},
+  );
 }
 
 function areJointAnglesEqual(a: Record<string, number>, b: Record<string, number>) {
@@ -33,10 +42,13 @@ function areJointAnglesEqual(a: Record<string, number>, b: Record<string, number
   return aKeys.every((key) => a[key] === b[key]);
 }
 
-export function createJointPanelStore(initialSnapshot: Partial<JointPanelSnapshot> = {}): JointPanelStore {
+export function createJointPanelStore(
+  initialSnapshot: Partial<JointPanelSnapshot> = {},
+): JointPanelStore {
   let snapshot: JointPanelSnapshot = {
     jointAngles: sanitizeJointAngles(initialSnapshot.jointAngles ?? {}),
     activeJoint: initialSnapshot.activeJoint ?? null,
+    activeJointAutoScroll: initialSnapshot.activeJointAutoScroll ?? false,
   };
   const listeners = new Set<() => void>();
 
@@ -47,6 +59,7 @@ export function createJointPanelStore(initialSnapshot: Partial<JointPanelSnapsho
   const commitSnapshot = (nextSnapshot: JointPanelSnapshot) => {
     if (
       snapshot.activeJoint === nextSnapshot.activeJoint &&
+      snapshot.activeJointAutoScroll === nextSnapshot.activeJointAutoScroll &&
       areJointAnglesEqual(snapshot.jointAngles, nextSnapshot.jointAngles)
     ) {
       return false;
@@ -95,15 +108,25 @@ export function createJointPanelStore(initialSnapshot: Partial<JointPanelSnapsho
         ...snapshot,
         jointAngles: sanitizeJointAngles(nextJointAngles),
       }),
-    setActiveJoint: (jointName) =>
-      commitSnapshot({
+    setActiveJoint: (jointName, options) => {
+      const nextActiveJoint = jointName ?? null;
+      const nextAutoScroll =
+        nextActiveJoint === null
+          ? false
+          : (options?.autoScroll ??
+            (snapshot.activeJoint === nextActiveJoint ? snapshot.activeJointAutoScroll : true));
+
+      return commitSnapshot({
         ...snapshot,
-        activeJoint: jointName ?? null,
-      }),
+        activeJoint: nextActiveJoint,
+        activeJointAutoScroll: nextAutoScroll,
+      });
+    },
     reset: (nextSnapshot = {}) =>
       commitSnapshot({
         jointAngles: sanitizeJointAngles(nextSnapshot.jointAngles ?? {}),
         activeJoint: nextSnapshot.activeJoint ?? null,
+        activeJointAutoScroll: nextSnapshot.activeJointAutoScroll ?? false,
       }),
   };
 }

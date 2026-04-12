@@ -914,6 +914,111 @@ test('buildUsdExportBundleFromSnapshot preserves UV coordinates for textured sna
   assert.equal(uvCount, 3);
 });
 
+test('buildUsdExportBundleFromSnapshot lets snapshot textures replace stale link material textures', () => {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const indices = new Uint32Array([0, 1, 2]);
+  const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
+
+  const snapshot = {
+    stageSourcePath: '/robots/demo/textured.usd',
+    stage: {
+      defaultPrimPath: '/Robot',
+    },
+    robotTree: {
+      linkParentPairs: [['/Robot/base_link', null]] as Array<[string, string | null]>,
+      rootLinkPaths: ['/Robot/base_link'],
+    },
+    robotMetadataSnapshot: {
+      stageSourcePath: '/robots/demo/textured.usd',
+      linkParentPairs: [['/Robot/base_link', null]] as Array<[string, string | null]>,
+      jointCatalogEntries: [],
+      meshCountsByLinkPath: {
+        '/Robot/base_link': {
+          visualMeshCount: 1,
+          collisionMeshCount: 0,
+        },
+      },
+    },
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/base_link',
+          primType: 'mesh',
+          materialId: '/Robot/Looks/body',
+          ranges: {
+            positions: { offset: 0, count: 9, stride: 3 },
+            indices: { offset: 0, count: 3, stride: 1 },
+            uvs: { offset: 0, count: 6, stride: 2 },
+          },
+        },
+      ],
+      materials: [
+        {
+          materialId: '/Robot/Looks/body',
+          color: [1, 1, 1, 1],
+          mapPath: 'textures/new.png',
+        },
+      ],
+    },
+    buffers: {
+      positions,
+      indices,
+      normals: new Float32Array(0),
+      uvs,
+      transforms: new Float32Array(0),
+      rangesByMeshId: {},
+    },
+  } as unknown as UsdSceneSnapshot;
+
+  const currentRobot: RobotState = {
+    name: 'stale_textured_export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    joints: {},
+    materials: {
+      base_link: {
+        color: '#ffffff',
+        texture: 'textures/stale.png',
+        usdMaterial: {
+          mapPath: 'textures/stale.png',
+          color: [1, 1, 1],
+        },
+      },
+    },
+  };
+
+  const bundle = buildUsdExportBundleFromSnapshot(snapshot, {
+    fileName: 'stale_textured.usd',
+    currentRobot,
+  });
+
+  assert.ok(bundle);
+  assert.equal(bundle.robot.materials?.base_link?.texture, 'textures/new.png');
+  assert.equal(bundle.robot.materials?.base_link?.usdMaterial?.mapPath, 'textures/new.png');
+});
+
 test('buildUsdExportBundleFromSnapshot splits geom subsets into separate export meshes with subset material colors', async () => {
   const positions = new Float32Array([
     0, 0, 0, 1, 0, 0, 0, 1, 0,

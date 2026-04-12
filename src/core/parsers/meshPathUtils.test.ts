@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
+  normalizeMeshPathForExport,
   normalizeTexturePathForExport,
   resolveImportedAssetPath,
+  rewriteRobotMeshPathsForSource,
   rewriteUrdfAssetPathsForExport,
 } from './meshPathUtils';
+import { GeometryType, type RobotData } from '@/types';
 
 test('resolveImportedAssetPath keeps package assets rooted at the package name', () => {
   assert.equal(
@@ -54,6 +57,155 @@ test('normalizeTexturePathForExport keeps nested relative texture folders stable
     normalizeTexturePathForExport('./textures/pbr/base_color.png'),
     'pbr/base_color.png',
   );
+});
+
+test('normalizeMeshPathForExport strips imported package roots ahead of assets folders', () => {
+  assert.equal(normalizeMeshPathForExport('ARX L5/assets/base_link.obj'), 'assets/base_link.obj');
+});
+
+test('normalizeMeshPathForExport strips absolute imported MJCF asset prefixes down to the package asset root', () => {
+  assert.equal(
+    normalizeMeshPathForExport(
+      'home/xyk/Desktop/URDF-Studio/test/awesome_robot_descriptions_repos/mujoco_menagerie/unitree_go2/assets/base_0.obj',
+    ),
+    'assets/base_0.obj',
+  );
+});
+
+test('normalizeTexturePathForExport strips absolute imported asset prefixes down to a stable package path', () => {
+  assert.equal(
+    normalizeTexturePathForExport(
+      'home/xyk/Desktop/URDF-Studio/test/demo_robot/assets/albedo/base_color.png',
+    ),
+    'assets/albedo/base_color.png',
+  );
+});
+
+test('rewriteRobotMeshPathsForSource stabilizes relative texture paths alongside meshes', () => {
+  const robot: RobotData = {
+    name: 'demo',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          type: GeometryType.MESH,
+          meshPath: '../meshes/base_link.dae',
+          color: '#ffffff',
+          authoredMaterials: [{ texture: './textures/panel.png' }],
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.MESH,
+          meshPath: '../meshes/base_link.dae',
+          color: '#ffffff',
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        inertial: undefined,
+      },
+    },
+    joints: {},
+    materials: {
+      base_link: {
+        texture: '../textures/paint.png',
+      },
+    },
+  };
+
+  const rewritten = rewriteRobotMeshPathsForSource(robot, 'robots/demo/urdf/demo.urdf');
+
+  assert.equal(rewritten.links.base_link.visual.meshPath, 'robots/demo/meshes/base_link.dae');
+  assert.equal(
+    rewritten.links.base_link.visual.authoredMaterials?.[0]?.texture,
+    'robots/demo/urdf/textures/panel.png',
+  );
+  assert.equal(rewritten.materials?.base_link?.texture, 'robots/demo/textures/paint.png');
+});
+
+test('rewriteRobotMeshPathsForSource preserves package-rooted texture paths that are already stable', () => {
+  const robot: RobotData = {
+    name: 'demo',
+    rootLinkId: 'base_link',
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visual: {
+          type: GeometryType.BOX,
+          color: '#ffffff',
+          authoredMaterials: [{ texture: 'demo/materials/textures/panel.png' }],
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.BOX,
+          color: '#ffffff',
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        inertial: undefined,
+      },
+    },
+    joints: {},
+    materials: {
+      base_link: {
+        texture: 'demo/materials/textures/panel.png',
+      },
+    },
+  };
+
+  const rewritten = rewriteRobotMeshPathsForSource(robot, 'robots/demo/model.sdf');
+
+  assert.equal(
+    rewritten.links.base_link.visual.authoredMaterials?.[0]?.texture,
+    'demo/materials/textures/panel.png',
+  );
+  assert.equal(rewritten.materials?.base_link?.texture, 'demo/materials/textures/panel.png');
+});
+
+test('rewriteRobotMeshPathsForSource preserves canonical cross-model SDF texture paths', () => {
+  const robot: RobotData = {
+    name: 'ambulance',
+    rootLinkId: 'link',
+    links: {
+      link: {
+        id: 'link',
+        name: 'link',
+        visual: {
+          type: GeometryType.MESH,
+          meshPath: 'ambulance/meshes/ambulance.obj',
+          color: '#ffffff',
+          authoredMaterials: [{ texture: 'suv/materials/textures/wheels_01.png' }],
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.BOX,
+          color: '#ffffff',
+          dimensions: { x: 1, y: 1, z: 1 },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        inertial: undefined,
+      },
+    },
+    joints: {},
+    materials: {
+      link: {
+        texture: 'suv/materials/textures/wheels_01.png',
+      },
+    },
+  };
+
+  const rewritten = rewriteRobotMeshPathsForSource(robot, 'ambulance/model.sdf');
+
+  assert.equal(
+    rewritten.links.link.visual.authoredMaterials?.[0]?.texture,
+    'suv/materials/textures/wheels_01.png',
+  );
+  assert.equal(rewritten.materials?.link?.texture, 'suv/materials/textures/wheels_01.png');
 });
 
 test('rewriteUrdfAssetPathsForExport preserves go2 multi-material visuals while rewriting asset roots', () => {

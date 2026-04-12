@@ -7,8 +7,10 @@ import {
 } from '@/types';
 import { parseURDF } from './urdf/parser';
 import { parseMJCF } from './mjcf/mjcfParser';
+import { syncMjcfMeshTextMaterialColors } from './mjcf/mjcfMeshTextColorSync';
 import { resolveMJCFSource } from './mjcf/mjcfSourceResolver';
 import { parseSDF } from './sdf/sdfParser';
+import { syncRobotMeshTextMaterialMetadata } from './meshTextMaterialSync';
 import { processXacro } from './xacro/xacroParser';
 import { rewriteRobotMeshPathsForSource } from './meshPathUtils';
 import { syncRobotVisualColorsFromMaterials } from '@/core/robot/materials';
@@ -22,6 +24,11 @@ export interface ResolveRobotFileDataOptions {
   allFileContents?: Record<string, string>;
   usdRobotData?: RobotData | null;
   mjcfExternalAssetValidation?: 'auto' | 'always' | 'never';
+}
+
+export interface RobotImportProgress {
+  progressPercent: number;
+  message?: string | null;
 }
 
 export type RobotImportErrorReason = 'parse_failed' | 'unsupported_format' | 'source_only_fragment';
@@ -44,6 +51,25 @@ export type RobotImportResult =
       reason: RobotImportErrorReason;
       message?: string;
     };
+
+type RobotImportProgressReporter = (progress: RobotImportProgress) => void;
+
+const ROBOT_IMPORT_FAILURE_MESSAGE_PREFIX = /^Failed to import [A-Z0-9_+-]+ file "[^"]+"\.\s*/i;
+
+function emitRobotImportProgress(
+  reportProgress: RobotImportProgressReporter | undefined,
+  progressPercent: number,
+  message?: string | null,
+): void {
+  if (!reportProgress) {
+    return;
+  }
+
+  reportProgress({
+    progressPercent: Math.max(0, Math.min(100, Math.round(progressPercent))),
+    message: message ?? null,
+  });
+}
 
 function toRobotData(robot: RobotState | RobotData): RobotData {
   return {
@@ -139,16 +165,33 @@ function createReadyImportResult(
   options: {
     sourceFilePath?: string;
     resolvedUrdfContent?: string | null;
+    allFileContents?: Record<string, string>;
+    assetPaths?: Iterable<string>;
   } = {},
 ): RobotImportResult {
-  const { sourceFilePath = file.name, resolvedUrdfContent = null } = options;
+  const {
+    sourceFilePath = file.name,
+    resolvedUrdfContent = null,
+    allFileContents = {},
+    assetPaths = [],
+  } = options;
+  const rewrittenRobotData = rewriteRobotMeshPathsForSource(robotData, sourceFilePath);
+  const meshTextMaterialSyncedRobotData =
+    file.format === 'mjcf'
+      ? rewrittenRobotData
+      : syncRobotMeshTextMaterialMetadata(rewrittenRobotData, {
+          allFileContents,
+          assetPaths,
+        });
+  const mjcfMeshColorSyncedRobotData =
+    file.format === 'mjcf'
+      ? syncMjcfMeshTextMaterialColors(rewrittenRobotData, allFileContents)
+      : meshTextMaterialSyncedRobotData;
 
   return {
     status: 'ready',
     format: file.format,
-    robotData: syncRobotVisualColorsFromMaterials(
-      rewriteRobotMeshPathsForSource(robotData, sourceFilePath),
-    ),
+    robotData: syncRobotVisualColorsFromMaterials(mjcfMeshColorSyncedRobotData),
     resolvedUrdfContent,
     resolvedUrdfSourceFilePath: resolvedUrdfContent ? sourceFilePath : null,
   };
@@ -175,6 +218,31 @@ function createErrorImportResult(
     reason,
     message,
   };
+}
+
+export function describeRobotImportFailure(
+  importResult: Exclude<RobotImportResult, { status: 'ready' }>,
+): string {
+  if (importResult.status === 'needs_hydration') {
+    return 'USD scene data is not hydrated yet.';
+  }
+
+  const normalizedMessage = importResult.message
+    ?.trim()
+    .replace(ROBOT_IMPORT_FAILURE_MESSAGE_PREFIX, '');
+  if (normalizedMessage) {
+    return normalizedMessage;
+  }
+
+  if (importResult.reason === 'unsupported_format') {
+    return `Unsupported format "${importResult.format}".`;
+  }
+
+  if (importResult.reason === 'source_only_fragment') {
+    return 'The selected source file is only a fragment and cannot be assembled as a standalone component.';
+  }
+
+  return 'Source parsing failed.';
 }
 
 function normalizeFilePath(filePath: string): string {
@@ -332,6 +400,7 @@ function shouldValidateMJCFExternalAssets(
 export function resolveRobotFileData(
   file: RobotFile,
   options: ResolveRobotFileDataOptions = {},
+  reportProgress?: RobotImportProgressReporter,
 ): RobotImportResult {
   const {
     availableFiles = [],
@@ -340,26 +409,42 @@ export function resolveRobotFileData(
     usdRobotData = null,
     mjcfExternalAssetValidation = 'auto',
   } = options;
+  const importAssetPaths = new Set<string>([
+    ...availableFiles.map((candidate) => candidate.name),
+    ...Object.keys(allFileContents),
+    ...Object.keys(assets),
+  ]);
 
   try {
     switch (file.format) {
       case 'urdf': {
+        emitRobotImportProgress(reportProgress, 15, 'Resolving URDF source');
         const resolvedUrdfSource = resolveUrdfSourceContent(file, {
           availableFiles,
           allFileContents,
         });
+        emitRobotImportProgress(reportProgress, 70, 'Parsing URDF');
         const parsed = parseURDF(resolvedUrdfSource.content);
         const resolvedUrdfOptions = resolvedUrdfSource.fromContext
           ? {
               sourceFilePath: resolvedUrdfSource.sourceFilePath ?? file.name,
               resolvedUrdfContent: resolvedUrdfSource.content,
+              allFileContents,
+              assetPaths: importAssetPaths,
             }
-          : undefined;
-        return parsed
-          ? createReadyImportResult(file, toRobotData(parsed), resolvedUrdfOptions)
-          : createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+          : {
+              allFileContents,
+              assetPaths: importAssetPaths,
+            };
+        if (!parsed) {
+          return createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+        }
+
+        emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
+        return createReadyImportResult(file, toRobotData(parsed), resolvedUrdfOptions);
       }
       case 'mjcf': {
+        emitRobotImportProgress(reportProgress, 10, 'Resolving MJCF source');
         const resolved = resolveMJCFSource(file, availableFiles);
         if (resolved.issues.length > 0) {
           return createErrorImportResult(
@@ -373,6 +458,7 @@ export function resolveRobotFileData(
           return createErrorImportResult(file, 'source_only_fragment');
         }
 
+        emitRobotImportProgress(reportProgress, 45, 'Checking MJCF external assets');
         if (shouldValidateMJCFExternalAssets(mjcfExternalAssetValidation, assets)) {
           const assetIssues = validateMJCFImportExternalAssets(
             resolved.sourceFile.name,
@@ -389,35 +475,70 @@ export function resolveRobotFileData(
           }
         }
 
+        emitRobotImportProgress(reportProgress, 80, 'Parsing MJCF');
         const parsed = parseMJCF(resolved.content);
-        return parsed
-          ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+        if (!parsed) {
+          return createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+        }
+
+        emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
+        return createReadyImportResult(file, toRobotData(parsed), {
+          sourceFilePath: resolved.sourceFile.name,
+          allFileContents,
+          assetPaths: importAssetPaths,
+        });
       }
       case 'sdf': {
+        emitRobotImportProgress(reportProgress, 15, 'Resolving SDF context');
+        emitRobotImportProgress(reportProgress, 80, 'Parsing SDF');
         const parsed = parseSDF(file.content, {
           allFileContents,
+          availableFiles,
           sourcePath: file.name,
         });
-        return parsed
-          ? createReadyImportResult(file, toRobotData(parsed))
-          : createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+        if (!parsed) {
+          return createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
+        }
+
+        emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
+        return createReadyImportResult(file, toRobotData(parsed), {
+          allFileContents,
+          assetPaths: importAssetPaths,
+        });
       }
       case 'usd':
+        emitRobotImportProgress(
+          reportProgress,
+          35,
+          usdRobotData ? 'Reusing prepared USD robot data' : 'Preparing USD document',
+        );
+        emitRobotImportProgress(
+          reportProgress,
+          100,
+          usdRobotData ? 'Handing off prepared USD document' : 'Waiting for USD hydration',
+        );
         return usdRobotData
-          ? createReadyImportResult(file, usdRobotData)
+          ? createReadyImportResult(file, usdRobotData, {
+              allFileContents,
+              assetPaths: importAssetPaths,
+            })
           : {
               status: 'needs_hydration',
               format: 'usd',
             };
       case 'xacro': {
+        emitRobotImportProgress(reportProgress, 15, 'Resolving Xacro support files');
         const truthFile = findStandaloneXacroTruthFile(file, availableFiles);
         if (truthFile) {
+          emitRobotImportProgress(reportProgress, 45, 'Checking companion URDF');
           const truthRobot = parseURDF(truthFile.content);
           if (truthRobot) {
+            emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
             return createReadyImportResult(file, toRobotData(truthRobot), {
               sourceFilePath: truthFile.name,
               resolvedUrdfContent: truthFile.content,
+              allFileContents,
+              assetPaths: importAssetPaths,
             });
           }
         }
@@ -438,11 +559,16 @@ export function resolveRobotFileData(
         });
         const pathParts = file.name.split('/');
         pathParts.pop();
+        emitRobotImportProgress(reportProgress, 55, 'Expanding Xacro');
         const urdfContent = processXacro(file.content, {}, fileMap, pathParts.join('/'));
+        emitRobotImportProgress(reportProgress, 80, 'Parsing generated URDF');
         const parsed = parseURDF(urdfContent);
         if (parsed) {
+          emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
           return createReadyImportResult(file, toRobotData(parsed), {
             resolvedUrdfContent: urdfContent,
+            allFileContents,
+            assetPaths: importAssetPaths,
           });
         }
 
@@ -453,7 +579,17 @@ export function resolveRobotFileData(
         );
       }
       case 'mesh':
-        return createReadyImportResult(file, createMeshRobotData(file));
+        emitRobotImportProgress(reportProgress, 100, 'Preparing mesh preview');
+        return createReadyImportResult(file, createMeshRobotData(file), {
+          allFileContents,
+          assetPaths: importAssetPaths,
+        });
+      case 'asset':
+        return createErrorImportResult(
+          file,
+          'unsupported_format',
+          buildImportFailureMessage(file, 'Generic asset files are stored in the library only.'),
+        );
       default:
         return createErrorImportResult(
           file,

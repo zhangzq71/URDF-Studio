@@ -1,13 +1,17 @@
-const runtimeEnv = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
-
 export function isDevelopmentBuild(): boolean {
-  return Boolean(runtimeEnv?.DEV);
+  const runtimeEnv = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
+  if (typeof runtimeEnv?.DEV === 'boolean') {
+    return runtimeEnv.DEV;
+  }
+
+  if (typeof process !== 'undefined' && process?.env) {
+    return process.env.NODE_ENV !== 'production';
+  }
+
+  return false;
 }
 
-export function normalizeRuntimeError(
-  error: unknown,
-  fallbackMessage: string,
-): Error {
+export function normalizeRuntimeError(error: unknown, fallbackMessage: string): Error {
   if (error instanceof Error) {
     return error;
   }

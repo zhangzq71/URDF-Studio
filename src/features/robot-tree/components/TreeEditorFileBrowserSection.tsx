@@ -81,7 +81,7 @@ export function TreeEditorFileBrowserSection({
         onCommitFolderRename={onCommitFolderRename}
         onDeleteAll={onOpenDeleteAllDialog}
         onDeleteFromLibrary={onDeleteFromLibrary}
-        onFileActivate={onFileLoad}
+        onLoadRobot={onFileLoad}
         onFileContextMenu={onFileContextMenu}
         onFolderRenameDraftChange={onFolderRenameDraftChange}
         onFolderContextMenu={onFolderContextMenu}

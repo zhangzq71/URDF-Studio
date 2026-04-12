@@ -10,7 +10,7 @@ import { SNAPSHOT_DETAIL_SHADOW_MAP_SIZE } from './snapshotConfig';
 
 const SNAPSHOT_GRID_OBJECT_NAME = 'ReferenceGrid';
 const SNAPSHOT_KEEP_HELPER_OBJECT_NAMES = new Set([
-  'GroundShadowPlane',
+  'SnapshotGroundShadowPlane',
   'SnapshotContactShadows',
   'SnapshotReflectiveFloor',
 ]);
@@ -43,6 +43,20 @@ export interface SnapshotEnvironmentPresetSettings {
   environmentRotationZ: number;
 }
 
+export interface SnapshotEnvironmentPresetRenderSettings {
+  ambientIntensityMultiplier: number;
+  hemisphereIntensityMultiplier: number;
+  mainIntensityMultiplier: number;
+  fillIntensityMultiplier: number;
+  rimIntensityMultiplier: number;
+  cameraIntensityMultiplier: number;
+  toneMappingExposureMultiplier: number;
+  hemisphereSky: string | null;
+  hemisphereGround: string | null;
+  mainColor: string | null;
+  rimColor: string | null;
+}
+
 export interface SnapshotGroundStyleSettings {
   contactShadowOpacity: number;
   contactShadowBlur: number;
@@ -55,6 +69,9 @@ export interface SnapshotGroundStyleSettings {
 }
 
 export interface SnapshotShadowStyleSettings {
+  shadowMapType: THREE.ShadowMapType;
+  blurSamples: number;
+  mapSizeMultiplier: number;
   radius: number;
   bias: number;
   normalBias: number;
@@ -86,6 +103,64 @@ export const SNAPSHOT_ENVIRONMENT_PRESET_SETTINGS: Record<
   },
 };
 
+export const SNAPSHOT_ENVIRONMENT_PRESET_RENDER_SETTINGS: Record<
+  SnapshotEnvironmentPreset,
+  SnapshotEnvironmentPresetRenderSettings
+> = {
+  viewport: {
+    ambientIntensityMultiplier: 1,
+    hemisphereIntensityMultiplier: 1,
+    mainIntensityMultiplier: 1,
+    fillIntensityMultiplier: 1,
+    rimIntensityMultiplier: 1,
+    cameraIntensityMultiplier: 1,
+    toneMappingExposureMultiplier: 1,
+    hemisphereSky: null,
+    hemisphereGround: null,
+    mainColor: null,
+    rimColor: null,
+  },
+  studio: {
+    ambientIntensityMultiplier: 1.08,
+    hemisphereIntensityMultiplier: 1.04,
+    mainIntensityMultiplier: 0.94,
+    fillIntensityMultiplier: 1.06,
+    rimIntensityMultiplier: 0.92,
+    cameraIntensityMultiplier: 0.95,
+    toneMappingExposureMultiplier: 0.98,
+    hemisphereSky: '#f7fbff',
+    hemisphereGround: '#d6dde6',
+    mainColor: '#fff8ed',
+    rimColor: '#ffffff',
+  },
+  city: {
+    ambientIntensityMultiplier: 0.92,
+    hemisphereIntensityMultiplier: 1.08,
+    mainIntensityMultiplier: 1.12,
+    fillIntensityMultiplier: 1.14,
+    rimIntensityMultiplier: 1.08,
+    cameraIntensityMultiplier: 1,
+    toneMappingExposureMultiplier: 1.02,
+    hemisphereSky: '#e7f2ff',
+    hemisphereGround: '#c9d4df',
+    mainColor: '#f2f7ff',
+    rimColor: '#d9e7ff',
+  },
+  contrast: {
+    ambientIntensityMultiplier: 0.72,
+    hemisphereIntensityMultiplier: 0.82,
+    mainIntensityMultiplier: 1.24,
+    fillIntensityMultiplier: 0.82,
+    rimIntensityMultiplier: 1.42,
+    cameraIntensityMultiplier: 1.08,
+    toneMappingExposureMultiplier: 1.05,
+    hemisphereSky: '#dfe8f6',
+    hemisphereGround: '#b7c2cf',
+    mainColor: '#fff1d6',
+    rimColor: '#cfe1ff',
+  },
+};
+
 export const SNAPSHOT_GROUND_STYLE_SETTINGS: Record<
   SnapshotGroundStyle,
   SnapshotGroundStyleSettings
@@ -111,14 +186,14 @@ export const SNAPSHOT_GROUND_STYLE_SETTINGS: Record<
     reflectorMirror: 0.22,
   },
   reflective: {
-    contactShadowOpacity: 0.56,
-    contactShadowBlur: 1.6,
-    contactShadowResolution: 768,
+    contactShadowOpacity: 0.5,
+    contactShadowBlur: 1.3,
+    contactShadowResolution: 896,
     contactShadowFar: 12,
-    reflectorStrength: 0.86,
-    reflectorBlur: [520, 160],
-    reflectorRoughness: 0.36,
-    reflectorMirror: 0.42,
+    reflectorStrength: 1.24,
+    reflectorBlur: [180, 42],
+    reflectorRoughness: 0.16,
+    reflectorMirror: 0.76,
   },
 };
 
@@ -127,21 +202,52 @@ export const SNAPSHOT_SHADOW_STYLE_SETTINGS: Record<
   SnapshotShadowStyleSettings
 > = {
   soft: {
-    radius: 6,
+    shadowMapType: THREE.VSMShadowMap,
+    blurSamples: 10,
+    mapSizeMultiplier: 0.85,
+    radius: 0,
     bias: -0.00016,
-    normalBias: 0.03,
+    normalBias: 0.035,
   },
   balanced: {
+    shadowMapType: THREE.PCFSoftShadowMap,
+    blurSamples: 0,
+    mapSizeMultiplier: 1,
     radius: 3.2,
     bias: -0.00012,
     normalBias: 0.02,
   },
   crisp: {
+    shadowMapType: THREE.PCFShadowMap,
+    blurSamples: 0,
+    mapSizeMultiplier: 1.35,
     radius: 1.25,
     bias: -0.00008,
     normalBias: 0.012,
   },
 };
+
+function resolveSnapshotDirectionalLightRole(
+  light: THREE.DirectionalLight,
+): 'main' | 'fill' | 'rim' | 'camera' | 'other' {
+  if (light.name === 'MainLight') {
+    return 'main';
+  }
+
+  if (light.name === 'RimLight') {
+    return 'rim';
+  }
+
+  if (light.name.startsWith('FillLight')) {
+    return 'fill';
+  }
+
+  if (light.name.startsWith('Camera')) {
+    return 'camera';
+  }
+
+  return 'other';
+}
 
 const SNAPSHOT_BACKGROUND_PRESET_FILL: Record<
   Exclude<SnapshotBackgroundStyle, 'viewport' | 'transparent'>,
@@ -277,6 +383,114 @@ export function applySnapshotBackgroundStyle(
   };
 }
 
+export function applySnapshotLightingPreset(
+  scene: THREE.Scene,
+  gl: THREE.WebGLRenderer,
+  environmentPreset: SnapshotEnvironmentPreset,
+): Cleanup {
+  const preset = SNAPSHOT_ENVIRONMENT_PRESET_RENDER_SETTINGS[environmentPreset];
+  if (environmentPreset === 'viewport') {
+    return () => {};
+  }
+
+  const previousToneMappingExposure = gl.toneMappingExposure;
+  const trackedAmbientLights: Array<{ light: THREE.AmbientLight; intensity: number }> = [];
+  const trackedHemisphereLights: Array<{
+    light: THREE.HemisphereLight;
+    intensity: number;
+    skyColor: THREE.Color;
+    groundColor: THREE.Color;
+  }> = [];
+  const trackedDirectionalLights: Array<{
+    light: THREE.DirectionalLight;
+    intensity: number;
+    color: THREE.Color;
+  }> = [];
+
+  scene.traverse((object) => {
+    if (object instanceof THREE.AmbientLight) {
+      trackedAmbientLights.push({
+        light: object,
+        intensity: object.intensity,
+      });
+      object.intensity *= preset.ambientIntensityMultiplier;
+      return;
+    }
+
+    if (object instanceof THREE.HemisphereLight) {
+      trackedHemisphereLights.push({
+        light: object,
+        intensity: object.intensity,
+        skyColor: object.color.clone(),
+        groundColor: object.groundColor.clone(),
+      });
+      object.intensity *= preset.hemisphereIntensityMultiplier;
+      if (preset.hemisphereSky) {
+        object.color.set(preset.hemisphereSky);
+      }
+      if (preset.hemisphereGround) {
+        object.groundColor.set(preset.hemisphereGround);
+      }
+      return;
+    }
+
+    if (object instanceof THREE.DirectionalLight) {
+      trackedDirectionalLights.push({
+        light: object,
+        intensity: object.intensity,
+        color: object.color.clone(),
+      });
+
+      const role = resolveSnapshotDirectionalLightRole(object);
+      if (role === 'main') {
+        object.intensity *= preset.mainIntensityMultiplier;
+        if (preset.mainColor) {
+          object.color.set(preset.mainColor);
+        }
+        return;
+      }
+
+      if (role === 'fill') {
+        object.intensity *= preset.fillIntensityMultiplier;
+        return;
+      }
+
+      if (role === 'rim') {
+        object.intensity *= preset.rimIntensityMultiplier;
+        if (preset.rimColor) {
+          object.color.set(preset.rimColor);
+        }
+        return;
+      }
+
+      if (role === 'camera') {
+        object.intensity *= preset.cameraIntensityMultiplier;
+      }
+    }
+  });
+
+  gl.toneMappingExposure = previousToneMappingExposure * preset.toneMappingExposureMultiplier;
+
+  return () => {
+    trackedAmbientLights.forEach(({ light, intensity }) => {
+      light.intensity = intensity;
+    });
+
+    trackedHemisphereLights.forEach(({ light, intensity, skyColor, groundColor }) => {
+      light.intensity = intensity;
+      light.color.copy(skyColor);
+      light.groundColor.copy(groundColor);
+    });
+
+    trackedDirectionalLights.forEach(({ light, intensity, color }) => {
+      light.intensity = intensity;
+      light.color.copy(color);
+    });
+
+    gl.toneMappingExposure = previousToneMappingExposure;
+  };
+}
+
 export function applySnapshotTextureQuality(
   scene: THREE.Scene,
   gl: THREE.WebGLRenderer,
@@ -321,6 +535,7 @@ export function applySnapshotShadowQuality(
   detailLevel: SnapshotDetailLevel,
   shadowStyle: SnapshotShadowStyle,
 ): Cleanup {
+  const shadowStyleSettings = SNAPSHOT_SHADOW_STYLE_SETTINGS[shadowStyle];
   const requestedShadowMapSize = SNAPSHOT_DETAIL_SHADOW_MAP_SIZE[detailLevel];
   if (!requestedShadowMapSize || !gl.shadowMap.enabled) {
     return () => {};
@@ -328,7 +543,10 @@ export function applySnapshotShadowQuality(
   const maxShadowMapSize = Number.isFinite(gl.capabilities.maxTextureSize)
     ? Math.max(256, Math.floor(gl.capabilities.maxTextureSize))
     : requestedShadowMapSize;
-  const targetShadowMapSize = Math.min(requestedShadowMapSize, maxShadowMapSize);
+  const targetShadowMapSize = Math.min(
+    Math.max(256, Math.round(requestedShadowMapSize * shadowStyleSettings.mapSizeMultiplier)),
+    maxShadowMapSize,
+  );
 
   const trackedLights: Array<{
     light: THREE.DirectionalLight;
@@ -336,8 +554,9 @@ export function applySnapshotShadowQuality(
     previousRadius: number;
     previousBias: number;
     previousNormalBias: number;
+    previousBlurSamples: number | null;
   }> = [];
-  const shadowStyleSettings = SNAPSHOT_SHADOW_STYLE_SETTINGS[shadowStyle];
+  const previousShadowMapType = gl.shadowMap.type;
 
   scene.traverse((object) => {
     if (!(object instanceof THREE.DirectionalLight) || !object.castShadow) {
@@ -350,18 +569,12 @@ export function applySnapshotShadowQuality(
       previousRadius: object.shadow.radius,
       previousBias: object.shadow.bias,
       previousNormalBias: object.shadow.normalBias,
+      previousBlurSamples:
+        typeof (object.shadow as THREE.LightShadow & { blurSamples?: unknown }).blurSamples ===
+        'number'
+          ? (object.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples
+          : null,
     });
-
-    if (
-      object.shadow.mapSize.x === targetShadowMapSize &&
-      object.shadow.mapSize.y === targetShadowMapSize
-    ) {
-      object.shadow.radius = shadowStyleSettings.radius;
-      object.shadow.bias = shadowStyleSettings.bias;
-      object.shadow.normalBias = shadowStyleSettings.normalBias;
-      object.shadow.needsUpdate = true;
-      return;
-    }
 
     object.shadow.map?.dispose();
     object.shadow.map = null;
@@ -369,30 +582,43 @@ export function applySnapshotShadowQuality(
     object.shadow.radius = shadowStyleSettings.radius;
     object.shadow.bias = shadowStyleSettings.bias;
     object.shadow.normalBias = shadowStyleSettings.normalBias;
+    if ('blurSamples' in object.shadow) {
+      (object.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples =
+        shadowStyleSettings.blurSamples;
+    }
     object.shadow.needsUpdate = true;
   });
 
-  if (trackedLights.length === 0) {
-    return () => {};
-  }
-
   const previousAutoUpdate = gl.shadowMap.autoUpdate;
+  gl.shadowMap.type = shadowStyleSettings.shadowMapType;
   gl.shadowMap.autoUpdate = true;
   gl.shadowMap.needsUpdate = true;
 
   return () => {
     trackedLights.forEach(
-      ({ light, previousMapSize, previousRadius, previousBias, previousNormalBias }) => {
+      ({
+        light,
+        previousMapSize,
+        previousRadius,
+        previousBias,
+        previousNormalBias,
+        previousBlurSamples,
+      }) => {
         light.shadow.map?.dispose();
         light.shadow.map = null;
         light.shadow.mapSize.copy(previousMapSize);
         light.shadow.radius = previousRadius;
         light.shadow.bias = previousBias;
         light.shadow.normalBias = previousNormalBias;
+        if ('blurSamples' in light.shadow) {
+          (light.shadow as THREE.LightShadow & { blurSamples: number }).blurSamples =
+            previousBlurSamples ?? 0;
+        }
         light.shadow.needsUpdate = true;
       },
     );
 
+    gl.shadowMap.type = previousShadowMapType;
     gl.shadowMap.autoUpdate = previousAutoUpdate;
     gl.shadowMap.needsUpdate = true;
   };

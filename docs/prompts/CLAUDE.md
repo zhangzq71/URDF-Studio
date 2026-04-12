@@ -1,17 +1,17 @@
 # URDF-Studio 开发指南
 
-> 单一主 Prompt 上下文。`overview.md`、`URDF_STUDIO_STYLE_GUIDE.md`、`urdf-viewer.md`、`visualizer.md` 只保留轻量入口，避免重复加载同一批信息。
+> 单一主 Prompt 上下文。`overview.md`、`URDF_STUDIO_STYLE_GUIDE.md`、`urdf-viewer.md` 只保留轻量入口，避免重复加载同一批信息。
 
 ## 1. 最小读取策略
 
 建议按以下顺序读取，控制 token：
 
-1. 先读仓库根目录 `AGENTS.md`。
+1. 先读仓库根目录 `CLAUDE.md`。
 2. 再读本文件。
 3. 仅在任务相关时再看对应轻量入口：
    - UI / 主题 / 可访问性：看本文件第 6 节
-   - `Visualizer`（`Editor` 下的拓扑 / 硬件能力）：看本文件第 7 节
-   - `URDF Viewer`（`Editor` 下的几何 / 碰撞 / 测量能力）：看本文件第 8 节
+   - `Editor 拓扑/硬件子域`：看本文件第 7 节
+   - `Editor 几何/碰撞/测量子域`：看本文件第 8 节
    - 架构边界 / 对外库 / runtime fallback 审计：看 `docs/architecture-boundaries.md`、`docs/robot-canvas-lib.md`、`docs/runtime-fallback-audit.md`
 4. AI 审阅标准直接读取：
    - `src/features/ai-assistant/config/urdf_inspect_standard_en.md`
@@ -22,7 +22,7 @@
    - 当前在 `Editor` 中操作的是拓扑、几何/碰撞、还是硬件相关能力
    - 涉及电机时的力矩 / 传动 / 阻尼约束
 
-若本文件描述与当前 `src/` 真实结构冲突，以仓库现状和 `AGENTS.md` 为准。
+若本文件描述与当前 `src/` 真实结构冲突，以仓库现状和 `CLAUDE.md` 为准。
 
 ## 1.5 Skill-first 路由（减少 prompt / MCP token）
 
@@ -187,11 +187,11 @@ app -> features -> store -> shared -> core -> types
 
 ## 4. 单模式 `Editor`
 
-| 子能力             | 主模块        | 典型任务                                       |
-| ------------------ | ------------- | ---------------------------------------------- |
-| 拓扑编辑           | `Visualizer`  | Link / Joint 增删、拓扑编辑、关节参数          |
-| 几何 / 碰撞 / 测量 | `URDF Viewer` | Visual / Collision、网格、材质、纹理、碰撞变换 |
-| 硬件配置           | `Visualizer`  | 电机型号、传动比、阻尼、摩擦                   |
+| 子能力             | 主模块            | 典型任务                                       |
+| ------------------ | ----------------- | ---------------------------------------------- |
+| 拓扑编辑           | `Editor 拓扑子域` | Link / Joint 增删、拓扑编辑、关节参数          |
+| 几何 / 碰撞 / 测量 | `Editor 几何子域` | Visual / Collision、网格、材质、纹理、碰撞变换 |
+| 硬件配置           | `Editor 硬件子域` | 电机型号、传动比、阻尼、摩擦                   |
 
 新增功能前，先判断属于 `Editor` 下哪类子能力，避免跨子系统逻辑缠绕。
 
@@ -206,7 +206,7 @@ app -> features -> store -> shared -> core -> types
 
 - `src/app/App.tsx`：根组件，装配 Providers、懒加载模态框、全局导入导出入口、debug bridge
 - `src/app/AppLayout.tsx`：应用壳、Header、TreeEditor、PropertyEditor、UnifiedViewer 主编排
-- `src/app/components/UnifiedViewer.tsx`：统一组合 `Visualizer` / `URDF Viewer`
+- `src/app/components/UnifiedViewer.tsx`：统一 `Editor` viewer 组合入口
 - `src/app/components/WorkspaceCanvas.tsx`：应用层对共享画布入口的 re-export；底层 runtime 在 `src/shared/components/3d/workspace/*`
 - `src/app/components/AppLayoutOverlays.tsx`：延迟加载桥接创建、碰撞优化等浮层
 - `src/app/components/ConnectedDocumentLoadingOverlay.tsx` / `src/app/components/DocumentLoadingOverlay.tsx` / `src/app/components/ImportPreparationOverlay.tsx`：导入准备与文档加载反馈
@@ -320,25 +320,15 @@ app -> features -> store -> shared -> core -> types
 - Hover / Active / Focus 行为一致且可感知
 - 不新增分散硬编码色值
 
-## 7. Visualizer（Editor 子能力：拓扑 / 硬件）
+## 7. Editor 统一 Viewer 子域（已合并）
 
 ### 当前结构
 
-- `src/features/visualizer/components/Visualizer.tsx`
-- `src/features/visualizer/components/VisualizerScene.tsx`
-- `src/features/visualizer/components/VisualizerPanels.tsx`
-- `src/features/visualizer/components/VisualizerCanvas.tsx`
-- `src/features/visualizer/components/VisualizerHoverController.tsx`
-- `src/features/visualizer/components/nodes/*`
-- `src/features/visualizer/components/controls/*`
-- `src/features/visualizer/components/constraints/*`
-- `src/features/visualizer/hooks/*`
-- `src/features/visualizer/hooks/useVisualizerState.ts`
-- `src/features/visualizer/hooks/useCollisionMeshPrewarm.ts`
-- `src/features/visualizer/utils/mergedVisualizerSceneMode.ts`
-- `src/features/visualizer/utils/mergedVisualizerLayout.ts`
-- `src/features/visualizer/utils/materialCache.ts`
-- 共享面板在 `src/shared/components/Panel/*`
+- 公开入口：`src/features/editor/index.ts`
+- 实现目录：`src/features/urdf-viewer/components/*`、`src/features/urdf-viewer/hooks/*`、`src/features/urdf-viewer/utils/*`
+- 统一场景宿主：`src/app/components/unified-viewer/*`
+- 共享 3D 能力：`src/shared/components/3d/*`
+- 共享面板：`src/shared/components/Panel/*`
 
 ### 核心模式
 
@@ -348,22 +338,21 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 
 关键 hooks / 能力：
 
-- `useJointPivots`
-- `useCollisionRefs`
-- `useClosedLoopDragSync`
-- `useTransformControls`
-- `useVisualizerController`
+- `useViewerController`
+- `useMouseInteraction`
+- `useHoverDetection`
+- `useVisualizationEffects`
 
 ### 实现约束
 
-- 新能力优先放入 hooks 或新组件，不继续增厚 `Visualizer.tsx`
-- 材质必须通过 `materialCache` 复用，不在高频路径直接 `new` 材质
+- 新能力优先放入 hooks 或新组件，不要恢复双壳并存
+- 材质必须通过 `materials.ts` / `urdfMaterials.ts` 复用，不在高频路径直接 `new` 材质
 - 统一使用 `RobotState` 等共享类型，避免 `any`
 - TransformControls 依赖的引用注册必须完整、可追踪
 - 保持 `RobotNode <-> JointNode` 交替递归模式
 - 涉及 THREE 资源时注意释放，避免材质 / 几何体泄漏
 
-## 8. URDF Viewer（Editor 子能力：几何 / 碰撞 / 测量）
+## 8. Editor 几何/碰撞/测量子域
 
 ### 当前结构
 
@@ -392,7 +381,7 @@ RobotNode (Link) -> JointNode (Joint) -> RobotNode (child Link)
 
 ### 核心文件
 
-- `src/features/urdf-viewer/components/URDFViewerCanvas.tsx`
+- `src/features/urdf-viewer/components/ViewerCanvas.tsx`
 - `src/features/urdf-viewer/components/ViewerToolbar.tsx`
 - `src/features/urdf-viewer/components/ViewerLoadingHud.tsx`
 - `src/features/urdf-viewer/components/UsdWasmStage.tsx`

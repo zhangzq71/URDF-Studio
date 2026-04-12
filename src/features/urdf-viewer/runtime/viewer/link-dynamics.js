@@ -751,6 +751,7 @@ export class LinkDynamicsController {
             });
         }
         catch (error) {
+            console.error("[LinkDynamicsController] Failed to read cached render robot metadata snapshot before link dynamics catalog build.", error);
             const errorText = String(error?.message || error || "").trim() || "catalog-build-failed";
             this.setCatalogStatus("error", errorText);
             const buildPromise = Promise.reject(error).finally(() => {
@@ -784,6 +785,10 @@ export class LinkDynamicsController {
             this.setCatalogStatus("ready");
         })
             .catch((error) => {
+            console.error("[LinkDynamicsController] Link dynamics catalog build failed.", {
+                stageSourcePath: this.stageSourcePath || this.getLinkDynamicsCacheKey(renderInterface, stage) || null,
+                error,
+            });
             const errorText = String(error?.message || error || "").trim() || "catalog-build-failed";
             this.setCatalogStatus("error", errorText);
             throw error;

@@ -24,13 +24,17 @@ function installDom() {
   });
 
   (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
-  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement = dom.window.HTMLInputElement;
+  (globalThis as { HTMLInputElement?: typeof HTMLInputElement }).HTMLInputElement =
+    dom.window.HTMLInputElement;
   (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
   (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
   (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
-  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
-  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
-  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   return dom;
@@ -122,18 +126,67 @@ test('TreeEditorFileBrowserPanel clicks add components directly in pro mode', as
       },
     });
 
-    const fileLabel = Array.from(container.querySelectorAll('span')).find((element) => element.textContent === 'arm.urdf');
+    const fileLabel = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent === 'arm.urdf',
+    );
     assert.ok(fileLabel, 'file label should render');
 
     await act(async () => {
-      fileLabel.dispatchEvent(new dom.window.MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-      }));
+      fileLabel.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
     });
 
     assert.deepEqual(addedFiles, ['arm.urdf']);
     assert.deepEqual(loadedFiles, []);
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeEditorFileBrowserPanel previews image assets instead of adding them in pro mode', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    const file: RobotFile = {
+      name: 'poster.png',
+      content: '',
+      format: 'mesh',
+    };
+    const addedFiles: string[] = [];
+    const loadedFiles: string[] = [];
+
+    await renderPanel({
+      root,
+      file,
+      isProMode: true,
+      onAddComponent: (nextFile) => {
+        addedFiles.push(nextFile.name);
+      },
+      onLoadRobot: (nextFile) => {
+        loadedFiles.push(nextFile.name);
+      },
+    });
+
+    const fileLabel = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent === 'poster.png',
+    );
+    assert.ok(fileLabel, 'image file label should render');
+
+    await act(async () => {
+      fileLabel.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    assert.deepEqual(addedFiles, []);
+    assert.deepEqual(loadedFiles, ['poster.png']);
   } finally {
     await destroyComponentRoot(dom, root);
   }

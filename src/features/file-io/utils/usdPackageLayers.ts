@@ -116,6 +116,16 @@ const radiansToDegrees = (value: number): number => {
   return (value * 180) / Math.PI;
 };
 
+const getUsdDriveInstanceName = (typeName: string): 'angular' | 'linear' | null => {
+  if (typeName === 'PhysicsRevoluteJoint') {
+    return 'angular';
+  }
+  if (typeName === 'PhysicsPrismaticJoint') {
+    return 'linear';
+  }
+  return null;
+};
+
 const serializeJointDefinition = (
   joint: UrdfJoint,
   linkPaths: Map<string, string>,
@@ -133,6 +143,17 @@ const serializeJointDefinition = (
   }
 
   const supportsAxis = typeName === 'PhysicsRevoluteJoint' || typeName === 'PhysicsPrismaticJoint';
+  const driveInstanceName = getUsdDriveInstanceName(typeName);
+  const driveDamping =
+    Number.isFinite(joint.dynamics?.damping) && Math.abs(joint.dynamics.damping) > 1e-9
+      ? joint.dynamics.damping
+      : null;
+  const driveMaxForce =
+    Number.isFinite(joint.limit?.effort) && Math.abs(joint.limit.effort) > 1e-9
+      ? joint.limit.effort
+      : null;
+  const shouldEmitDrive =
+    driveInstanceName !== null && (driveDamping !== null || driveMaxForce !== null);
 
   serializeUsdPrimSpecWithMetadata(
     lines,
@@ -140,6 +161,9 @@ const serializeJointDefinition = (
     `def ${typeName} "${sanitizeUsdIdentifier(joint.id || joint.name || 'joint')}"`,
   );
   lines.push(`${indent}{`);
+  if (shouldEmitDrive) {
+    lines.push(`${childIndent}prepend apiSchemas = ["PhysicsDriveAPI:${driveInstanceName}"]`);
+  }
   lines.push(`${childIndent}rel physics:body0 = <${parentPath}>`);
   lines.push(`${childIndent}rel physics:body1 = <${childPath}>`);
 
@@ -171,6 +195,20 @@ const serializeJointDefinition = (
   } else if (typeName === 'PhysicsPrismaticJoint' && joint.limit) {
     lines.push(`${childIndent}float physics:lowerLimit = ${formatUsdFloat(joint.limit.lower)}`);
     lines.push(`${childIndent}float physics:upperLimit = ${formatUsdFloat(joint.limit.upper)}`);
+  }
+
+  if (shouldEmitDrive) {
+    lines.push(`${childIndent}uniform token drive:${driveInstanceName}:physics:type = "force"`);
+    if (driveDamping !== null) {
+      lines.push(
+        `${childIndent}float drive:${driveInstanceName}:physics:damping = ${formatUsdFloat(driveDamping)}`,
+      );
+    }
+    if (driveMaxForce !== null) {
+      lines.push(
+        `${childIndent}float drive:${driveInstanceName}:physics:maxForce = ${formatUsdFloat(driveMaxForce)}`,
+      );
+    }
   }
 
   lines.push(

@@ -8,7 +8,6 @@ import { Providers } from './Providers';
 import { AppLayout } from './AppLayout';
 import { SettingsModal } from './components/SettingsModal';
 import { LazyOverlayFallback } from './components/LazyOverlayFallback';
-import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import {
   useAppShellState,
   useFileImport,
@@ -21,13 +20,22 @@ import { resolveCurrentUsdExportMode } from './utils/currentUsdExportMode';
 import {
   buildRobotLoadSupportContextKey,
   preserveDocumentLoadProgressForSameFile,
+  shouldReuseResolvedMjcfViewerRuntime,
   shouldCommitResolvedRobotSelection,
   shouldSkipRedundantRobotReload,
 } from './utils/documentLoadFlow';
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
-import { buildStandaloneImportAssetWarning } from './utils/importPackageAssetReferences';
+import {
+  mapRobotImportProgressToDocumentLoadPercent,
+  resolveBootstrapDocumentLoadPhase,
+  resolveRobotImportCompletedDocumentLoadPercent,
+} from './utils/documentLoadProgress';
+import {
+  buildStandaloneImportAssetWarning,
+  collectStandaloneImportSupportAssetPaths,
+} from './utils/importPackageAssetReferences';
 import {
   useRobotStore,
   useUIStore,
@@ -35,30 +43,88 @@ import {
   useAssetsStore,
   useAssemblyStore,
 } from '@/store';
-import type { RobotFile, RobotState, UrdfLink, UrdfJoint } from '@/types';
+import type { InspectionReport, RobotFile, RobotState } from '@/types';
+import type { HeaderAction } from './components/header/types';
+
+/** Render slots: allows external repos to inject extra modals and overlays */
+export interface AppExtensionSlots {
+  /** Rendered after core built-in modals, before toast */
+  renderModals?: () => React.ReactNode;
+  /** Rendered after toast (highest z-index layer) */
+  renderTopOverlays?: () => React.ReactNode;
+}
+
+/** Config extension: allows external repos to inject header actions etc. */
+export interface AppExtensionConfig {
+  headerQuickAction?: HeaderAction;
+  headerSecondaryAction?: HeaderAction;
+}
+
+/** Core internal actions exposed to external consumers */
+export interface AppExposedActions {
+  importFiles: (files: FileList | File[]) => void;
+  openLibraryExport: (file: RobotFile) => void;
+  openAIInspection: () => void;
+  openAIConversation: () => void;
+  openIkTool: () => void;
+  openCollisionOptimizer: () => void;
+  openTool: (key: string) => void;
+  exportProjectBlob: () => Promise<Blob>;
+}
+
+interface AppContentProps {
+  extensions?: {
+    slots?: AppExtensionSlots;
+    config?: AppExtensionConfig;
+  };
+  /** Core calls this on mount to expose internal handlers to the external host */
+  onExposeActions?: (actions: AppExposedActions) => void;
+}
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
+import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { translations, type Language } from '@/shared/i18n';
-import { isLibraryRobotExportableFormat } from '@/shared/utils';
+import { isAssetLibraryOnlyFormat, isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog/ExportDialog';
 import type { ExportProgressState } from '@/features/file-io/types';
-import { getUsdStageExportHandler } from '@/features/urdf-viewer/utils/usdStageExport';
+import { getUsdStageExportHandler } from '@/features/editor';
 import type { ImportPreparationOverlayState } from './hooks/useFileImport';
+import { consumeHandoffImportFromUrl } from './handoff/bootstrap';
+import {
+  deletePendingHandoffImport,
+  pruneExpiredPendingHandoffImports,
+  readPendingHandoffImport,
+} from './handoff/storage';
 import {
   installRegressionDebugApi,
   setRegressionAppHandlers,
   setRegressionBeforeUnloadPromptSuppressed,
 } from '@/shared/debug/regressionBridge';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
+import type {
+  AIConversationFocusedIssue,
+  AIConversationLaunchContext,
+  AIConversationMode,
+  AIConversationSelection,
+} from '@/features/ai-assistant/types';
 import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 
-const loadAIModalModule = () => import('@/features/ai-assistant');
+const loadAIInspectionModalModule = () =>
+  import('@/features/ai-assistant/components/AIInspectionModal');
+const loadAIConversationModalModule = () =>
+  import('@/features/ai-assistant/components/AIConversationModal');
 const loadExportDialogModule = () => import('@/features/file-io');
 const loadDisconnectedWorkspaceUrdfExportDialogModule = () =>
   import('@/features/file-io/components/DisconnectedWorkspaceUrdfExportDialog');
 const loadExportProgressDialogModule = () =>
   import('@/features/file-io/components/ExportProgressDialog');
 
-const AIModal = lazy(() => loadAIModalModule().then((module) => ({ default: module.AIModal })));
+const AIInspectionModal = lazy(() =>
+  loadAIInspectionModalModule().then((module) => ({ default: module.AIInspectionModal })),
+);
+
+const AIConversationModal = lazy(() =>
+  loadAIConversationModalModule().then((module) => ({ default: module.AIConversationModal })),
+);
 const DisconnectedWorkspaceUrdfExportDialog = lazy(() =>
   loadDisconnectedWorkspaceUrdfExportDialogModule().then((module) => ({
     default: module.DisconnectedWorkspaceUrdfExportDialog,
@@ -74,76 +140,109 @@ const ExportDialog = lazy(() =>
   loadExportDialogModule().then((module) => ({ default: module.ExportDialog })),
 );
 
-interface AIApplyChangesPayload {
-  name?: string;
-  links?: Record<string, UrdfLink>;
-  joints?: Record<string, UrdfJoint>;
-  rootLinkId?: string;
+function cloneAISnapshot<T>(value: T): T {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function validateAIApplyPayload(data: AIApplyChangesPayload):
-  | {
-      ok: true;
-      value: Required<Pick<AIApplyChangesPayload, 'links' | 'joints' | 'rootLinkId'>> &
-        Pick<AIApplyChangesPayload, 'name'>;
-    }
-  | { ok: false; reason: 'aiNoDataToApply' | 'aiNoLinksGenerated' } {
-  if (!data || typeof data !== 'object') {
-    return { ok: false, reason: 'aiNoDataToApply' };
+function resolveConversationSelectedEntity(robotSnapshot: RobotState) {
+  if (!robotSnapshot.selection.type || !robotSnapshot.selection.id) {
+    return null;
   }
 
-  if (!data.links || Object.keys(data.links).length === 0) {
-    return { ok: false, reason: 'aiNoLinksGenerated' };
-  }
-
-  if (!data.joints || typeof data.joints !== 'object') {
-    return { ok: false, reason: 'aiNoDataToApply' };
-  }
-
-  if (!data.rootLinkId || !data.links[data.rootLinkId]) {
-    return { ok: false, reason: 'aiNoDataToApply' };
+  if (robotSnapshot.selection.type !== 'link' && robotSnapshot.selection.type !== 'joint') {
+    return null;
   }
 
   return {
-    ok: true,
-    value: {
-      name: data.name,
-      links: data.links,
-      joints: data.joints,
-      rootLinkId: data.rootLinkId,
-    },
+    type: robotSnapshot.selection.type,
+    id: robotSnapshot.selection.id,
   };
 }
 
-function AIModalConnector({
+function createConversationLaunchContext({
+  sessionId,
+  mode,
+  robotSnapshot,
+  inspectionReportSnapshot = null,
+  selectedEntity = null,
+  focusedIssue = null,
+}: {
+  sessionId: number;
+  mode: AIConversationMode;
+  robotSnapshot: RobotState;
+  inspectionReportSnapshot?: InspectionReport | null;
+  selectedEntity?: AIConversationSelection | null;
+  focusedIssue?: AIConversationFocusedIssue | null;
+}): AIConversationLaunchContext {
+  const nextRobotSnapshot = cloneAISnapshot(robotSnapshot);
+  const nextFocusedIssue = focusedIssue ? cloneAISnapshot(focusedIssue) : null;
+
+  return {
+    sessionId,
+    mode,
+    robotSnapshot: nextRobotSnapshot,
+    inspectionReportSnapshot: inspectionReportSnapshot
+      ? cloneAISnapshot(inspectionReportSnapshot)
+      : null,
+    selectedEntity: selectedEntity
+      ? cloneAISnapshot(selectedEntity)
+      : resolveConversationSelectedEntity(nextRobotSnapshot),
+    focusedIssue: nextFocusedIssue,
+  };
+}
+
+function AIInspectionConnector({
   isOpen,
   onClose,
   lang,
-  onApplyChanges,
+  onOpenConversationWithReport,
 }: {
   isOpen: boolean;
   onClose: () => void;
   lang: Language;
-  onApplyChanges: (data: AIApplyChangesPayload) => void;
+  onOpenConversationWithReport: (
+    report: InspectionReport,
+    robotSnapshot: RobotState,
+    options?: {
+      selectedEntity?: AIConversationSelection | null;
+      focusedIssue?: AIConversationFocusedIssue | null;
+    },
+  ) => void;
 }) {
   const { sidebarTab } = useUIStore(
     useShallow((state) => ({
       sidebarTab: state.sidebarTab,
     })),
   );
-  const { selection, setSelection, focusOn } = useSelectionStore(
+  const { selection, setSelection, focusOn, pulseSelection } = useSelectionStore(
     useShallow((state) => ({
       selection: state.selection,
       setSelection: state.setSelection,
       focusOn: state.focusOn,
+      pulseSelection: state.pulseSelection,
     })),
   );
-  const { robotName, robotLinks, robotJoints, rootLinkId } = useRobotStore(
+  const {
+    robotName,
+    robotLinks,
+    robotJoints,
+    rootLinkId,
+    robotMaterials,
+    robotClosedLoopConstraints,
+    inspectionContext,
+  } = useRobotStore(
     useShallow((state) => ({
       robotName: state.name,
       robotLinks: state.links,
       robotJoints: state.joints,
       rootLinkId: state.rootLinkId,
+      robotMaterials: state.materials,
+      robotClosedLoopConstraints: state.closedLoopConstraints,
+      inspectionContext: state.inspectionContext,
     })),
   );
   const { assemblyState, getMergedRobotData } = useAssemblyStore(
@@ -152,7 +251,6 @@ function AIModalConnector({
       getMergedRobotData: state.getMergedRobotData,
     })),
   );
-  const motorLibrary = useAssetsStore((state) => state.motorLibrary);
 
   const mergedWorkspaceRobot = useMemo(() => {
     if (!assemblyState || sidebarTab !== 'workspace') {
@@ -175,22 +273,59 @@ function AIModalConnector({
       links: robotLinks,
       joints: robotJoints,
       rootLinkId,
+      materials: robotMaterials,
+      closedLoopConstraints: robotClosedLoopConstraints,
+      inspectionContext,
       selection,
     };
-  }, [mergedWorkspaceRobot, robotJoints, robotLinks, robotName, rootLinkId, selection]);
+  }, [
+    mergedWorkspaceRobot,
+    robotJoints,
+    robotLinks,
+    robotName,
+    rootLinkId,
+    robotMaterials,
+    robotClosedLoopConstraints,
+    inspectionContext,
+    selection,
+  ]);
 
   return (
-    <AIModal
+    <AIInspectionModal
       isOpen={isOpen}
       onClose={onClose}
       robot={robot}
-      motorLibrary={motorLibrary}
       lang={lang}
-      onApplyChanges={onApplyChanges}
       onSelectItem={(type, id) => {
         setSelection({ type, id });
+        pulseSelection({ type, id });
         focusOn(id);
       }}
+      onOpenConversationWithReport={onOpenConversationWithReport}
+    />
+  );
+}
+
+function AIConversationConnector({
+  isOpen,
+  onClose,
+  lang,
+  launchContext,
+  onStartNewConversation,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  lang: Language;
+  launchContext: AIConversationLaunchContext | null;
+  onStartNewConversation: (launchContext: AIConversationLaunchContext) => void;
+}) {
+  return (
+    <AIConversationModal
+      isOpen={isOpen}
+      onClose={onClose}
+      lang={lang}
+      launchContext={launchContext}
+      onStartNewConversation={onStartNewConversation}
     />
   );
 }
@@ -279,7 +414,35 @@ function waitForNextPaint(): Promise<void> {
 
 type ExportDialogTarget = { type: 'current' } | { type: 'library-file'; file: RobotFile };
 
-function AppContent() {
+function resolveCurrentAIRobotSnapshot(): RobotState {
+  const { sidebarTab } = useUIStore.getState();
+  const { selection } = useSelectionStore.getState();
+  const { assemblyState, getMergedRobotData } = useAssemblyStore.getState();
+  const robotState = useRobotStore.getState();
+
+  if (assemblyState && sidebarTab === 'workspace') {
+    const mergedWorkspaceRobot = getMergedRobotData();
+    if (mergedWorkspaceRobot) {
+      return cloneAISnapshot({
+        ...mergedWorkspaceRobot,
+        selection,
+      });
+    }
+  }
+
+  return cloneAISnapshot({
+    name: robotState.name,
+    links: robotState.links,
+    joints: robotState.joints,
+    rootLinkId: robotState.rootLinkId,
+    materials: robotState.materials,
+    closedLoopConstraints: robotState.closedLoopConstraints,
+    inspectionContext: robotState.inspectionContext,
+    selection,
+  });
+}
+
+export function AppContent({ extensions, onExposeActions }: AppContentProps = {}) {
   useUnsavedChangesPrompt();
 
   // Refs for file inputs
@@ -289,8 +452,13 @@ function AppContent() {
     ((file: RobotFile, options?: { forceReload?: boolean }) => Promise<void> | void) | null
   >(null);
   const loadRequestIdRef = useRef(0);
+  const aiConversationSessionIdRef = useRef(0);
+  const handoffBootstrapStartedRef = useRef(false);
+  const [shouldRenderAIInspectionModal, setShouldRenderAIInspectionModal] = useState(false);
+  const [shouldRenderAIConversationModal, setShouldRenderAIConversationModal] = useState(false);
+  const [aiConversationLaunchContext, setAIConversationLaunchContext] =
+    useState<AIConversationLaunchContext | null>(null);
   const lastLoadSupportContextKeyRef = useRef<string | null>(null);
-  const [shouldRenderAIModal, setShouldRenderAIModal] = useState(false);
   const [exportDialogTarget, setExportDialogTarget] = useState<ExportDialogTarget>({
     type: 'current',
   });
@@ -340,8 +508,13 @@ function AppContent() {
     toast,
     closeToast,
     showToast,
-    isAIModalOpen,
-    setIsAIModalOpen,
+    isAIInspectionOpen,
+    setIsAIInspectionOpen,
+    isAIConversationOpen,
+    setIsAIConversationOpen,
+    setAILaunchMode,
+    openAIInspection,
+    openAIConversation,
     isCodeViewerOpen,
     setIsCodeViewerOpen,
     isExportDialogOpen,
@@ -384,7 +557,8 @@ function AppContent() {
                     ? 'checking-path'
                     : 'preparing-scene',
               message: null,
-              progressPercent: null,
+              progressMode: 'percent',
+              progressPercent: resolveRobotImportCompletedDocumentLoadPercent(file.format),
               loadedCount: null,
               totalCount: null,
             },
@@ -424,11 +598,22 @@ function AppContent() {
   );
 
   const commitResolvedFileSelection = useCallback(
-    (file: RobotFile) => {
-      setViewerReloadKey((value) => value + 1);
+    (file: RobotFile, options?: { reloadViewer?: boolean }) => {
+      const assetLibraryOnlyFile = isAssetLibraryOnlyFormat(file.format);
+      const originalFileFormat =
+        file.format === 'urdf' ||
+        file.format === 'mjcf' ||
+        file.format === 'usd' ||
+        file.format === 'xacro' ||
+        file.format === 'sdf'
+          ? file.format
+          : null;
+      if (options?.reloadViewer !== false) {
+        setViewerReloadKey((value) => value + 1);
+      }
       setSelectedFile(file);
-      setOriginalUrdfContent(file.format === 'mesh' ? '' : file.content);
-      setOriginalFileFormat(file.format === 'mesh' ? null : file.format);
+      setOriginalUrdfContent(assetLibraryOnlyFile ? '' : file.content);
+      setOriginalFileFormat(originalFileFormat);
       setSelection({ type: null, id: null });
       const currentAppMode = useUIStore.getState().appMode;
       const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
@@ -468,16 +653,26 @@ function AppContent() {
         return;
       }
 
+      const importedAssetPaths = collectStandaloneImportSupportAssetPaths(
+        liveAssetsState.assets,
+        liveAssetsState.availableFiles,
+      );
       const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
         file,
-        Object.keys(liveAssetsState.assets),
+        importedAssetPaths,
+        {
+          allFileContents: liveAssetsState.allFileContents,
+          sourcePath: file.name,
+        },
       );
       if (standaloneImportAssetWarning) {
         const assetLabel =
           standaloneImportAssetWarning.missingAssetPaths.length > 3
             ? `${standaloneImportAssetWarning.missingAssetPaths.slice(0, 3).join(', ')}, …`
             : standaloneImportAssetWarning.missingAssetPaths.join(', ');
-        const message = t.importPackageAssetBundleHint.replace('{assets}', assetLabel);
+        const message = t.importPackageAssetBundleHint
+          .replace('{packages}', assetLabel)
+          .replace('{assets}', assetLabel);
         setDocumentLoadState({
           status: 'error',
           fileName: file.name,
@@ -488,6 +683,31 @@ function AppContent() {
         return;
       }
 
+      const currentResolvedMjcfSource =
+        currentSelectedFile?.format === 'mjcf'
+          ? resolveMJCFSource(currentSelectedFile, liveAssetsState.availableFiles)
+          : null;
+      const nextResolvedMjcfSource =
+        file.format === 'mjcf' ? resolveMJCFSource(file, liveAssetsState.availableFiles) : null;
+      const shouldReloadViewer =
+        options?.forceReload ||
+        !shouldReuseResolvedMjcfViewerRuntime({
+          currentSelectedFile,
+          nextFile: file,
+          currentResolvedSource: currentResolvedMjcfSource
+            ? {
+                effectiveFileName: currentResolvedMjcfSource.effectiveFile.name,
+                content: currentResolvedMjcfSource.content,
+              }
+            : null,
+          nextResolvedSource: nextResolvedMjcfSource
+            ? {
+                effectiveFileName: nextResolvedMjcfSource.effectiveFile.name,
+                content: nextResolvedMjcfSource.content,
+              }
+            : null,
+        });
+
       setDocumentLoadState(
         preserveDocumentLoadProgressForSameFile({
           currentState: liveAssetsState.documentLoadState,
@@ -496,9 +716,10 @@ function AppContent() {
             fileName: file.name,
             format: file.format,
             error: null,
-            phase: file.format === 'usd' ? 'checking-path' : 'preparing-scene',
+            phase: resolveBootstrapDocumentLoadPhase(file.format),
             message: null,
-            progressPercent: null,
+            progressMode: 'percent',
+            progressPercent: 0,
             loadedCount: null,
             totalCount: null,
           },
@@ -516,17 +737,70 @@ function AppContent() {
 
         if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
           lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-          commitResolvedFileSelection(file);
+          commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
         }
         applyResolvedRobotImport(file, preResolvedImportResult);
+        if (
+          !shouldReloadViewer &&
+          preResolvedImportResult.status === 'ready' &&
+          file.format === 'mjcf'
+        ) {
+          setDocumentLoadState({
+            status: 'ready',
+            fileName: file.name,
+            format: file.format,
+            error: null,
+            phase: 'ready',
+            message: null,
+            progressMode: 'percent',
+            progressPercent: 100,
+            loadedCount: null,
+            totalCount: null,
+          });
+        }
         return;
       }
 
-      const importResultPromise = resolveRobotFileDataWithWorker(file, {
-        availableFiles: liveAssetsState.availableFiles,
-        assets: liveAssetsState.assets,
-        usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
-      });
+      const importResultPromise = resolveRobotFileDataWithWorker(
+        file,
+        {
+          availableFiles: liveAssetsState.availableFiles,
+          assets: liveAssetsState.assets,
+          usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
+        },
+        {
+          onProgress: (progress) => {
+            if (requestId !== loadRequestIdRef.current) {
+              return;
+            }
+
+            const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
+            const mappedProgressPercent = mapRobotImportProgressToDocumentLoadPercent(
+              file.format,
+              progress,
+            );
+            const nextProgressPercent =
+              currentDocumentLoadState.fileName === file.name &&
+              (currentDocumentLoadState.status === 'loading' ||
+                currentDocumentLoadState.status === 'hydrating')
+                ? Math.max(currentDocumentLoadState.progressPercent ?? 0, mappedProgressPercent)
+                : mappedProgressPercent;
+
+            setDocumentLoadState({
+              status: 'loading',
+              fileName: file.name,
+              format: file.format,
+              error: null,
+              phase: resolveBootstrapDocumentLoadPhase(file.format),
+              message: progress.message ?? null,
+              progressMode: 'percent',
+              progressPercent: nextProgressPercent,
+              loadedCount: null,
+              totalCount: null,
+            });
+          },
+        },
+      );
 
       await waitForNextPaint();
 
@@ -558,9 +832,23 @@ function AppContent() {
 
       if (shouldCommitResolvedRobotSelection(importResult)) {
         lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-        commitResolvedFileSelection(file);
+        commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
       }
       applyResolvedRobotImport(file, importResult);
+      if (!shouldReloadViewer && importResult.status === 'ready' && file.format === 'mjcf') {
+        setDocumentLoadState({
+          status: 'ready',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: 'ready',
+          message: null,
+          progressMode: 'percent',
+          progressPercent: 100,
+          loadedCount: null,
+          totalCount: null,
+        });
+      }
     },
     [
       applyResolvedRobotImport,
@@ -598,6 +886,7 @@ function AppContent() {
     setRegressionAppHandlers({
       getAvailableFiles: () => useAssetsStore.getState().availableFiles,
       getSelectedFile: () => useAssetsStore.getState().selectedFile,
+      getDocumentLoadState: () => useAssetsStore.getState().documentLoadState,
       getRobotState: () => ({
         name: useRobotStore.getState().name,
         links: useRobotStore.getState().links,
@@ -706,33 +995,44 @@ function AppContent() {
   ]);
 
   // AI changes handler
-  const handleApplyAIChanges = useCallback(
-    (data: AIApplyChangesPayload) => {
-      const validated = validateAIApplyPayload(data);
-      if (validated.ok === false) {
-        showToast(t[validated.reason], 'info');
-        return;
-      }
-
-      const currentRobot = useRobotStore.getState();
-      setRobot({
-        name: validated.value.name?.trim() || currentRobot.name,
-        links: validated.value.links,
-        joints: validated.value.joints,
-        rootLinkId: validated.value.rootLinkId,
-      });
-      setAppMode(resolveAppModeAfterRobotContentChange(useUIStore.getState().appMode));
-    },
-    [setAppMode, setRobot, showToast, t],
-  );
-
   useImportInputBinding({
     importInputRef,
     importFolderInputRef,
     onImport: handleImport,
   });
 
-  const handleOpenAIModal = useCallback(() => {
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    void pruneExpiredPendingHandoffImports().catch((error) => {
+      console.error('Failed to prune expired handoff imports:', error);
+    });
+
+    if (handoffBootstrapStartedRef.current) {
+      return;
+    }
+
+    handoffBootstrapStartedRef.current = true;
+
+    void consumeHandoffImportFromUrl({
+      currentUrl: window.location.href,
+      sessionStorage: window.sessionStorage,
+      loadRecord: readPendingHandoffImport,
+      deleteRecord: deletePendingHandoffImport,
+      importArchive: (files) => handleImport(files),
+      replaceUrl: (nextUrl) => {
+        const currentUrl = window.location.href;
+        if (nextUrl !== currentUrl) {
+          window.history.replaceState(window.history.state, '', nextUrl);
+        }
+      },
+      logger: console,
+    });
+  }, [handleImport]);
+
+  const ensureAIEntryAvailable = useCallback(() => {
     const liveAssetsState = useAssetsStore.getState();
     const currentSelectedFile = liveAssetsState.selectedFile;
     const currentDocumentLoadState = liveAssetsState.documentLoadState;
@@ -743,12 +1043,122 @@ function AppContent() {
 
     if (isSelectedUsdHydrating) {
       showToast(t.usdLoadInProgress, 'info');
+      return false;
+    }
+    return true;
+  }, [showToast, t.usdLoadInProgress]);
+
+  const createConversationLaunchContextFromSnapshot = useCallback(
+    (
+      mode: AIConversationMode,
+      robotSnapshot: RobotState,
+      inspectionReportSnapshot: InspectionReport | null = null,
+      options: {
+        selectedEntity?: AIConversationSelection | null;
+        focusedIssue?: AIConversationFocusedIssue | null;
+      } = {},
+    ) => {
+      aiConversationSessionIdRef.current += 1;
+      return createConversationLaunchContext({
+        sessionId: aiConversationSessionIdRef.current,
+        mode,
+        robotSnapshot,
+        inspectionReportSnapshot,
+        selectedEntity: options.selectedEntity,
+        focusedIssue: options.focusedIssue,
+      });
+    },
+    [],
+  );
+
+  const handleOpenAIInspection = useCallback(() => {
+    if (!ensureAIEntryAvailable()) {
       return;
     }
-    setShouldRenderAIModal(true);
-    void loadAIModalModule();
-    setIsAIModalOpen(true);
-  }, [setIsAIModalOpen, showToast, t.usdLoadInProgress]);
+
+    setShouldRenderAIInspectionModal(true);
+    void loadAIInspectionModalModule();
+    openAIInspection();
+  }, [ensureAIEntryAvailable, openAIInspection]);
+
+  const handleOpenAIConversation = useCallback(() => {
+    if (!ensureAIEntryAvailable()) {
+      return;
+    }
+
+    if (aiConversationLaunchContext?.mode === 'general') {
+      setShouldRenderAIConversationModal(true);
+      void loadAIConversationModalModule();
+      openAIConversation();
+      return;
+    }
+
+    const launchContext = createConversationLaunchContextFromSnapshot(
+      'general',
+      resolveCurrentAIRobotSnapshot(),
+    );
+
+    setAIConversationLaunchContext(launchContext);
+    setShouldRenderAIConversationModal(true);
+    void loadAIConversationModalModule();
+    openAIConversation();
+  }, [
+    aiConversationLaunchContext,
+    createConversationLaunchContextFromSnapshot,
+    ensureAIEntryAvailable,
+    openAIConversation,
+  ]);
+
+  const handleOpenConversationWithReport = useCallback(
+    (
+      report: InspectionReport,
+      robotSnapshot: RobotState,
+      options: {
+        selectedEntity?: AIConversationSelection | null;
+        focusedIssue?: AIConversationFocusedIssue | null;
+      } = {},
+    ) => {
+      if (!ensureAIEntryAvailable()) {
+        return;
+      }
+
+      const launchContext = createConversationLaunchContextFromSnapshot(
+        'inspection-followup',
+        robotSnapshot,
+        report,
+        options,
+      );
+
+      setAIConversationLaunchContext(launchContext);
+      setShouldRenderAIConversationModal(true);
+      void loadAIConversationModalModule();
+      setIsAIConversationOpen(true);
+      setAILaunchMode('conversation');
+    },
+    [
+      createConversationLaunchContextFromSnapshot,
+      ensureAIEntryAvailable,
+      setAILaunchMode,
+      setIsAIConversationOpen,
+    ],
+  );
+
+  const handleStartNewAIConversation = useCallback(
+    (currentLaunchContext: AIConversationLaunchContext) => {
+      const nextLaunchContext = createConversationLaunchContextFromSnapshot(
+        currentLaunchContext.mode,
+        currentLaunchContext.robotSnapshot,
+        currentLaunchContext.inspectionReportSnapshot ?? null,
+        {
+          selectedEntity: currentLaunchContext.selectedEntity,
+          focusedIssue: currentLaunchContext.focusedIssue,
+        },
+      );
+
+      setAIConversationLaunchContext(nextLaunchContext);
+    },
+    [createConversationLaunchContextFromSnapshot],
+  );
 
   const handleOpenExportDialog = useCallback(() => {
     void loadExportDialogModule();
@@ -764,6 +1174,34 @@ function AppContent() {
     },
     [setIsExportDialogOpen],
   );
+
+  // Expose internal actions to external consumers (ref keeps the reference fresh)
+  const layoutActionsRef = useRef<{
+    openIkTool: () => void;
+    openCollisionOptimizer: () => void;
+    openTool: (key: string) => void;
+  }>({ openIkTool: () => {}, openCollisionOptimizer: () => {}, openTool: () => {} });
+
+  const handleExportProjectBlob = useCallback(async (): Promise<Blob> => {
+    const result = await runProjectExport({ skipDownload: true });
+    return result.blob;
+  }, [runProjectExport]);
+
+  const exposedActionsRef = useRef<AppExposedActions | null>(null);
+  exposedActionsRef.current = {
+    importFiles: handleImport,
+    openLibraryExport: handleOpenLibraryExportDialog,
+    openAIInspection: handleOpenAIInspection,
+    openAIConversation: handleOpenAIConversation,
+    openIkTool: () => layoutActionsRef.current.openIkTool(),
+    openCollisionOptimizer: () => layoutActionsRef.current.openCollisionOptimizer(),
+    openTool: (key: string) => layoutActionsRef.current.openTool(key),
+    exportProjectBlob: handleExportProjectBlob,
+  };
+
+  useEffect(() => {
+    onExposeActions?.(exposedActionsRef.current!);
+  }, [onExposeActions]);
 
   const handleConfirmDisconnectedWorkspaceUrdfExport = useCallback(async () => {
     if (!disconnectedWorkspaceUrdfDialog) {
@@ -817,12 +1255,15 @@ function AppContent() {
       <AppLayout
         importInputRef={importInputRef}
         importFolderInputRef={importFolderInputRef}
-        onFileDrop={(files) => handleImport(files as any)}
+        onFileDrop={(files) => {
+          void handleImport(files);
+        }}
         onOpenExport={handleOpenExportDialog}
         onOpenLibraryExport={handleOpenLibraryExportDialog}
         onExportProject={handleExportProject}
         showToast={showToast}
-        onOpenAI={handleOpenAIModal}
+        onOpenAIInspection={handleOpenAIInspection}
+        onOpenAIConversation={handleOpenAIConversation}
         isCodeViewerOpen={isCodeViewerOpen}
         setIsCodeViewerOpen={setIsCodeViewerOpen}
         onOpenSettings={() => openSettings()}
@@ -830,20 +1271,39 @@ function AppContent() {
         setViewConfig={setViewConfig}
         onLoadRobot={handleLoadRobot}
         viewerReloadKey={viewerReloadKey}
+        importPreparationOverlay={importPreparationOverlay}
+        headerQuickAction={extensions?.config?.headerQuickAction}
+        headerSecondaryAction={extensions?.config?.headerSecondaryAction}
+        onExposeLayoutActions={(actions) => {
+          layoutActionsRef.current = actions;
+        }}
       />
 
       {/* Modals */}
       <SettingsModal />
-      {shouldRenderAIModal && (
+      {shouldRenderAIInspectionModal && (
         <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
-          <AIModalConnector
-            isOpen={isAIModalOpen}
+          {/* Keep the modal mounted after first open so inspection results survive close/reopen. */}
+          <AIInspectionConnector
+            isOpen={isAIInspectionOpen}
             onClose={() => {
-              setIsAIModalOpen(false);
-              setShouldRenderAIModal(false);
+              setIsAIInspectionOpen(false);
             }}
             lang={lang}
-            onApplyChanges={handleApplyAIChanges}
+            onOpenConversationWithReport={handleOpenConversationWithReport}
+          />
+        </Suspense>
+      )}
+      {shouldRenderAIConversationModal && (
+        <Suspense fallback={<LazyOverlayFallback label={loadingLabel} />}>
+          <AIConversationConnector
+            isOpen={isAIConversationOpen}
+            onClose={() => {
+              setIsAIConversationOpen(false);
+            }}
+            lang={lang}
+            launchContext={aiConversationLaunchContext}
+            onStartNewConversation={handleStartNewAIConversation}
           />
         </Suspense>
       )}
@@ -926,15 +1386,8 @@ function AppContent() {
         </Suspense>
       )}
 
-      {importPreparationOverlay && (
-        <ImportPreparationOverlay
-          label={importPreparationOverlay.label}
-          detail={importPreparationOverlay.detail}
-          progress={importPreparationOverlay.progress}
-          statusLabel={importPreparationOverlay.statusLabel}
-          stageLabel={importPreparationOverlay.stageLabel}
-        />
-      )}
+      {/* Extension slot: external modal layer */}
+      {extensions?.slots?.renderModals?.()}
 
       {/* Toast */}
       {toast.show && (
@@ -971,6 +1424,9 @@ function AppContent() {
           </div>
         </div>
       )}
+
+      {/* Extension slot: top overlay layer (highest z-index) */}
+      {extensions?.slots?.renderTopOverlays?.()}
     </>
   );
 }

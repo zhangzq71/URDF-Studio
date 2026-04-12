@@ -1,12 +1,42 @@
-import type { RobotData, UrdfLink, UrdfVisual, UrdfVisualMaterial } from '@/types';
+import {
+  GeometryType,
+  type RobotData,
+  type UrdfLink,
+  type UrdfVisual,
+  type UrdfVisualMaterial,
+} from '@/types';
 import { getVisualGeometryByObjectIndex, updateVisualGeometryByObjectIndex } from './visualBodies';
 
 type RobotMaterials = RobotData['materials'];
+
+export const BOX_FACE_MATERIAL_ORDER = ['right', 'left', 'up', 'down', 'front', 'back'] as const;
+
+export type BoxFaceMaterialName = (typeof BOX_FACE_MATERIAL_ORDER)[number];
+
+export interface BoxFaceMaterialEntry {
+  face: BoxFaceMaterialName;
+  index: number;
+  material: UrdfVisualMaterial;
+}
+
+const BOX_FACE_SINGLE_MATERIAL_EXPORT_ORDER = [
+  'front',
+  'right',
+  'left',
+  'up',
+  'down',
+  'back',
+] as const satisfies readonly BoxFaceMaterialName[];
 
 export interface ResolvedVisualMaterialOverride {
   authoredMaterials?: UrdfVisualMaterial[];
   color?: string;
   texture?: string;
+  opacity?: number;
+  roughness?: number;
+  metalness?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
   source: 'authored' | 'legacy-link' | 'none';
   isMultiMaterial: boolean;
 }
@@ -14,6 +44,22 @@ export interface ResolvedVisualMaterialOverride {
 function normalizeMaterialValue(value?: string | null): string | undefined {
   const trimmed = String(value || '').trim();
   return trimmed ? trimmed : undefined;
+}
+
+function normalizeUnitIntervalValue(value?: number | null): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.min(1, Math.max(0, Number(value)));
+}
+
+function normalizeNonNegativeValue(value?: number | null): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.max(0, Number(value));
 }
 
 function normalizeAuthoredMaterialEntry(
@@ -26,8 +72,22 @@ function normalizeAuthoredMaterialEntry(
   const name = normalizeMaterialValue(material.name);
   const color = normalizeMaterialValue(material.color);
   const texture = normalizeMaterialValue(material.texture);
+  const opacity = normalizeUnitIntervalValue(material.opacity);
+  const roughness = normalizeUnitIntervalValue(material.roughness);
+  const metalness = normalizeUnitIntervalValue(material.metalness);
+  const emissive = normalizeMaterialValue(material.emissive);
+  const emissiveIntensity = normalizeNonNegativeValue(material.emissiveIntensity);
 
-  if (!name && !color && !texture) {
+  if (
+    !name &&
+    !color &&
+    !texture &&
+    opacity === undefined &&
+    roughness === undefined &&
+    metalness === undefined &&
+    !emissive &&
+    emissiveIntensity === undefined
+  ) {
     return null;
   }
 
@@ -35,6 +95,11 @@ function normalizeAuthoredMaterialEntry(
     ...(name ? { name } : {}),
     ...(color ? { color } : {}),
     ...(texture ? { texture } : {}),
+    ...(opacity !== undefined ? { opacity } : {}),
+    ...(roughness !== undefined ? { roughness } : {}),
+    ...(metalness !== undefined ? { metalness } : {}),
+    ...(emissive ? { emissive } : {}),
+    ...(emissiveIntensity !== undefined ? { emissiveIntensity } : {}),
   };
 }
 
@@ -92,6 +157,50 @@ export function hasMultipleAuthoredMaterials(
   return getGeometryAuthoredMaterials(geometry).length > 1;
 }
 
+export function getBoxFaceMaterialPalette(
+  geometry: Pick<UrdfVisual, 'type' | 'authoredMaterials'> | null | undefined,
+): BoxFaceMaterialEntry[] {
+  if (geometry?.type !== GeometryType.BOX) {
+    return [];
+  }
+
+  const authoredMaterials = getGeometryAuthoredMaterials(geometry);
+  if (authoredMaterials.length !== BOX_FACE_MATERIAL_ORDER.length) {
+    return [];
+  }
+
+  return BOX_FACE_MATERIAL_ORDER.map((face, index) => ({
+    face,
+    index,
+    material: authoredMaterials[index]!,
+  }));
+}
+
+export function hasBoxFaceMaterialPalette(
+  geometry: Pick<UrdfVisual, 'type' | 'authoredMaterials'> | null | undefined,
+): boolean {
+  return getBoxFaceMaterialPalette(geometry).length === BOX_FACE_MATERIAL_ORDER.length;
+}
+
+export function getPreferredSingleMaterialFromBoxFacePalette(
+  geometry: Pick<UrdfVisual, 'type' | 'authoredMaterials'> | null | undefined,
+): BoxFaceMaterialEntry | null {
+  const palette = getBoxFaceMaterialPalette(geometry);
+  if (palette.length !== BOX_FACE_MATERIAL_ORDER.length) {
+    return null;
+  }
+
+  const paletteByFace = new Map(palette.map((entry) => [entry.face, entry]));
+  for (const face of BOX_FACE_SINGLE_MATERIAL_EXPORT_ORDER) {
+    const entry = paletteByFace.get(face);
+    if (entry) {
+      return entry;
+    }
+  }
+
+  return palette[0] || null;
+}
+
 export function canEditGeometryBaseTexture(
   geometry: Pick<UrdfVisual, 'authoredMaterials'> | null | undefined,
 ): boolean {
@@ -113,6 +222,11 @@ export function resolveVisualMaterialOverride(
       authoredMaterials,
       color: primaryMaterial?.color,
       texture: primaryMaterial?.texture,
+      opacity: primaryMaterial?.opacity,
+      roughness: primaryMaterial?.roughness,
+      metalness: primaryMaterial?.metalness,
+      emissive: primaryMaterial?.emissive,
+      emissiveIntensity: primaryMaterial?.emissiveIntensity,
       source: 'authored',
       isMultiMaterial: authoredMaterials.length > 1,
     };
@@ -159,6 +273,39 @@ export function updateVisualBaseTextureByObjectIndex(
 
   return updateVisualGeometryByObjectIndex(link, objectIndex, {
     authoredMaterials: nextMaterial ? [nextMaterial] : undefined,
+  });
+}
+
+export function updateVisualAuthoredMaterialByObjectIndex(
+  link: UrdfLink,
+  objectIndex: number,
+  materialIndex: number,
+  updates: Partial<UrdfVisualMaterial>,
+): UrdfLink {
+  const targetGeometry = getVisualGeometryByObjectIndex(link, objectIndex)?.geometry;
+  if (!targetGeometry) {
+    return link;
+  }
+
+  const authoredMaterials = getGeometryAuthoredMaterials(targetGeometry);
+  if (materialIndex < 0 || materialIndex >= authoredMaterials.length) {
+    return link;
+  }
+
+  const nextAuthoredMaterials = [...authoredMaterials];
+  const nextMaterial = normalizeAuthoredMaterialEntry({
+    ...nextAuthoredMaterials[materialIndex],
+    ...updates,
+  });
+
+  if (!nextMaterial) {
+    return link;
+  }
+
+  nextAuthoredMaterials[materialIndex] = nextMaterial;
+
+  return updateVisualGeometryByObjectIndex(link, objectIndex, {
+    authoredMaterials: nextAuthoredMaterials,
   });
 }
 

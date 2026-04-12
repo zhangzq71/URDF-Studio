@@ -11,11 +11,23 @@ export const INSPECTION_PROMPT_PLACEHOLDERS = {
   languageInstruction: '__LANGUAGE_INSTRUCTION__',
 } as const
 
+export const CONVERSATION_PROMPT_PLACEHOLDERS = {
+  mode: '__CONVERSATION_MODE__',
+  context: '__CONVERSATION_CONTEXT__',
+  history: '__CONVERSATION_HISTORY__',
+  languageInstruction: '__LANGUAGE_INSTRUCTION__',
+} as const
+
 export const GENERATION_SYSTEM_PROMPT_TEMPLATE = AI_PROMPT_TEMPLATES.generation
 
 export const INSPECTION_SYSTEM_PROMPT_TEMPLATES = {
   zh: AI_PROMPT_TEMPLATES.inspection.zh,
   en: AI_PROMPT_TEMPLATES.inspection.en,
+} as const
+
+export const CONVERSATION_SYSTEM_PROMPT_TEMPLATES = {
+  zh: AI_PROMPT_TEMPLATES.conversation.zh,
+  en: AI_PROMPT_TEMPLATES.conversation.en,
 } as const
 
 export interface GenerationContext {
@@ -26,6 +38,14 @@ export interface GenerationContext {
 export interface InspectionContext {
   criteriaDescription: string
   inspectionNotes?: string
+}
+
+export type ConversationMode = 'general' | 'inspection-followup'
+
+export interface ConversationPromptContext {
+  mode: ConversationMode
+  context: string
+  history: string
 }
 
 export function getGenerationSystemPrompt(context: GenerationContext): string {
@@ -48,4 +68,21 @@ export function getInspectionSystemPrompt(
     .replace(INSPECTION_PROMPT_PLACEHOLDERS.criteriaDescription, context.criteriaDescription)
     .replace(INSPECTION_PROMPT_PLACEHOLDERS.inspectionNotes, context.inspectionNotes || '')
     .replace(INSPECTION_PROMPT_PLACEHOLDERS.languageInstruction, languageInstruction)
+}
+
+export function getConversationSystemPrompt(
+  lang: 'zh' | 'en',
+  context: ConversationPromptContext
+): string {
+  const languageInstruction =
+    lang === 'zh'
+      ? '请使用中文回复，简洁准确。'
+      : 'Please respond in English with concise and accurate technical language.'
+  const template = CONVERSATION_SYSTEM_PROMPT_TEMPLATES[lang]
+
+  return template
+    .replace(CONVERSATION_PROMPT_PLACEHOLDERS.mode, context.mode)
+    .replace(CONVERSATION_PROMPT_PLACEHOLDERS.context, context.context)
+    .replace(CONVERSATION_PROMPT_PLACEHOLDERS.history, context.history)
+    .replace(CONVERSATION_PROMPT_PLACEHOLDERS.languageInstruction, languageInstruction)
 }

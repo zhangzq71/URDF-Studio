@@ -95,3 +95,27 @@ test('resolveScreenSpaceHelperInteraction does not use padded fallback for inert
 
   assert.equal(result, null);
 });
+
+test('resolveScreenSpaceHelperInteraction does not use padded fallback for origin-axes helpers', () => {
+  const projectedHelpers = [
+    createProjectedHelperTarget({
+      type: 'link',
+      id: 'base_link',
+      helperKind: 'origin-axes',
+      layer: 'origin-axes',
+      sourceName: '__origin_axes__',
+      projectedWidth: 10,
+      projectedHeight: 10,
+      projectedArea: 100,
+    }),
+  ];
+
+  const result = resolveScreenSpaceHelperInteraction({
+    pointerClientX: 208,
+    pointerClientY: 120,
+    projectedHelpers,
+    interactionLayerPriority: ['origin-axes', 'collision', 'visual'],
+  });
+
+  assert.equal(result, null);
+});

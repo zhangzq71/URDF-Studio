@@ -54,11 +54,13 @@ export function syncRobotGeometryVisibility({
   sourceFormat,
   showCollision,
   showVisual,
-  showMjcfWorldLink = true,
+  showMjcfWorldLink = false,
   showCollisionAlwaysOnTop = true,
   highlightedMeshes,
 }: SyncRobotGeometryVisibilityOptions): boolean {
   let changed = false;
+  const isCollisionGroup = (node: THREE.Object3D): boolean =>
+    Boolean((node as any).isURDFCollider || node.userData?.isCollisionGroup === true);
 
   const walkNode = (node: THREE.Object3D, currentLinkName: string | null) => {
     const nextLinkName = (node as any).isURDFLink && node.name ? node.name : currentLinkName;
@@ -66,7 +68,7 @@ export function syncRobotGeometryVisibility({
     const linkData = linkName ? robotLinks?.[linkName] : undefined;
     const forceHidden = shouldHideMjcfWorldRuntimeLink(sourceFormat, showMjcfWorldLink, linkName);
 
-    if ((node as any).isURDFCollider) {
+    if (isCollisionGroup(node)) {
       if (forceHidden) {
         if (node.visible !== false) {
           changed = true;
@@ -78,7 +80,12 @@ export function syncRobotGeometryVisibility({
             collider: node,
             linkData,
             showCollision,
+            showVisual,
             showCollisionAlwaysOnTop,
+            // "Show Visual" is a presentation toggle and must not suppress
+            // collision-only view. Respect per-link visibility only while
+            // visuals are enabled.
+            respectLinkVisibility: sourceFormat !== 'mjcf' && showVisual,
             highlightedMeshes,
           }) || changed;
       }
@@ -126,7 +133,7 @@ export function syncRobotGeometryVisibility({
           isUrdfVisual = true;
           break;
         }
-        if ((parent as any).isURDFCollider) {
+        if (isCollisionGroup(parent)) {
           break;
         }
         parent = parent.parent;

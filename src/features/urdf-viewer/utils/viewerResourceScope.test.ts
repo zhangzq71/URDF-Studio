@@ -118,6 +118,33 @@ test('createStableViewerResourceScope updates the scope when a relevant asset ch
   });
 });
 
+test('createStableViewerResourceScope keeps texture assets referenced by merged workspace materials without a source file', () => {
+  const scoped = createStableViewerResourceScope(null, {
+    assets: {
+      'snowman/meshes/body.dae': 'blob:snowman-body',
+      'snowman/materials/textures/coat.png': 'blob:snowman-coat',
+      'g1/meshes/pelvis.dae': 'blob:g1-pelvis',
+      'robots/go1/meshes/base.dae': 'blob:go1-base',
+    },
+    availableFiles: [],
+    robotLinks: {
+      snowman_base: createMeshLink('snowman/meshes/body.dae'),
+      g1_base: createMeshLink('g1/meshes/pelvis.dae'),
+    },
+    robotMaterials: {
+      snowman_base: {
+        texture: 'snowman/materials/textures/coat.png',
+      },
+    },
+  });
+
+  assert.deepEqual(scoped.assets, {
+    'snowman/meshes/body.dae': 'blob:snowman-body',
+    'snowman/materials/textures/coat.png': 'blob:snowman-coat',
+    'g1/meshes/pelvis.dae': 'blob:g1-pelvis',
+  });
+});
+
 test('createStableViewerResourceScope reuses the previous USD scope when unrelated bundle files are added', () => {
   const sourceFile: RobotFile = {
     name: 'robots/go2/usd/go2.usd',

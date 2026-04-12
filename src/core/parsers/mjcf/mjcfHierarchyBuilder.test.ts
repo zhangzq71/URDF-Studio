@@ -359,6 +359,101 @@ test('does not block hierarchy completion on unresolved texture-backed materials
   );
 });
 
+test('logs deferred MJCF texture failures instead of silently leaving materials untextured', async (t) => {
+  const originalLoadAsync = THREE.TextureLoader.prototype.loadAsync;
+  const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
+  const loggedErrors: unknown[][] = [];
+  const loggedWarnings: unknown[][] = [];
+
+  THREE.TextureLoader.prototype.loadAsync = async function mockLoadAsync(): Promise<
+    THREE.Texture<HTMLImageElement>
+  > {
+    throw new Error('mjcf-texture-load-failed');
+  };
+  console.error = (...args) => {
+    loggedErrors.push(args);
+  };
+  console.warn = (...args) => {
+    loggedWarnings.push(args);
+  };
+
+  t.after(() => {
+    THREE.TextureLoader.prototype.loadAsync = originalLoadAsync;
+    console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
+  });
+
+  const rootGroup = new THREE.Group();
+  await buildMJCFHierarchy({
+    bodies: [
+      {
+        name: 'world',
+        pos: [0, 0, 0],
+        geoms: [],
+        joints: [],
+        children: [
+          {
+            name: 'base',
+            pos: [0, 0, 0],
+            geoms: [
+              {
+                name: 'body-shell',
+                type: 'box',
+                size: [0.1, 0.1, 0.1],
+                material: 'carbon_fibre',
+                contype: 0,
+                conaffinity: 0,
+              },
+            ],
+            joints: [],
+            children: [],
+          },
+        ],
+      },
+    ],
+    rootGroup,
+    meshMap: new Map(),
+    assets: {
+      'assets/carbon.png': 'mock://assets/carbon.png',
+    },
+    meshCache: new Map(),
+    compilerSettings: createCompilerSettings('assets'),
+    materialMap: new Map([
+      [
+        'carbon_fibre',
+        {
+          name: 'carbon_fibre',
+          texture: 'carbon',
+        },
+      ],
+    ]),
+    textureMap: new Map([
+      [
+        'carbon',
+        {
+          name: 'carbon',
+          file: 'assets/carbon.png',
+          type: '2d',
+        },
+      ],
+    ]),
+    sourceFileDir: '',
+  });
+  await waitForNextMacrotask();
+
+  assert.ok(
+    loggedErrors.some((entry) =>
+      /Failed to load texture asset: mock:\/\/assets\/carbon\.png/.test(String(entry?.[0] || '')),
+    ),
+  );
+  assert.ok(
+    loggedWarnings.some((entry) =>
+      /Deferred texture application produced no texture/.test(String(entry?.[0] || '')),
+    ),
+  );
+});
+
 test('scopes texture loader cache to a single MJCF hierarchy build', async (t) => {
   const originalLoadAsync = THREE.TextureLoader.prototype.loadAsync;
   let loadCount = 0;

@@ -11,7 +11,13 @@ import { useActiveHistory } from '../hooks/useActiveHistory';
 import { HeaderActions } from './header/HeaderActions';
 import { HeaderMenus } from './header/HeaderMenus';
 import { useHeaderResponsiveLayout } from './header/useHeaderResponsiveLayout';
-import type { HeaderAction, HeaderMenuKey, HeaderViewConfig } from './header/types';
+import type {
+  HeaderAction,
+  HeaderMenuKey,
+  HeaderViewAvailability,
+  HeaderViewConfig,
+  ToolboxItem,
+} from './header/types';
 
 interface HeaderProps {
   // Import actions
@@ -19,9 +25,9 @@ interface HeaderProps {
   onImportFolder: () => void;
   onOpenExport: () => void;
   onExportProject: () => void;
-  // Modal actions
-  onOpenAI: () => void;
-  onOpenMeasureTool: () => void;
+  // Toolbox items
+  toolboxItems: ToolboxItem[];
+  // Other actions
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   onOpenSettings: () => void;
@@ -29,14 +35,13 @@ interface HeaderProps {
   secondaryAction?: HeaderAction;
   // Snapshot
   onSnapshot: () => void;
-  onOpenCollisionOptimizer: () => void;
   // View config
   viewConfig: {
     showToolbar: boolean;
     showOptionsPanel: boolean;
-    showVisualizerOptionsPanel: boolean;
     showJointPanel: boolean;
   };
+  viewAvailability?: HeaderViewAvailability;
   setViewConfig: React.Dispatch<React.SetStateAction<HeaderViewConfig>>;
 }
 
@@ -45,16 +50,15 @@ export function Header({
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAI,
-  onOpenMeasureTool,
+  toolboxItems,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   onOpenSettings,
   quickAction,
   secondaryAction,
   onSnapshot,
-  onOpenCollisionOptimizer,
   viewConfig,
+  viewAvailability = { jointPanel: true },
   setViewConfig,
 }: HeaderProps) {
   const headerRef = React.useRef<HTMLElement | null>(null);
@@ -82,7 +86,6 @@ export function Header({
   );
   const responsive = useHeaderResponsiveLayout(headerRef, responsiveOptions);
   const t = translations[lang];
-
   React.useEffect(() => {
     if (activeMenu === null) {
       return undefined;
@@ -125,14 +128,13 @@ export function Header({
           showUndoRedoInline={responsive.showUndoRedoInline}
           t={t}
           viewConfig={viewConfig}
+          viewAvailability={viewAvailability}
           setViewConfig={setViewConfig}
           onImportFile={onImportFile}
           onImportFolder={onImportFolder}
           onOpenExport={onOpenExport}
           onExportProject={onExportProject}
-          onOpenAI={onOpenAI}
-          onOpenMeasureTool={onOpenMeasureTool}
-          onOpenCollisionOptimizer={onOpenCollisionOptimizer}
+          toolboxItems={toolboxItems}
           onOpenCodeViewer={onOpenCodeViewer}
           onPrefetchCodeViewer={onPrefetchCodeViewer}
           undo={undo}

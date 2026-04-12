@@ -43,6 +43,20 @@ test('enhanceSingleMaterial keeps textured materials in exact-color mode', () =>
   assert.equal(enhancedMaterial.toneMapped, true);
 });
 
+test('enhanceSingleMaterial tolerates serialized URDF colors stored as strings', () => {
+  const sourceMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+  });
+  sourceMaterial.userData.urdfColorApplied = true;
+  sourceMaterial.userData.urdfColor = '#12ab34';
+
+  const enhancedMaterial = enhanceSingleMaterial(sourceMaterial) as THREE.MeshStandardMaterial;
+
+  assert.equal(enhancedMaterial instanceof THREE.MeshStandardMaterial, true);
+  assert.equal(enhancedMaterial.color.getHexString(), '12ab34');
+  assert.equal((enhancedMaterial.userData.urdfColor as THREE.Color).getHexString(), '12ab34');
+});
+
 test('createHighlightOverrideMaterial gives MJCF tendon visuals a high-contrast hover overlay', () => {
   const sourceMaterial = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#ff0000'),

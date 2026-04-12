@@ -1,23 +1,24 @@
 import React from 'react';
 import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 
-import type { AssemblyState, InteractionSelection, RobotState } from '@/types';
+import type { AssemblyState, InteractionSelection, RobotState, UrdfOrigin } from '@/types';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
 import type {
   ViewerDocumentLoadEvent,
   ViewerHelperKind,
   ViewerResourceScope,
   ViewerRobotDataResolution,
   ViewerRobotSourceFormat,
-} from '@/features/urdf-viewer';
+} from '@/features/editor';
 
-import { LazyViewerSceneConnector, LazyVisualizerScene } from './modeModuleLoaders';
+import { LazyViewerSceneConnector } from './modeModuleLoaders';
 import type { FilePreviewState } from './types';
 
 interface UnifiedViewerSceneRootsProps {
   shouldRenderViewerScene: boolean;
   viewerGroupRef: React.RefObject<ThreeGroup | null>;
   viewerVisible: boolean;
-  viewerController: ReturnType<typeof import('@/features/urdf-viewer').useURDFViewerController>;
+  viewerController: ReturnType<typeof import('@/features/editor').useViewerController>;
   activePreview?: FilePreviewState;
   viewerResourceScope: ViewerResourceScope;
   retainedRobot: ThreeObject3D | null;
@@ -61,6 +62,21 @@ interface UnifiedViewerSceneRootsProps {
   ) => void;
   isMeshPreview?: boolean;
   viewerReloadKey?: number;
+  assemblyState?: AssemblyState | null;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { r: number; p: number; y: number };
+  }) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: {
+      position: { x: number; y: number; z: number };
+      rotation: { r: number; p: number; y: number };
+    },
+    options?: import('@/types/viewer').UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (bridgeId: string, origin: UrdfOrigin) => void;
   sourceSceneAssemblyComponent: import('@/types').AssemblyComponent | null;
   sourceSceneAssemblyComponentTransform: {
     position: { x: number; y: number; z: number };
@@ -76,47 +92,7 @@ interface UnifiedViewerSceneRootsProps {
     options?: import('@/types/viewer').UpdateCommitOptions,
   ) => void;
   t: typeof import('@/shared/i18n').translations.en;
-  shouldRenderVisualizerScene: boolean;
-  visualizerGroupRef: React.RefObject<ThreeGroup | null>;
-  visualizerVisible: boolean;
-  visualizerRobot: RobotState;
-  onSelect: (
-    type: Exclude<InteractionSelection['type'], null>,
-    id: string,
-    subType?: 'visual' | 'collision',
-    helperKind?: ViewerHelperKind,
-  ) => void;
-  onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
-  visualizerRuntimeMode: import('@/types').AppMode;
-  visualizerResourceScope: ViewerResourceScope;
-  lang: import('@/shared/i18n').Language;
-  visualizerController: ReturnType<typeof import('@/features/visualizer').useVisualizerController>;
-  assemblyState?: AssemblyState | null;
-  assemblyWorkspaceActive?: boolean;
-  assemblySelection?: import('@/store/assemblySelectionStore').AssemblySelection;
-  sourceSceneAssemblyComponentId?: string | null;
-  onAssemblyTransform?: (transform: {
-    position: { x: number; y: number; z: number };
-    rotation: { r: number; p: number; y: number };
-  }) => void;
-  onComponentTransform?: (
-    componentId: string,
-    transform: {
-      position: { x: number; y: number; z: number };
-      rotation: { r: number; p: number; y: number };
-    },
-    options?: import('@/types/viewer').UpdateCommitOptions,
-  ) => void;
-  onBridgeTransform?: (
-    bridgeId: string,
-    origin: {
-      xyz: { x: number; y: number; z: number };
-      rpy: { r: number; p: number; y: number };
-      quatXyzw?: { x: number; y: number; z: number; w: number };
-    },
-  ) => void;
-  onTransformPendingChange?: (pending: boolean) => void;
-  isViewerMode: boolean;
+  ikDragActive: boolean;
 }
 
 export function UnifiedViewerSceneRoots({
@@ -145,96 +121,58 @@ export function UnifiedViewerSceneRoots({
   onCollisionTransform,
   isMeshPreview = false,
   viewerReloadKey = 0,
+  assemblyState = null,
+  assemblySelection,
+  onAssemblyTransform,
+  onComponentTransform,
+  onBridgeTransform,
   sourceSceneAssemblyComponent,
   sourceSceneAssemblyComponentTransform,
   showSourceSceneAssemblyComponentControls,
   onSourceSceneAssemblyComponentTransform,
   t,
-  shouldRenderVisualizerScene,
-  visualizerGroupRef,
-  visualizerVisible,
-  visualizerRobot,
-  onSelect,
-  onUpdate,
-  visualizerRuntimeMode,
-  visualizerResourceScope,
-  lang,
-  visualizerController,
-  assemblyState,
-  assemblyWorkspaceActive = false,
-  assemblySelection,
-  sourceSceneAssemblyComponentId = null,
-  onAssemblyTransform,
-  onComponentTransform,
-  onBridgeTransform,
-  onTransformPendingChange,
-  isViewerMode,
+  ikDragActive,
 }: UnifiedViewerSceneRootsProps) {
-  return (
-    <>
-      {shouldRenderViewerScene ? (
-        <group key="viewer-scene-root" ref={viewerGroupRef} visible={viewerVisible}>
-          <React.Suspense fallback={null}>
-            <LazyViewerSceneConnector
-              controller={viewerController}
-              active={viewerVisible}
-              activePreview={activePreview}
-              viewerResourceScope={viewerResourceScope}
-              retainedRobot={retainedRobot}
-              effectiveSourceFile={effectiveSourceFile}
-              effectiveSourceFilePath={effectiveSourceFilePath}
-              effectiveUrdfContent={effectiveUrdfContent}
-              effectiveSourceFormat={effectiveSourceFormat}
-              onRobotDataResolved={onRobotDataResolved}
-              onDocumentLoadEvent={onDocumentLoadEvent}
-              onSceneReadyForDisplay={onSceneReadyForDisplay}
-              onRuntimeRobotLoaded={onRuntimeRobotLoaded}
-              mode={viewerSceneMode}
-              selection={selection}
-              onHover={onHover}
-              onMeshSelect={onMeshSelect}
-              robot={robot}
-              focusTarget={focusTarget}
-              onCollisionTransformPreview={onCollisionTransformPreview}
-              onCollisionTransform={onCollisionTransform}
-              isMeshPreview={isMeshPreview}
-              viewerReloadKey={viewerReloadKey}
-              sourceSceneAssemblyComponentId={sourceSceneAssemblyComponent?.id ?? null}
-              sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
-              showSourceSceneAssemblyComponentControls={showSourceSceneAssemblyComponentControls}
-              onSourceSceneAssemblyComponentTransform={onSourceSceneAssemblyComponentTransform}
-              t={t}
-            />
-          </React.Suspense>
-        </group>
-      ) : null}
-      {shouldRenderVisualizerScene ? (
-        <group key="visualizer-scene-root" ref={visualizerGroupRef} visible={visualizerVisible}>
-          <React.Suspense fallback={null}>
-            <LazyVisualizerScene
-              robot={visualizerRobot}
-              onSelect={onSelect}
-              onUpdate={onUpdate}
-              mode={visualizerRuntimeMode}
-              assets={visualizerResourceScope.assets}
-              lang={lang}
-              controller={visualizerController}
-              active={visualizerVisible}
-              onDocumentLoadEvent={!isViewerMode ? onDocumentLoadEvent : undefined}
-              assemblyState={assemblyState}
-              assemblyWorkspaceActive={assemblyWorkspaceActive}
-              assemblySelection={assemblySelection}
-              sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
-              sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
-              onAssemblyTransform={onAssemblyTransform}
-              onComponentTransform={onComponentTransform}
-              onBridgeTransform={onBridgeTransform}
-              onTransformPendingChange={onTransformPendingChange}
-              onSourceSceneComponentTransform={onSourceSceneAssemblyComponentTransform}
-            />
-          </React.Suspense>
-        </group>
-      ) : null}
-    </>
-  );
+  return shouldRenderViewerScene ? (
+    <group key="viewer-scene-root" ref={viewerGroupRef} visible={viewerVisible}>
+      <React.Suspense fallback={null}>
+        <LazyViewerSceneConnector
+          controller={viewerController}
+          active={viewerVisible}
+          activePreview={activePreview}
+          viewerResourceScope={viewerResourceScope}
+          retainedRobot={retainedRobot}
+          effectiveSourceFile={effectiveSourceFile}
+          effectiveSourceFilePath={effectiveSourceFilePath}
+          effectiveUrdfContent={effectiveUrdfContent}
+          effectiveSourceFormat={effectiveSourceFormat}
+          onRobotDataResolved={onRobotDataResolved}
+          onDocumentLoadEvent={onDocumentLoadEvent}
+          onSceneReadyForDisplay={onSceneReadyForDisplay}
+          onRuntimeRobotLoaded={onRuntimeRobotLoaded}
+          mode={viewerSceneMode}
+          selection={selection}
+          onHover={onHover}
+          onMeshSelect={onMeshSelect}
+          robot={robot}
+          focusTarget={focusTarget}
+          onCollisionTransformPreview={onCollisionTransformPreview}
+          onCollisionTransform={onCollisionTransform}
+          isMeshPreview={isMeshPreview}
+          ikDragActive={ikDragActive}
+          viewerReloadKey={viewerReloadKey}
+          assemblyState={assemblyState}
+          assemblySelection={assemblySelection}
+          onAssemblyTransform={onAssemblyTransform}
+          onComponentTransform={onComponentTransform}
+          onBridgeTransform={onBridgeTransform}
+          sourceSceneAssemblyComponentId={sourceSceneAssemblyComponent?.id ?? null}
+          sourceSceneAssemblyComponentTransform={sourceSceneAssemblyComponentTransform}
+          showSourceSceneAssemblyComponentControls={showSourceSceneAssemblyComponentControls}
+          onSourceSceneAssemblyComponentTransform={onSourceSceneAssemblyComponentTransform}
+          t={t}
+        />
+      </React.Suspense>
+    </group>
+  ) : null;
 }

@@ -41,8 +41,9 @@ export const ThickerAxes = ({
   const thickness = Math.max(size * 0.05, 0.0055) * (isActive ? 1.35 : 1);
   const headSize = Math.max(size * 0.22, thickness * 4.5) * (isActive ? 1.08 : 1);
   const headRadius = Math.max(thickness * 2.6, 0.012) * (isActive ? 1.06 : 1);
-  const pickRadius = Math.max(headRadius * 1.7, axisLength * 0.18);
-  const pickLength = axisLength + headSize * 0.7;
+  const pickRadius = Math.max(headRadius * 1.08, thickness * 2.2);
+  const pickCenterRadius = Math.max(thickness * 1.8, 0.01);
+  const pickLength = axisLength + headSize * 0.3;
   const transparent = effectiveOpacity < 1;
 
   const xColor = isActive ? '#f87171' : '#ef4444';
@@ -55,7 +56,7 @@ export const ThickerAxes = ({
       {isInteractive && (
         <>
           <mesh renderOrder={10020}>
-            <sphereGeometry args={[pickRadius, 14, 14]} />
+            <sphereGeometry args={[pickCenterRadius, 12, 12]} />
             <meshBasicMaterial colorWrite={false} depthWrite={false} depthTest={false} />
           </mesh>
           <mesh

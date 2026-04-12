@@ -280,13 +280,39 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   setFocusTarget: (id) => set({ focusTarget: id }),
   focusOn: (() => {
     let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
-    return (id: string) => {
-      if (pendingTimeout !== null) clearTimeout(pendingTimeout);
-      set({ focusTarget: id });
+    let pendingRefocusTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleFocusReset = () => {
       pendingTimeout = setTimeout(() => {
         pendingTimeout = null;
         set({ focusTarget: null });
       }, 1500);
+      pendingTimeout.unref?.();
+    };
+
+    return (id: string) => {
+      if (pendingTimeout !== null) {
+        clearTimeout(pendingTimeout);
+        pendingTimeout = null;
+      }
+      if (pendingRefocusTimeout !== null) {
+        clearTimeout(pendingRefocusTimeout);
+        pendingRefocusTimeout = null;
+      }
+
+      if (get().focusTarget === id) {
+        set({ focusTarget: null });
+        pendingRefocusTimeout = setTimeout(() => {
+          pendingRefocusTimeout = null;
+          set({ focusTarget: id });
+          scheduleFocusReset();
+        }, 0);
+        pendingRefocusTimeout.unref?.();
+        return;
+      }
+
+      set({ focusTarget: id });
+      scheduleFocusReset();
     };
   })(),
 }));

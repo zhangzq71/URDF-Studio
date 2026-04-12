@@ -1,10 +1,7 @@
 import type { RobotFile } from '@/types';
-import { exportUsdStageSnapshot } from '@/features/urdf-viewer';
+import { exportUsdStageSnapshot } from '@/features/editor';
 
-import {
-  buildUsdRoundtripArchive,
-  type UsdRoundtripArchive,
-} from './usdRoundtripExportArchive';
+import { buildUsdRoundtripArchive, type UsdRoundtripArchive } from './usdRoundtripExportArchive';
 
 type LiveUsdExportTargetWindow = Parameters<typeof exportUsdStageSnapshot>[0]['targetWindow'];
 
@@ -17,7 +14,9 @@ export interface BuildLiveUsdRoundtripArchiveOptions {
 }
 
 function getOriginalUsdFileName(path: string): string {
-  const normalized = String(path || '').trim().replace(/\\/g, '/');
+  const normalized = String(path || '')
+    .trim()
+    .replace(/\\/g, '/');
   const fileName = normalized.split('/').pop() || '';
   return fileName || 'export.usd';
 }

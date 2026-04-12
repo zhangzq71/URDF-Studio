@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -11,25 +11,26 @@ import type {
   UrdfLink,
 } from '@/types';
 import { useRobotStore } from '@/store/robotStore';
+import { UnifiedTransformControls } from './UnifiedTransformControls';
 
-import {
-  UnifiedTransformControls,
-  VISUALIZER_UNIFIED_GIZMO_SIZE,
-} from './UnifiedTransformControls';
 import {
   cloneLinkIkDragKinematicState,
   createEmptyLinkIkDragKinematicState,
   diffLinkIkDragKinematicState,
   hasMeaningfulLinkIkTargetDelta,
   hasLinkIkKinematicStateChanges,
+  limitLinkIkPreviewKinematicStateStep,
   resolveLinkIkCommittedStateEpsilon,
   resolveLinkIkSolveRequestOptions,
+  shouldAcceptLinkIkSolveState,
   shouldScheduleLinkIkPreviewSolve,
 } from './linkIkDragPreview';
 
 interface LinkIkTransformControlsProps {
   selectedLinkId: string | null;
   selectedHandle: THREE.Object3D | null;
+  selectedLinkObject?: THREE.Object3D | null;
+  selectedAnchorLocal?: { x: number; y: number; z: number } | null;
   coordinateRoot: THREE.Object3D | null;
   ikRobotState: Pick<
     RobotState,
@@ -44,6 +45,8 @@ interface LinkIkTransformControlsProps {
   }) => void;
   onClearPreviewKinematicOverrides?: () => void;
 }
+
+const SELECTED_IK_GIZMO_SIZE = 1.05;
 
 interface RobotHistorySnapshot {
   name: string;
@@ -69,6 +72,8 @@ function createHistorySnapshot(): RobotHistorySnapshot {
 export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   selectedLinkId,
   selectedHandle,
+  selectedLinkObject = null,
+  selectedAnchorLocal = null,
   coordinateRoot,
   ikRobotState,
   enabled = true,
@@ -86,32 +91,75 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   const historySnapshotRef = useRef<RobotHistorySnapshot | null>(null);
   const worldPositionRef = useRef(new THREE.Vector3());
   const localPositionRef = useRef(new THREE.Vector3());
+  const handleAnchorLocalRef = useRef(new THREE.Vector3());
   const pendingTargetWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const lastSolvedTargetWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const dragStartWorldPositionRef = useRef<THREE.Vector3 | null>(null);
   const dragHasMeaningfulMotionRef = useRef(false);
   const solveFrameRef = useRef<number | null>(null);
+  const finishDragRef = useRef<() => void>(() => undefined);
+  const clearPreviewOverridesRef = useRef<() => void>(() => undefined);
+  const resetSolveQueueRef = useRef<() => void>(() => undefined);
   // Mirror the detached-goal workflow used in closed-chain-ik-js:
   // solve against the drag-start snapshot, but keep the latest accepted
   // preview state around as the next seed so the gizmo stays responsive.
   const previewSolveStateRef = useRef(createEmptyLinkIkDragKinematicState());
   const committedPreviewStateRef = useRef(createEmptyLinkIkDragKinematicState());
   const [translateProxy, setTranslateProxy] = useState<THREE.Group | null>(null);
+  const hasSelectedAnchorTarget = Boolean(
+    selectedHandle || (selectedLinkObject && selectedAnchorLocal),
+  );
+  const proxyPosition = useMemo(() => {
+    if (selectedHandle) {
+      const worldPosition = new THREE.Vector3();
+      selectedHandle.updateMatrixWorld(true);
+      selectedHandle.getWorldPosition(worldPosition);
+      return [worldPosition.x, worldPosition.y, worldPosition.z] as const;
+    }
+
+    if (selectedLinkObject && selectedAnchorLocal) {
+      const worldPosition = new THREE.Vector3(
+        selectedAnchorLocal.x,
+        selectedAnchorLocal.y,
+        selectedAnchorLocal.z,
+      );
+      selectedLinkObject.updateMatrixWorld(true);
+      selectedLinkObject.localToWorld(worldPosition);
+      return [worldPosition.x, worldPosition.y, worldPosition.z] as const;
+    }
+
+    return null;
+  }, [selectedAnchorLocal, selectedHandle, selectedLinkObject]);
 
   const syncTranslateProxy = useCallback(
-    (proxyTarget: THREE.Object3D | null, handle = selectedHandle) => {
-      if (!proxyTarget || !handle) {
+    (
+      proxyTarget: THREE.Object3D | null,
+      handle = selectedHandle,
+      linkObject = selectedLinkObject,
+      anchorLocal = selectedAnchorLocal,
+    ) => {
+      if (!proxyTarget) {
         return;
       }
 
-      handle.updateMatrixWorld(true);
-      handle.getWorldPosition(worldPositionRef.current);
+      if (handle) {
+        handle.updateMatrixWorld(true);
+        handle.getWorldPosition(worldPositionRef.current);
+      } else if (linkObject && anchorLocal) {
+        linkObject.updateMatrixWorld(true);
+        handleAnchorLocalRef.current.set(anchorLocal.x, anchorLocal.y, anchorLocal.z);
+        worldPositionRef.current.copy(handleAnchorLocalRef.current);
+        linkObject.localToWorld(worldPositionRef.current);
+      } else {
+        return;
+      }
+
       proxyTarget.position.copy(worldPositionRef.current);
       proxyTarget.quaternion.identity();
       proxyTarget.scale.setScalar(1);
       proxyTarget.updateMatrixWorld(true);
     },
-    [selectedHandle],
+    [selectedAnchorLocal, selectedHandle, selectedLinkObject],
   );
 
   const handleTranslateProxyRef = useCallback(
@@ -145,10 +193,18 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     committedPreviewStateRef.current = createEmptyLinkIkDragKinematicState();
   }, [cancelScheduledSolve]);
 
+  useEffect(() => {
+    resetSolveQueueRef.current = resetSolveQueue;
+  }, [resetSolveQueue]);
+
   const clearPreviewOverrides = useCallback(() => {
     onClearPreviewKinematicOverrides?.();
     committedPreviewStateRef.current = createEmptyLinkIkDragKinematicState();
   }, [onClearPreviewKinematicOverrides]);
+
+  useEffect(() => {
+    clearPreviewOverridesRef.current = clearPreviewOverrides;
+  }, [clearPreviewOverrides]);
 
   const readProxyWorldPosition = useCallback(() => {
     const proxy = translateProxyRef.current;
@@ -222,11 +278,38 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
         angles: result.angles,
         quaternions: result.quaternions,
       });
-      previewSolveStateRef.current = nextSolveState;
+      if (
+        !shouldAcceptLinkIkSolveState({
+          seedState: solveSeedState,
+          nextState: nextSolveState,
+          preview,
+          converged: result.converged,
+          failureReason: result.failureReason,
+        })
+      ) {
+        return;
+      }
 
+      previewSolveStateRef.current = nextSolveState;
+      const previewBaseState = buildBaseKinematicState(baseRobot, nextSolveState);
+      const nextAppliedState = preview
+        ? limitLinkIkPreviewKinematicStateStep(
+            {
+              angles: {
+                ...previewBaseState.angles,
+                ...committedPreviewStateRef.current.angles,
+              },
+              quaternions: {
+                ...previewBaseState.quaternions,
+                ...committedPreviewStateRef.current.quaternions,
+              },
+            },
+            nextSolveState,
+          )
+        : nextSolveState;
       const changedOverrides = diffLinkIkDragKinematicState(
         committedPreviewStateRef.current,
-        nextSolveState,
+        nextAppliedState,
         resolveLinkIkCommittedStateEpsilon(preview),
       );
 
@@ -235,8 +318,8 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
       }
 
       didMutateRef.current = true;
-      onPreviewKinematicOverrides?.(nextSolveState);
-      committedPreviewStateRef.current = nextSolveState;
+      onPreviewKinematicOverrides?.(nextAppliedState);
+      committedPreviewStateRef.current = nextAppliedState;
       invalidate();
     },
     [coordinateRoot, ikRobotState, invalidate, onPreviewKinematicOverrides, selectedLinkId],
@@ -260,14 +343,14 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
       dragHasMeaningfulMotionRef.current ||
       hasMeaningfulLinkIkTargetDelta(dragStartWorldPosition, nextTargetWorldPosition);
 
-    if (
-      !shouldScheduleLinkIkPreviewSolve({
-        pendingTargetWorldPosition: pendingTargetWorldPositionRef.current,
-        lastSolvedTargetWorldPosition: lastSolvedTargetWorldPositionRef.current,
-        nextTargetWorldPosition,
-        hasMeaningfulDragMotion,
-      })
-    ) {
+    const shouldSchedule = shouldScheduleLinkIkPreviewSolve({
+      pendingTargetWorldPosition: pendingTargetWorldPositionRef.current,
+      lastSolvedTargetWorldPosition: lastSolvedTargetWorldPositionRef.current,
+      nextTargetWorldPosition,
+      hasMeaningfulDragMotion,
+    });
+
+    if (!shouldSchedule) {
       return;
     }
 
@@ -338,7 +421,13 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   }, [applyIkToTarget, cancelScheduledSolve, readProxyWorldPosition]);
 
   const beginDrag = useCallback(() => {
-    if (!enabled || !selectedLinkId || !selectedHandle || !coordinateRoot || !ikRobotState) {
+    if (
+      !enabled ||
+      !selectedLinkId ||
+      !hasSelectedAnchorTarget ||
+      !coordinateRoot ||
+      !ikRobotState
+    ) {
       return false;
     }
 
@@ -363,10 +452,10 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
   }, [
     coordinateRoot,
     enabled,
+    hasSelectedAnchorTarget,
     ikRobotState,
     readProxyWorldPosition,
     resetSolveQueue,
-    selectedHandle,
     selectedLinkId,
     setIsDragging,
   ]);
@@ -416,6 +505,10 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     syncTranslateProxy,
   ]);
 
+  useEffect(() => {
+    finishDragRef.current = finishDrag;
+  }, [finishDrag]);
+
   const handleDraggingChanged = useCallback(
     (event?: { value?: boolean }) => {
       if (event?.value) {
@@ -444,51 +537,42 @@ export const LinkIkTransformControls = memo(function LinkIkTransformControls({
     }
   }, [clearPreviewOverrides, resetSolveQueue, selectedHandle, selectedLinkId, syncTranslateProxy]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    return () => {
       if (isDraggingRef.current) {
-        finishDrag();
+        finishDragRef.current();
         return;
       }
 
-      clearPreviewOverrides();
-      resetSolveQueue();
-    },
-    [clearPreviewOverrides, finishDrag, resetSolveQueue],
-  );
+      clearPreviewOverridesRef.current();
+      resetSolveQueueRef.current();
+    };
+  }, []);
 
   useFrame(() => {
-    if (transformRef.current?.dragging) {
-      schedulePreviewSolve();
-      return;
+    if (!isDraggingRef.current) {
+      syncTranslateProxy(translateProxyRef.current);
     }
-
-    if (isDraggingRef.current) {
-      finishDrag();
-      return;
-    }
-
-    syncTranslateProxy(translateProxyRef.current);
   }, 1000);
 
-  if (!enabled || !selectedLinkId || !selectedHandle || !coordinateRoot || !ikRobotState) {
+  if (!enabled || !selectedLinkId || !hasSelectedAnchorTarget || !coordinateRoot || !ikRobotState) {
     return null;
   }
 
   return (
     <>
-      <group ref={handleTranslateProxyRef} visible={false} />
+      <group ref={handleTranslateProxyRef} position={proxyPosition ?? undefined} />
       {translateProxy ? (
         <UnifiedTransformControls
           ref={transformRef}
           object={translateProxy}
           mode="translate"
-          size={VISUALIZER_UNIFIED_GIZMO_SIZE}
+          size={SELECTED_IK_GIZMO_SIZE}
           translateSpace="world"
-          rotateEnabled={false}
           hoverStyle="stock"
           displayStyle="stock"
-          onChange={handleObjectChange}
+          enabled={enabled}
+          onObjectChange={handleObjectChange}
           onDraggingChanged={handleDraggingChanged}
         />
       ) : null}

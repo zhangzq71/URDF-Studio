@@ -15,7 +15,8 @@ import {
   parseColladaSceneData,
 } from '@/core/loaders/colladaWorkerSceneData';
 import { normalizeMeshPathForExport } from '@/core/parsers/meshPathUtils';
-import { getVisualGeometryEntries } from '@/core/robot';
+import { getVisualGeometryEntries, hasGeometryMeshMaterialGroups } from '@/core/robot';
+import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import { GeometryType, type RobotState } from '@/types';
 import { disposeObject3D } from '@/shared/utils/three/dispose';
 
@@ -924,6 +925,12 @@ interface ReferencedMeshUsage {
   hasNonVisualUsage: boolean;
 }
 
+function hasCustomMeshMaterialUsage(
+  geometry: Pick<RobotState['links'][string]['visual'], 'meshMaterialGroups'>,
+): boolean {
+  return geometry.meshMaterialGroups?.some((group) => Number(group.materialIndex) > 0) ?? false;
+}
+
 function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMeshUsage> {
   const usageByPath = new Map<string, ReferencedMeshUsage>();
 
@@ -963,7 +970,10 @@ function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMe
 
       markUsage(entry.geometry.meshPath, 'visual');
       const normalizedPath = normalizeMeshPathForExport(entry.geometry.meshPath);
-      if ((entry.geometry.authoredMaterials?.length || 0) > 1) {
+      if (
+        (entry.geometry.authoredMaterials?.length || 0) > 1 ||
+        hasCustomMeshMaterialUsage(entry.geometry)
+      ) {
         const candidatePaths = new Set<string>([entry.geometry.meshPath || '']);
         if (normalizedPath) {
           candidatePaths.add(normalizedPath);
@@ -997,6 +1007,36 @@ function collectReferencedMeshUsage(robot: RobotState): Map<string, ReferencedMe
   });
 
   return usageByPath;
+}
+
+function findVisualGeometryByMeshPath(
+  robot: RobotState,
+  meshPath: string,
+): RobotState['links'][string]['visual'] | null {
+  const normalizedMeshPath = normalizeMeshPathForExport(meshPath);
+
+  for (const link of Object.values(robot.links)) {
+    const visualEntry = getVisualGeometryEntries(link).find((entry) => {
+      if (entry.geometry.type !== GeometryType.MESH || !entry.geometry.meshPath) {
+        return false;
+      }
+
+      if (entry.geometry.meshPath === meshPath) {
+        return true;
+      }
+
+      const normalizedEntryPath = normalizeMeshPathForExport(entry.geometry.meshPath);
+      return Boolean(
+        normalizedMeshPath && normalizedEntryPath && normalizedEntryPath === normalizedMeshPath,
+      );
+    });
+
+    if (visualEntry) {
+      return visualEntry.geometry;
+    }
+  }
+
+  return null;
 }
 
 function containsPlaceholderMesh(object: any): boolean {
@@ -1172,7 +1212,12 @@ export async function prepareMjcfMeshExportAssets(
     }
 
     for (const meshPath of referencedMeshPaths) {
-      if (isMjcfNativeMeshPath(meshPath)) {
+      const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
+      const sourceUsage =
+        referencedMeshUsage.get(meshPath) ||
+        (normalizedSourcePath ? referencedMeshUsage.get(normalizedSourcePath) : undefined);
+
+      if (isMjcfNativeMeshPath(meshPath) && !sourceUsage?.hasVisualMultiMaterialUsage) {
         continue;
       }
 
@@ -1203,16 +1248,19 @@ export async function prepareMjcfMeshExportAssets(
           continue;
         }
 
+        const meshGroupGeometry = findVisualGeometryByMeshPath(robot, meshPath);
+        if (meshGroupGeometry && hasGeometryMeshMaterialGroups(meshGroupGeometry)) {
+          applyVisualMeshMaterialGroupsToObject(meshObject, meshGroupGeometry, {
+            manager: loadingManager,
+          });
+        }
+
         const extractedVariantFiles = extractVisualMeshVariants(
           meshObject,
           meshPath,
           usedArchivePaths,
           objExporter,
         );
-        const normalizedSourcePath = normalizeMeshPathForExport(meshPath);
-        const sourceUsage =
-          referencedMeshUsage.get(meshPath) ||
-          (normalizedSourcePath ? referencedMeshUsage.get(normalizedSourcePath) : undefined);
         const hasSplitVisualVariants = extractedVariantFiles.length > 1;
         const shouldPreferVisualVariants =
           hasSplitVisualVariants &&

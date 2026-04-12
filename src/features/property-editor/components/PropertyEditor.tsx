@@ -39,6 +39,14 @@ export interface PropertyEditorProps {
     id: string | null,
     subType?: 'visual' | 'collision',
   ) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+    suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
+  ) => void;
+  onAddCollisionBody?: (linkId: string) => void;
   mode: AppMode;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
@@ -55,6 +63,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   robot,
   onUpdate,
   onSelect,
+  onSelectGeometry,
   mode,
   assets,
   onUploadAsset,
@@ -64,6 +73,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   onToggle,
   readOnlyMessage,
   jointTypeLocked = false,
+  onAddCollisionBody,
 }) => {
   const { selection } = robot;
   const isLink = selection.type === 'link';
@@ -184,6 +194,9 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                   mode={mode}
                   selection={resolvedRobot.selection}
                   onUpdate={onUpdate}
+                  onSelect={onSelect}
+                  onSelectGeometry={onSelectGeometry}
+                  onAddCollisionBody={onAddCollisionBody}
                   motorLibrary={motorLibrary}
                   assets={assets}
                   onUploadAsset={onUploadAsset}

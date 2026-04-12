@@ -1147,6 +1147,71 @@ test('resolveManagedAssetUrl remaps malformed GLTF blob-relative buffer URLs to 
   );
 });
 
+test('resolveManagedAssetUrl logs when placeholder textures are forced for managed texture URLs', () => {
+  const originalConsoleWarn = console.warn;
+  const loggedWarnings: unknown[][] = [];
+  console.warn = (...args) => {
+    loggedWarnings.push(args);
+  };
+
+  try {
+    const result = resolveManagedAssetUrl('textures/body.png', buildAssetIndex({}), 'robots/demo', {
+      preferPlaceholderTextures: true,
+    });
+
+    assert.match(result, /^data:image\/png;base64,/);
+  } finally {
+    console.warn = originalConsoleWarn;
+  }
+
+  assert.equal(loggedWarnings.length, 1);
+  assert.match(
+    String(loggedWarnings[0]?.[0] || ''),
+    /Using transparent placeholder texture for managed asset URL/,
+  );
+  assert.deepEqual(loggedWarnings[0]?.[1], {
+    url: 'textures/body.png',
+    urdfDir: 'robots/demo',
+  });
+});
+
+test('resolveManagedAssetUrl logs when missing textures fall back to transparent placeholders', () => {
+  const originalConsoleWarn = console.warn;
+  const originalConsoleError = console.error;
+  const loggedWarnings: unknown[][] = [];
+  const loggedErrors: unknown[][] = [];
+  console.warn = (...args) => {
+    loggedWarnings.push(args);
+  };
+  console.error = (...args) => {
+    loggedErrors.push(args);
+  };
+
+  try {
+    const result = resolveManagedAssetUrl(
+      'textures/missing.png',
+      buildAssetIndex({}),
+      'robots/demo',
+    );
+
+    assert.match(result, /^data:image\/png;base64,/);
+  } finally {
+    console.warn = originalConsoleWarn;
+    console.error = originalConsoleError;
+  }
+
+  assert.ok(loggedErrors.some((entry) => /Asset not found/.test(String(entry?.[0] || ''))));
+  assert.equal(loggedWarnings.length, 1);
+  assert.match(
+    String(loggedWarnings[0]?.[0] || ''),
+    /Falling back to transparent placeholder texture because the texture asset could not be resolved/,
+  );
+  assert.deepEqual(loggedWarnings[0]?.[1], {
+    url: 'textures/missing.png',
+    urdfDir: 'robots/demo',
+  });
+});
+
 test('createMeshLoader keeps b2w rear hip mesh selection stable when generic hip assets are present', async () => {
   const urdfContent = fs.readFileSync(
     'test/unitree_ros/robots/b2w_description/urdf/b2w_description.urdf',

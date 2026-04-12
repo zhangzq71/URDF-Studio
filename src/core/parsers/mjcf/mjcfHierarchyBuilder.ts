@@ -13,6 +13,7 @@ import { createGeometryMesh, type MJCFMeshCache } from './mjcfGeometry';
 import { assignMJCFBodyGeomRoles } from './mjcfGeomClassification';
 import { applyRgbaToMesh, createJointAxisHelper, createLinkAxesHelper } from './mjcfRenderHelpers';
 import type { MJCFCompilerSettings, MJCFMesh, MJCFMaterial, MJCFTexture } from './mjcfUtils';
+import { getMjcfCubeTextureFacePaths, getMjcfCubeTextureFaceRecord } from './mjcfCubeTextures';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import {
   disposeTemporaryTexturePromiseCache,
@@ -306,6 +307,172 @@ function cloneTextureWithMaterialSettings(
   return texture;
 }
 
+function clampBuiltinTextureChannel(value: number | undefined, fallback: number): number {
+  return Math.max(0, Math.min(1, value ?? fallback));
+}
+
+function resolveBuiltinTextureColor(
+  rgb: number[] | undefined,
+  fallback: [number, number, number],
+): [number, number, number] {
+  return [
+    clampBuiltinTextureChannel(rgb?.[0], fallback[0]),
+    clampBuiltinTextureChannel(rgb?.[1], fallback[1]),
+    clampBuiltinTextureChannel(rgb?.[2], fallback[2]),
+  ];
+}
+
+function resolveBuiltinTextureDimension(
+  value: number | undefined,
+  fallback: number,
+  maxDimension = 512,
+): number {
+  const resolved = Number.isFinite(value ?? Number.NaN) ? Math.round(value ?? fallback) : fallback;
+  return Math.max(1, Math.min(maxDimension, resolved));
+}
+
+function createBuiltinDataTexture(
+  width: number,
+  height: number,
+  resolveColor: (x: number, y: number) => [number, number, number],
+  options: { nearest?: boolean } = {},
+): THREE.Texture {
+  const data = new Uint8Array(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const [r, g, b] = resolveColor(x, y);
+      const offset = (y * width + x) * 4;
+      data[offset] = Math.round(r * 255);
+      data[offset + 1] = Math.round(g * 255);
+      data[offset + 2] = Math.round(b * 255);
+      data[offset + 3] = 255;
+    }
+  }
+
+  const texture = configureLoadedTexture(new THREE.DataTexture(data, width, height));
+  texture.generateMipmaps = false;
+  texture.minFilter = options.nearest ? THREE.NearestFilter : THREE.LinearFilter;
+  texture.magFilter = options.nearest ? THREE.NearestFilter : THREE.LinearFilter;
+  return texture;
+}
+
+function createBuiltinCheckerTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 128);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 128);
+  const primaryColor = resolveBuiltinTextureColor(textureDef.rgb1, [0.2, 0.3, 0.4]);
+  const secondaryColor = resolveBuiltinTextureColor(textureDef.rgb2, [0.1, 0.2, 0.3]);
+  const edgeColor = resolveBuiltinTextureColor(textureDef.markrgb, primaryColor);
+  // MuJoCo uses 2x2 cells per texture tile (not 10x10). Combined with
+  // texrepeat (e.g. 5x5) this produces a clear, readable checker grid.
+  const cellsX = 2;
+  const cellsY = 2;
+  const cellWidth = width / cellsX;
+  const cellHeight = height / cellsY;
+  const hasEdgeMark =
+    String(textureDef.mark || '')
+      .trim()
+      .toLowerCase() === 'edge';
+
+  const texture = createBuiltinDataTexture(width, height, (x, y) => {
+    const cellX = Math.floor(x / cellWidth);
+    const cellY = Math.floor(y / cellHeight);
+
+    if (hasEdgeMark) {
+      const localX = x - cellX * cellWidth;
+      const localY = y - cellY * cellHeight;
+      if (localX < 1 || localY < 1) {
+        return edgeColor;
+      }
+    }
+
+    return (cellX + cellY) % 2 === 0 ? primaryColor : secondaryColor;
+  });
+
+  // Enable mipmaps so the checker looks smooth on the angled ground plane
+  // instead of flickering / moiré from NearestFilter.
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function createBuiltinFlatTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 16);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 16);
+  const color = resolveBuiltinTextureColor(textureDef.rgb1, [1, 1, 1]);
+
+  return createBuiltinDataTexture(width, height, () => color);
+}
+
+function createBuiltinGradientTexture(textureDef: MJCFTexture): THREE.Texture {
+  const width = resolveBuiltinTextureDimension(textureDef.width, 64);
+  const height = resolveBuiltinTextureDimension(textureDef.height, 256);
+  const topColor = resolveBuiltinTextureColor(textureDef.rgb1, [0.3, 0.5, 0.7]);
+  const bottomColor = resolveBuiltinTextureColor(textureDef.rgb2, [0, 0, 0]);
+
+  return createBuiltinDataTexture(width, height, (_x, y) => {
+    const ratio = height <= 1 ? 0 : y / (height - 1);
+    return [
+      topColor[0] * (1 - ratio) + bottomColor[0] * ratio,
+      topColor[1] * (1 - ratio) + bottomColor[1] * ratio,
+      topColor[2] * (1 - ratio) + bottomColor[2] * ratio,
+    ];
+  });
+}
+
+function createBuiltinTexture(textureDef: MJCFTexture): THREE.Texture | null {
+  const builtin = String(textureDef.builtin || '')
+    .trim()
+    .toLowerCase();
+
+  switch (builtin) {
+    case 'checker':
+      return createBuiltinCheckerTexture(textureDef);
+    case 'flat':
+      return createBuiltinFlatTexture(textureDef);
+    case 'gradient':
+      return createBuiltinGradientTexture(textureDef);
+    default:
+      console.warn(
+        `[MJCFLoader] Unsupported builtin texture "${textureDef.builtin}" on texture "${textureDef.name}".`,
+      );
+      return null;
+  }
+}
+
+function getBuiltinTextureCacheKey(textureDef: MJCFTexture): string {
+  return [
+    '__mjcf_builtin__',
+    textureDef.name,
+    textureDef.builtin || '',
+    textureDef.type || '',
+    `${textureDef.width || ''}x${textureDef.height || ''}`,
+  ].join(':');
+}
+
+function getBuiltinTexturePromise(
+  textureDef: MJCFTexture,
+  textureLoadCache: MJCFTextureLoadCache,
+): Promise<THREE.Texture | null> {
+  const cacheKey = getBuiltinTextureCacheKey(textureDef);
+  const cached = textureLoadCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const promise = Promise.resolve()
+    .then(() => createBuiltinTexture(textureDef))
+    .catch((error) => {
+      console.error(`[MJCFLoader] Failed to generate builtin texture "${textureDef.name}".`, error);
+      return null;
+    });
+
+  textureLoadCache.set(cacheKey, promise);
+  return promise;
+}
+
 function collectReferencedTextureAssetUrls(
   bodies: MJCFHierarchyBody[],
   materialMap: Map<string, MJCFMaterial>,
@@ -327,6 +494,17 @@ function collectReferencedTextureAssetUrls(
       }
 
       const textureDef = textureMap.get(materialDef.texture);
+      const cubeFacePaths = getMjcfCubeTextureFacePaths(textureDef);
+      if (cubeFacePaths.length > 0) {
+        cubeFacePaths.forEach((texturePath) => {
+          const assetUrl = findAssetByPath(texturePath, assets, sourceFileDir);
+          if (assetUrl) {
+            assetUrls.add(assetUrl);
+          }
+        });
+        return;
+      }
+
       if (!textureDef?.file) {
         return;
       }
@@ -382,7 +560,27 @@ async function loadMaterialTexture(
   }
 
   const textureDef = textureMap.get(materialDef.texture);
-  if (!textureDef?.file) {
+  if (!textureDef) {
+    console.error(
+      `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references missing texture definition: ${materialDef.texture}`,
+    );
+    return null;
+  }
+
+  if (!textureDef.file && textureDef.builtin) {
+    const texture = await getBuiltinTexturePromise(textureDef, textureLoadCache);
+    if (!texture) {
+      return null;
+    }
+
+    throwIfMJCFLoadAborted(abortSignal);
+    return cloneTextureWithMaterialSettings(texture, materialDef);
+  }
+
+  if (!textureDef.file) {
+    console.error(
+      `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references missing texture definition: ${materialDef.texture}`,
+    );
     return null;
   }
 
@@ -399,6 +597,153 @@ async function loadMaterialTexture(
 
   throwIfMJCFLoadAborted(abortSignal);
   return cloneTextureWithMaterialSettings(texture, materialDef);
+}
+
+async function loadCubeMaterialTextures(
+  materialDef: MJCFMaterial,
+  textureMap: Map<string, MJCFTexture>,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+  textureLoadCache: MJCFTextureLoadCache,
+  abortSignal?: MJCFLoadAbortSignal,
+): Promise<THREE.Texture[] | null> {
+  throwIfMJCFLoadAborted(abortSignal);
+  if (!materialDef.texture) {
+    return null;
+  }
+
+  const textureDef = textureMap.get(materialDef.texture);
+  const cubeFaceRecord = getMjcfCubeTextureFaceRecord(textureDef);
+  if (!cubeFaceRecord) {
+    if (
+      String(textureDef?.type || '')
+        .trim()
+        .toLowerCase() === 'cube'
+    ) {
+      console.error(
+        `[MJCFLoader] Material "${materialDef.name || '<unnamed>'}" references incomplete cube texture definition: ${materialDef.texture}`,
+      );
+    }
+    return null;
+  }
+
+  const textures: THREE.Texture[] = [];
+  for (const texturePath of Object.values(cubeFaceRecord)) {
+    const assetUrl = findAssetByPath(texturePath, assets, sourceFileDir);
+    if (!assetUrl) {
+      console.error(`[MJCFLoader] Cube texture asset not found: ${texturePath}`);
+      return null;
+    }
+
+    const texture = await getTexturePromise(assetUrl, textureLoadCache);
+    if (!texture) {
+      return null;
+    }
+
+    throwIfMJCFLoadAborted(abortSignal);
+    textures.push(cloneTextureWithMaterialSettings(texture, materialDef));
+  }
+
+  return textures;
+}
+
+async function applyCubeMaterialAssetToMesh(
+  mesh: THREE.Object3D,
+  materialDef: MJCFMaterial,
+  textureMap: Map<string, MJCFTexture>,
+  assets: Record<string, string>,
+  sourceFileDir: string,
+  textureLoadCache: MJCFTextureLoadCache,
+  abortSignal?: MJCFLoadAbortSignal,
+  materialName?: string,
+  inheritedGeomRgba?: [number, number, number, number],
+  hasExplicitGeomRgba: boolean = false,
+): Promise<boolean> {
+  const faceTextures = await loadCubeMaterialTextures(
+    materialDef,
+    textureMap,
+    assets,
+    sourceFileDir,
+    textureLoadCache,
+    abortSignal,
+  );
+  if (!faceTextures || faceTextures.length === 0) {
+    return false;
+  }
+
+  const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
+  const rgba = materialDef.rgba || [1, 1, 1, 1];
+  const r = Math.max(0, Math.min(1, rgba[0] ?? 1));
+  const g = Math.max(0, Math.min(1, rgba[1] ?? 1));
+  const b = Math.max(0, Math.min(1, rgba[2] ?? 1));
+  const inheritedAlphaOverride =
+    !hasExplicitGeomRgba &&
+    Array.isArray(inheritedGeomRgba) &&
+    inheritedGeomRgba.length >= 4 &&
+    Number.isFinite(inheritedGeomRgba[3]) &&
+    (inheritedGeomRgba[3] ?? 1) < 0.999
+      ? inheritedGeomRgba[3]
+      : null;
+  const alpha = Math.max(0, Math.min(1, inheritedAlphaOverride ?? rgba[3] ?? 1));
+  const roughness =
+    materialDef.shininess != null ? Math.max(0, Math.min(1, 1 - materialDef.shininess)) : undefined;
+  const metalness =
+    materialDef.reflectance != null ? Math.max(0, Math.min(1, materialDef.reflectance)) : undefined;
+  const emission =
+    materialDef.emission != null ? Math.max(0, Math.min(1, materialDef.emission)) : undefined;
+
+  let applied = false;
+  mesh.traverse((child: any) => {
+    if (!child?.isMesh) {
+      return;
+    }
+
+    const targetMesh = child as THREE.Mesh;
+    const geometry = targetMesh.geometry;
+    if (!(geometry instanceof THREE.BoxGeometry) && geometry.type !== 'BoxGeometry') {
+      return;
+    }
+
+    const preferDoubleSide = alpha < 1 || Boolean(targetMesh.userData?.mjcfPreferDoubleSide);
+    const currentMaterials = Array.isArray(targetMesh.material)
+      ? targetMesh.material
+      : [targetMesh.material];
+    const nextMaterials = faceTextures.map((texture, index) => {
+      const nextMaterial = createMatteMaterial({
+        color: createThreeColorFromSRGB(r, g, b),
+        opacity: alpha,
+        transparent: alpha < 1,
+        side: preferDoubleSide ? THREE.DoubleSide : THREE.FrontSide,
+        map: texture,
+        name: `${materialName || materialDef.name || 'mjcf_material_asset'}_${index + 1}`,
+        preserveExactColor: hasAuthoredRgba || Boolean(materialDef.texture),
+      });
+
+      if (roughness != null) {
+        nextMaterial.roughness = roughness;
+      }
+      if (metalness != null) {
+        nextMaterial.metalness = metalness;
+      }
+      if (emission != null) {
+        nextMaterial.emissive = new THREE.Color(r, g, b);
+        nextMaterial.emissiveIntensity = emission;
+      }
+      nextMaterial.needsUpdate = true;
+      return nextMaterial;
+    });
+
+    targetMesh.material = nextMaterials;
+    currentMaterials.forEach((material) => material?.dispose?.());
+    applyVisualMeshShadowPolicy(targetMesh);
+    applied = true;
+  });
+
+  if (!applied) {
+    faceTextures.forEach((texture) => texture.dispose());
+  }
+
+  return applied;
 }
 
 async function applyMaterialAssetToMesh(
@@ -419,6 +764,22 @@ async function applyMaterialAssetToMesh(
     onAsyncSceneMutation?: (() => void) | undefined;
   } = {},
 ): Promise<void> {
+  const appliedCubeTextureMaterials = await applyCubeMaterialAssetToMesh(
+    mesh,
+    materialDef,
+    textureMap,
+    assets,
+    sourceFileDir,
+    textureLoadCache,
+    abortSignal,
+    materialName,
+    inheritedGeomRgba,
+    hasExplicitGeomRgba,
+  );
+  if (appliedCubeTextureMaterials) {
+    return;
+  }
+
   const hasAuthoredRgba = Array.isArray(materialDef.rgba) && materialDef.rgba.length >= 3;
   const rgba = materialDef.rgba || (materialDef.texture ? [1, 1, 1, 1] : [0.8, 0.8, 0.8, 1]);
   const r = Math.max(0, Math.min(1, rgba[0] ?? 0.8));
@@ -512,6 +873,9 @@ async function applyMaterialAssetToMesh(
         throwIfMJCFLoadAborted(abortSignal);
       }
       if (!deferredTexture) {
+        console.warn(
+          `[MJCFLoader] Deferred texture application produced no texture for material "${materialDef.name || materialName || '<unnamed>'}".`,
+        );
         return;
       }
 

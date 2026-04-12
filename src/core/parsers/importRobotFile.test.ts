@@ -4,9 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
 
-import { GeometryType, type RobotData, type RobotFile } from '@/types';
+import { DEFAULT_VISUAL_COLOR, GeometryType, type RobotData, type RobotFile } from '@/types';
 import { parseURDF, injectGazeboTags } from './index';
-import { createUsdPlaceholderRobotData, resolveRobotFileData } from './importRobotFile';
+import {
+  createUsdPlaceholderRobotData,
+  describeRobotImportFailure,
+  resolveRobotFileData,
+} from './importRobotFile';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -633,6 +637,46 @@ test('resolveRobotFileData surfaces unresolved MyoSuite OBJECT_NAME templates as
   assert.match(result.message ?? '', /concrete object directory/);
 });
 
+test('describeRobotImportFailure preserves actionable MyoSuite MJCF placeholder guidance without duplicating the generic import prefix', () => {
+  const supportFiles = [
+    'myosuite/envs/myo/assets/hand/myohand_object.xml',
+    'myosuite/envs/myo/assets/hand/myohand_tabletop.xml',
+    'myosuite/simhive/object_sim/common.xml',
+    'myosuite/simhive/myo_sim/hand/assets/myohand_assets.xml',
+    'myosuite/simhive/myo_sim/hand/assets/myohand_body.xml',
+    'myosuite/simhive/furniture_sim/simpleTable/simpleTable_asset.xml',
+    'myosuite/simhive/furniture_sim/simpleTable/simpleGraniteTable_body.xml',
+  ].map((relativePath) => ({
+    name: pathFromMyosuiteFixture(relativePath),
+    content: fs.readFileSync(pathFromMyosuiteFixture(relativePath), 'utf8'),
+    format: 'mjcf' as const,
+  }));
+
+  const result = resolveRobotFileData(supportFiles[0]!, {
+    availableFiles: supportFiles,
+  });
+
+  assert.equal(result.status, 'error');
+  if (result.status !== 'error') {
+    assert.fail('Expected unresolved MyoSuite MJCF import to fail');
+  }
+
+  const detail = describeRobotImportFailure(result);
+  assert.match(detail, /OBJECT_NAME/);
+  assert.match(detail, /concrete object directory/);
+  assert.doesNotMatch(detail, /^Failed to import MJCF file/i);
+});
+
+test('describeRobotImportFailure falls back to standalone-fragment guidance for source-only MJCF documents', () => {
+  const detail = describeRobotImportFailure({
+    status: 'error',
+    format: 'mjcf',
+    reason: 'source_only_fragment',
+  });
+
+  assert.match(detail, /cannot be assembled as a standalone component/i);
+});
+
 test('resolveRobotFileData can enforce MJCF external asset validation before parse-ready import', () => {
   const file: RobotFile = {
     name: 'robots/demo/paddle.xml',
@@ -665,6 +709,292 @@ test('resolveRobotFileData can enforce MJCF external asset validation before par
   }
   assert.equal(result.reason, 'parse_failed');
   assert.match(result.message ?? '', /robots\/demo\/assets\/paddle\.obj/);
+});
+
+test('resolveRobotFileData backfills MJCF mesh-authored Collada colors into link visuals', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/mjcf/demo.xml',
+    content: `<mujoco model="demo_mjcf">
+  <compiler meshdir="../meshes" />
+  <asset>
+    <mesh name="foot_mesh" file="FL_foot.dae" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <geom type="mesh" mesh="foot_mesh" />
+    </body>
+  </worldbody>
+</mujoco>`,
+    format: 'mjcf',
+  };
+
+  const result = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/FL_foot.dae': fs.readFileSync(
+        'test/unitree_ros/robots/b2w_description/meshes/FL_foot.dae',
+        'utf8',
+      ),
+    },
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected MJCF import result to be ready');
+  }
+
+  assert.equal(result.robotData.links.base_link?.visual.meshPath, 'robots/demo/meshes/FL_foot.dae');
+  assert.notEqual(result.robotData.links.base_link?.visual.color, DEFAULT_VISUAL_COLOR);
+  assert.equal(
+    result.robotData.materials?.base_link?.color,
+    result.robotData.links.base_link?.visual.color,
+  );
+});
+
+test('resolveRobotFileData backfills URDF mesh-authored Collada colors into link visuals', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/demo.urdf',
+    content: `<robot name="demo_urdf">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="meshes/FL_foot.dae" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+    format: 'urdf',
+  };
+
+  const result = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/FL_foot.dae': fs.readFileSync(
+        'test/unitree_ros/robots/b2w_description/meshes/FL_foot.dae',
+        'utf8',
+      ),
+    },
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected URDF import result to be ready');
+  }
+
+  assert.equal(result.robotData.links.base_link?.visual.meshPath, 'robots/demo/meshes/FL_foot.dae');
+  assert.notEqual(result.robotData.links.base_link?.visual.color, DEFAULT_VISUAL_COLOR);
+  assert.ok((result.robotData.links.base_link?.visual.authoredMaterials?.length ?? 0) > 0);
+  assert.equal(
+    result.robotData.materials?.base_link?.color,
+    result.robotData.links.base_link?.visual.color,
+  );
+});
+
+test('resolveRobotFileData backfills MJCF OBJ material colors through mtl sidecars', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/mjcf/demo.xml',
+    content: `<mujoco model="demo_mjcf">
+  <compiler meshdir="../meshes" />
+  <asset>
+    <mesh name="body_mesh" file="body.obj" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <geom type="mesh" mesh="body_mesh" />
+    </body>
+  </worldbody>
+</mujoco>`,
+    format: 'mjcf',
+  };
+
+  const result = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/body.obj': `mtllib body.mtl
+o BodyMesh
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vn 0 0 1
+usemtl Painted
+f 1//1 2//1 3//1`,
+      'robots/demo/meshes/body.mtl': `newmtl Painted
+Kd 1.0 0.0 0.0`,
+    },
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected MJCF OBJ import result to be ready');
+  }
+
+  assert.equal(result.robotData.links.base_link?.visual.meshPath, 'robots/demo/meshes/body.obj');
+  assert.equal(result.robotData.links.base_link?.visual.color, '#ff0000');
+  assert.equal(result.robotData.links.base_link?.visual.authoredMaterials?.length, 1);
+  assert.equal(result.robotData.links.base_link?.visual.authoredMaterials?.[0]?.name, 'Painted');
+  assert.equal(result.robotData.links.base_link?.visual.authoredMaterials?.[0]?.color, '#ff0000');
+  assert.equal(result.robotData.materials?.base_link?.color, '#ff0000');
+});
+
+test('resolveRobotFileData preserves MJCF OBJ multi-material sidecars without collapsing them', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/mjcf/demo.xml',
+    content: `<mujoco model="demo_mjcf">
+  <compiler meshdir="../meshes" />
+  <asset>
+    <mesh name="body_mesh" file="body.obj" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <geom type="mesh" mesh="body_mesh" />
+    </body>
+  </worldbody>
+</mujoco>`,
+    format: 'mjcf',
+  };
+
+  const result = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/body.obj': `mtllib body.mtl
+o BodyMesh
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+vn 0 0 1
+usemtl Painted
+f 1//1 2//1 3//1
+usemtl Accent
+f 1//1 3//1 4//1`,
+      'robots/demo/meshes/body.mtl': `newmtl Painted
+Kd 1.0 0.0 0.0
+newmtl Accent
+Kd 0.0 0.0 1.0`,
+    },
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected MJCF OBJ import result to be ready');
+  }
+
+  assert.equal(result.robotData.links.base_link?.visual.meshPath, 'robots/demo/meshes/body.obj');
+  assert.ok(!result.robotData.links.base_link?.visual.color);
+  assert.deepEqual(
+    result.robotData.links.base_link?.visual.authoredMaterials?.map((material) => material.name),
+    ['Painted', 'Accent'],
+  );
+  assert.deepEqual(
+    result.robotData.links.base_link?.visual.authoredMaterials?.map((material) => material.color),
+    ['#ff0000', '#0000ff'],
+  );
+  assert.equal(result.robotData.materials?.base_link, undefined);
+});
+
+test('resolveRobotFileData preserves mesh preview OBJ multi-material sidecars without collapsing them', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/meshes/body.obj',
+    content: '',
+    format: 'mesh',
+  };
+
+  const result = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/body.obj': `mtllib body.mtl
+o BodyMesh
+v 0 0 0
+v 1 0 0
+v 1 1 0
+v 0 1 0
+vn 0 0 1
+usemtl Painted
+f 1//1 2//1 3//1
+usemtl Accent
+f 1//1 3//1 4//1`,
+      'robots/demo/meshes/body.mtl': `newmtl Painted
+Kd 1.0 0.0 0.0
+newmtl Accent
+Kd 0.0 0.0 1.0`,
+    },
+  });
+
+  assert.equal(result.status, 'ready');
+  if (result.status !== 'ready') {
+    assert.fail('Expected mesh preview import result to be ready');
+  }
+
+  assert.equal(result.robotData.links.base_link?.visual.meshPath, 'robots/demo/meshes/body.obj');
+  assert.ok(!result.robotData.links.base_link?.visual.color);
+  assert.deepEqual(
+    result.robotData.links.base_link?.visual.authoredMaterials?.map((material) => material.name),
+    ['Painted', 'Accent'],
+  );
+  assert.deepEqual(
+    result.robotData.links.base_link?.visual.authoredMaterials?.map((material) => material.color),
+    ['#ff0000', '#0000ff'],
+  );
+  assert.equal(result.robotData.materials?.base_link, undefined);
+});
+
+test('resolveRobotFileData does not reuse stale MJCF OBJ colors when same path content changes', () => {
+  const file: RobotFile = {
+    name: 'robots/demo/mjcf/demo.xml',
+    content: `<mujoco model="demo_mjcf">
+  <compiler meshdir="../meshes" />
+  <asset>
+    <mesh name="body_mesh" file="body.obj" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <geom type="mesh" mesh="body_mesh" />
+    </body>
+  </worldbody>
+</mujoco>`,
+    format: 'mjcf',
+  };
+
+  const redResult = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/body.obj': `mtllib body.mtl
+o BodyMesh
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vn 0 0 1
+usemtl Painted
+f 1//1 2//1 3//1`,
+      'robots/demo/meshes/body.mtl': `newmtl Painted
+Kd 1.0 0.0 0.0`,
+    },
+  });
+
+  const greenResult = resolveRobotFileData(file, {
+    availableFiles: [file],
+    allFileContents: {
+      'robots/demo/meshes/body.obj': `mtllib body.mtl
+o BodyMesh
+v 0 0 0
+v 1 0 0
+v 0 1 0
+vn 0 0 1
+usemtl Painted
+f 1//1 2//1 3//1`,
+      'robots/demo/meshes/body.mtl': `newmtl Painted
+Kd 0.0 1.0 0.0`,
+    },
+  });
+
+  assert.equal(redResult.status, 'ready');
+  assert.equal(greenResult.status, 'ready');
+  if (redResult.status !== 'ready' || greenResult.status !== 'ready') {
+    assert.fail('Expected MJCF OBJ import results to be ready');
+  }
+
+  assert.equal(redResult.robotData.links.base_link?.visual.color, '#ff0000');
+  assert.equal(greenResult.robotData.links.base_link?.visual.color, '#00ff00');
 });
 
 test('resolveRobotFileData imports the myosuite sally scene when support files are available', () => {

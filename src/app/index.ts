@@ -6,6 +6,10 @@
 // Main App component
 export { default as App } from './App';
 
+// AppContent (for external composition / extension)
+export { AppContent } from './App';
+export type { AppExtensionSlots, AppExtensionConfig, AppExposedActions } from './App';
+
 // Layout components
 export { AppLayout } from './AppLayout';
 export { Providers } from './Providers';

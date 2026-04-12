@@ -99,9 +99,10 @@ function getHelperPaddingPx(helperKind: ViewerHelperKind): number {
 }
 
 function supportsScreenSpaceHelperFallback(helperKind: ViewerHelperKind): boolean {
-  // Inertia helpers already render a solid pickable mesh. Expanding their
-  // footprint in screen space makes hover/click trigger visibly outside the box.
-  return helperKind !== 'inertia';
+  // Inertia helpers and origin axes already render solid pickable meshes
+  // (cylinders/cones/boxes). Expanding their footprint in screen space makes
+  // hover/click trigger well outside the visible geometry.
+  return helperKind !== 'inertia' && helperKind !== 'origin-axes';
 }
 
 function getDistanceToExpandedRect(

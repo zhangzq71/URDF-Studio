@@ -7,6 +7,8 @@ import { Box } from 'lucide-react';
 
 import { Header } from './Header.tsx';
 
+const noopToolboxItems: import('./header/types').ToolboxItem[] = [];
+
 function renderHeader() {
   return renderToStaticMarkup(
     React.createElement(Header, {
@@ -14,13 +16,11 @@ function renderHeader() {
       onImportFolder: () => {},
       onOpenExport: () => {},
       onExportProject: () => {},
-      onOpenAI: () => {},
-      onOpenMeasureTool: () => {},
+      toolboxItems: noopToolboxItems,
       onOpenCodeViewer: () => {},
       onPrefetchCodeViewer: () => {},
       onOpenSettings: () => {},
       onSnapshot: () => {},
-      onOpenCollisionOptimizer: () => {},
       quickAction: {
         label: 'Quick action',
         icon: Box,
@@ -34,7 +34,6 @@ function renderHeader() {
       viewConfig: {
         showToolbar: true,
         showOptionsPanel: true,
-        showVisualizerOptionsPanel: true,
         showJointPanel: true,
       },
       setViewConfig: () => {},

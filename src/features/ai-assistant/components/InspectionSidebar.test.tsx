@@ -1,0 +1,106 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { act } from 'react';
+import { JSDOM } from 'jsdom';
+
+import { translations } from '@/shared/i18n';
+import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria';
+import { InspectionSidebar } from './InspectionSidebar';
+
+function installDom() {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    url: 'http://localhost/',
+    pretendToBeVisual: true,
+  });
+
+  (globalThis as { window?: Window }).window = dom.window as unknown as Window;
+  (globalThis as { document?: Document }).document = dom.window.document;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: dom.window.navigator,
+    configurable: true,
+  });
+  (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement = dom.window.HTMLElement;
+  (globalThis as { HTMLButtonElement?: typeof HTMLButtonElement }).HTMLButtonElement =
+    dom.window.HTMLButtonElement;
+  (globalThis as { Node?: typeof Node }).Node = dom.window.Node;
+  (globalThis as { Event?: typeof Event }).Event = dom.window.Event;
+  (globalThis as { MouseEvent?: typeof MouseEvent }).MouseEvent = dom.window.MouseEvent;
+  (globalThis as { getComputedStyle?: typeof getComputedStyle }).getComputedStyle =
+    dom.window.getComputedStyle.bind(dom.window);
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+  (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
+    dom.window.cancelAnimationFrame.bind(dom.window);
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  return dom;
+}
+
+function createSelectedItems() {
+  return Object.fromEntries(
+    INSPECTION_CRITERIA.map((category) => [
+      category.id,
+      new Set(category.items.map((item) => item.id)),
+    ]),
+  );
+}
+
+test('running inspection sidebar keeps scroll container interactive without rendering the checking badge', async () => {
+  const dom = installDom();
+  const container = dom.window.document.getElementById('root');
+  assert.ok(container, 'root container should exist');
+
+  const root = createRoot(container);
+
+  try {
+    await act(async () => {
+      root.render(
+        <InspectionSidebar
+          lang="zh"
+          t={translations.zh}
+          isGeneratingAI
+          readOnly
+          focusedCategoryId={INSPECTION_CRITERIA[0]?.id ?? ''}
+          expandedCategories={new Set(INSPECTION_CRITERIA.map((category) => category.id))}
+          selectedItems={createSelectedItems()}
+          setExpandedCategories={() => {}}
+          setSelectedItems={() => {}}
+          onFocusCategory={() => {}}
+        />,
+      );
+    });
+
+    const scrollContainer = container.querySelector('.custom-scrollbar');
+    assert.ok(scrollContainer, 'expected sidebar scroll container to render');
+    assert.equal(
+      scrollContainer.classList.contains('pointer-events-none'),
+      false,
+      'running inspection should keep the sidebar scroll area available for wheel/trackpad scrolling',
+    );
+
+    const toggleButtons = Array.from(container.querySelectorAll('button'));
+    assert.ok(toggleButtons.length > 0, 'expected category expand buttons to render');
+    assert.equal(
+      toggleButtons.every((button) => (button as HTMLButtonElement).disabled),
+      true,
+      'running inspection should lock sidebar controls without disabling scrolling on the container',
+    );
+
+    const checkingBadge = Array.from(container.querySelectorAll('span')).find(
+      (element) => element.textContent?.trim() === translations.zh.checking,
+    );
+    assert.equal(
+      checkingBadge,
+      undefined,
+      'running inspection sidebar should not render the checking badge in the header',
+    );
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    dom.window.close();
+  }
+});

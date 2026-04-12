@@ -1,8 +1,5 @@
-import {
-  createStableViewerResourceScope,
-  type ViewerResourceScope,
-} from '@/features/urdf-viewer';
-import type { RobotFile, UrdfLink } from '@/types';
+import { createStableViewerResourceScope, type ViewerResourceScope } from '@/features/editor';
+import type { RobotFile, RobotMaterialState, UrdfLink } from '@/types';
 
 interface UnifiedViewerFilePreview {
   urdfContent: string;
@@ -17,9 +14,8 @@ interface BuildUnifiedViewerResourceScopesArgs {
   assets: Record<string, string>;
   availableFiles: RobotFile[];
   viewerRobotLinks?: Record<string, UrdfLink>;
-  visualizerRobotLinks?: Record<string, UrdfLink>;
+  viewerRobotMaterials?: Record<string, RobotMaterialState>;
   previousViewerResourceScope: ViewerResourceScope | null;
-  previousVisualizerResourceScope: ViewerResourceScope | null;
 }
 
 export interface UnifiedViewerResourceScopesState {
@@ -28,7 +24,6 @@ export interface UnifiedViewerResourceScopesState {
   effectiveSourceFile: RobotFile | null | undefined;
   activeViewportFileName: string | null;
   viewerResourceScope: ViewerResourceScope;
-  visualizerResourceScope: ViewerResourceScope;
 }
 
 export function buildUnifiedViewerResourceScopes({
@@ -39,9 +34,8 @@ export function buildUnifiedViewerResourceScopes({
   assets,
   availableFiles,
   viewerRobotLinks,
-  visualizerRobotLinks,
+  viewerRobotMaterials,
   previousViewerResourceScope,
-  previousVisualizerResourceScope,
 }: BuildUnifiedViewerResourceScopesArgs): UnifiedViewerResourceScopesState {
   const effectiveUrdfContent = activePreview ? activePreview.urdfContent : urdfContent;
   const effectiveSourceFilePath = activePreview ? activePreview.fileName : sourceFilePath;
@@ -55,14 +49,7 @@ export function buildUnifiedViewerResourceScopes({
     sourceFile: effectiveSourceFile,
     sourceFilePath: effectiveSourceFilePath,
     robotLinks: viewerRobotLinks,
-  });
-
-  const visualizerResourceScope = createStableViewerResourceScope(previousVisualizerResourceScope, {
-    assets,
-    availableFiles,
-    sourceFile,
-    sourceFilePath,
-    robotLinks: visualizerRobotLinks,
+    robotMaterials: viewerRobotMaterials,
   });
 
   return {
@@ -71,6 +58,5 @@ export function buildUnifiedViewerResourceScopes({
     effectiveSourceFile,
     activeViewportFileName,
     viewerResourceScope,
-    visualizerResourceScope,
   };
 }

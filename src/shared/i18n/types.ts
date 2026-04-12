@@ -9,6 +9,8 @@ export interface TranslationKeys {
   appName: string;
   editor: string;
   aiAssistant: string;
+  aiInspection: string;
+  aiConversation: string;
   file: string;
   import: string;
   importFolder: string;
@@ -89,7 +91,12 @@ export interface TranslationKeys {
   previewReadOnlyHint: string;
   name: string;
   visualGeometry: string;
+  material: string;
   collisionGeometry: string;
+  collisionBodiesList: string;
+  collisionBodyItem: string;
+  collisionBodyPrimary: string;
+  collisionBodyEmpty: string;
   parentJoint: string;
   childJoint: string;
   noLinkedJoints: string;
@@ -110,6 +117,7 @@ export interface TranslationKeys {
   meshScale: string;
   visible: string;
   hidden: string;
+  slot: string;
   materialSource: string;
   materialSourceInline: string;
   materialSourceNamed: string;
@@ -133,6 +141,16 @@ export interface TranslationKeys {
   eulerRadians: string;
   quaternion: string;
   color: string;
+  opacity: string;
+  roughness: string;
+  metalness: string;
+  emissiveColor: string;
+  emissiveIntensity: string;
+  tone: string;
+  presets: string;
+  recentColors: string;
+  lighter: string;
+  darker: string;
   texture: string;
   meshLibrary: string;
   textureLibrary: string;
@@ -212,7 +230,7 @@ export interface TranslationKeys {
   radiusZ: string;
   totalLength: string;
 
-  // Visualizer
+  // Editor interaction
   move: string;
   rotate: string;
   urdfFrame: string;
@@ -261,6 +279,7 @@ export interface TranslationKeys {
   overallScore: string;
   downloadReport: string;
   downloadReportPDF: string;
+  saveReport: string;
   inspectionItems: string;
   retestItem: string;
   chatTitle: string;
@@ -274,6 +293,37 @@ export interface TranslationKeys {
   minimize: string;
   maximize: string;
   restore: string;
+  inspectionScopeDescription: string;
+  inspectionSelectedChecksSummary: string;
+  inspectionRobotSnapshot: string;
+  inspectionRunSummary: string;
+  inspectionRunSummaryDescription: string;
+  inspectionSelectedCategories: string;
+  inspectionMaxPossibleScore: string;
+  inspectionWeightedCoverage: string;
+  inspectionEstimatedDuration: string;
+  inspectionRootLink: string;
+  inspectionLinks: string;
+  inspectionSource: string;
+  inspectionCurrentCategory: string;
+  inspectionCurrentCategoryDescription: string;
+  inspectionScoringReference: string;
+  inspectionSourceEvidenceHint: string;
+  inspectionSourceEvidenceEmpty: string;
+  inspectionRunScope: string;
+  inspectionRunStage: string;
+  inspectionElapsedTime: string;
+  inspectionRunning: string;
+  inspectionCategoryImpactHigh: string;
+  inspectionCategoryImpactMedium: string;
+  inspectionCategoryImpactBaseline: string;
+  inspectionCategoryExcluded: string;
+  inspectionIncluded: string;
+  inspectionSkipped: string;
+  inspectionNoChecksSelected: string;
+  inspectionNormalizedModel: string;
+  inspectionRegenerateConfirmTitle: string;
+  inspectionRegenerateConfirmMessage: string;
 
   // Additional UI
   collapseSidebar: string;
@@ -307,6 +357,7 @@ export interface TranslationKeys {
   toolboxHoverHint: string;
   robotRedirect: string;
   step2urdf: string;
+  robogo: string;
   motrix: string;
   trajectoryEditing: string;
   featureInDevelopment: string;
@@ -318,13 +369,23 @@ export interface TranslationKeys {
   viewMode: string;
   faceMode: string;
   measureMode: string;
+  ikTool: string;
+  paintMode: string;
   closeToolbar: string;
 
   // Toolbox Descriptions
   aiAssistantDesc: string;
+  aiInspectionDesc: string;
+  aiConversationDesc: string;
   measureToolboxDesc: string;
+  ikToolboxDesc: string;
+  ikToolSelectedLink: string;
+  ikToolNoSelection: string;
+  ikToolRootLinkNotDraggable: string;
+  ikToolNoVariableChain: string;
   motionTrackingDesc: string;
   step2urdfDesc: string;
+  robogoDesc: string;
   motrixDesc: string;
   trajectoryEditingDesc: string;
   bridgedpEngine: string;
@@ -421,6 +482,8 @@ export interface TranslationKeys {
   light: string;
   dark: string;
   system: string;
+  yes: string;
+  no: string;
   importWarning: string;
   sourceCodeAutoApply: string;
   fontSize: string;
@@ -458,6 +521,7 @@ export interface TranslationKeys {
   libraryImportSuccessful: string;
   libraryImportPartialWithErrors: string;
   noDefinitionFilesFound: string;
+  noSupportedImportFilesFound: string;
   importFailedCheckFiles: string;
   jointName: string;
   motorType: string;
@@ -545,6 +609,9 @@ export interface TranslationKeys {
 
   // Measure Tool
   measureTool: string;
+  measureInstruction1: string;
+  measureInstruction2: string;
+  measureInstruction3: string;
   measuredCount: string;
   measureSlotFirst: string;
   measureSlotSecond: string;
@@ -566,10 +633,36 @@ export interface TranslationKeys {
   measureDeltaX: string;
   measureDeltaY: string;
   measureDeltaZ: string;
+  measureRelativeTransform: string;
+  measureRelativeTranslation: string;
+  measureRelativePoseUnavailable: string;
+  measurePoseMatrix: string;
+  measurePoseRpy: string;
+  measurePoseQuat: string;
+  measurePoseAxisAngle: string;
+  measurePoseAxis: string;
+  measurePoseAngle: string;
   measureNoMeasurement: string;
   undo: string;
   redo: string;
   clearAll: string;
+  paintTool: string;
+  paintColor: string;
+  paintToolHint: string;
+  paintSelectionScope: string;
+  paintSelectionFace: string;
+  paintSelectionIsland: string;
+  paintOperation: string;
+  paintOperationPaint: string;
+  paintOperationErase: string;
+  paintUnsupportedRobotOnly: string;
+  paintStatusReady: string;
+  paintStatusApplied: string;
+  paintStatusRemoved: string;
+  paintErrorVisualMeshOnly: string;
+  paintErrorMultiMaterial: string;
+  paintErrorFaceUnavailable: string;
+  paintErrorSelectionUnavailable: string;
 
   // Performance
   performance: string;
@@ -605,6 +698,9 @@ export interface TranslationKeys {
   exportDefaultKp: string;
   exportIncludeMeshes: string;
   exportSdfTextureOverrideNotice: string;
+  exportUrdfBoxFaceTextureFallbackWarning: string;
+  exportSdfBoxFaceTextureFallbackWarning: string;
+  exportXacroBoxFaceTextureFallbackWarning: string;
   exportRelativePaths: string;
   exportRelativePathsDesc: string;
   exportIncludeExtended: string;
@@ -680,10 +776,42 @@ export interface TranslationKeys {
   aiAnalysis: string;
   examples: string;
   sendOnEnterHint: string;
+  conversationSuggestionsHint: string;
+  conversationSuggestionGeneralSelectedEntity: string;
+  conversationSuggestionGeneralSelectedEntityFallback: string;
+  conversationSuggestionGeneralSimulation: string;
+  conversationSuggestionReportPrioritize: string;
+  conversationSuggestionReportFocusedIssueReason: string;
+  conversationSuggestionReportFocusedIssueFix: string;
+  conversationSuggestionReportSelectedEntity: string;
+  conversationSuggestionReportSelectedEntityFallback: string;
+  conversationSuggestionReportRetest: string;
+  newConversation: string;
+  clearConversationHistory: string;
+  newConversationConfirmTitle: string;
+  newConversationConfirmMessage: string;
+  newConversationDividerLabel: string;
+  clearConversationHistoryConfirmTitle: string;
+  clearConversationHistoryConfirmMessage: string;
+  stopGenerating: string;
+  retryLastResponse: string;
   discussReportWithAI: string;
   actionable: string;
   applyChangesHintTitle: string;
+  inspectionPreparingContext: string;
+  inspectionRequestingModel: string;
+  inspectionProcessingResponse: string;
+  inspectionFinalizingReport: string;
+  inspectionPreparingContextDescription: string;
+  inspectionRequestingModelDescription: string;
+  inspectionProcessingResponseDescription: string;
+  inspectionFinalizingReportDescription: string;
+  inspectionSelectedChecks: string;
   inspectionMayTake30Seconds: string;
+  inspectionRunDelayed: string;
+  inspectionStageCompleted: string;
+  inspectionStageInProgress: string;
+  inspectionStagePending: string;
   aiAnalyzing: string;
   issueError: string;
   issueWarning: string;
@@ -703,6 +831,11 @@ export interface TranslationKeys {
   itemsNeedAttention: string;
   allPassedShort: string;
   allChecksPassedForCategory: string;
+  topBlockersTitle: string;
+  topBlockersSubtitle: string;
+  askAboutThisIssue: string;
+  locateInModel: string;
+  focusedIssue: string;
   retestThisItem: string;
   reportChatNoReply: string;
   reportChatSendError: string;

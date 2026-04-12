@@ -29,8 +29,8 @@ const DEFAULT_VIEW_OPTIONS: ViewerSettingsTestViewOptions = {
   showGrid: true,
   showAxes: true,
   showUsageGuide: true,
-  showMjcfWorldLink: true,
-  showIkHandles: true,
+  showMjcfWorldLink: false,
+  showIkHandles: false,
   showJointAxes: false,
   showInertia: false,
   showCenterOfMass: false,
@@ -143,6 +143,19 @@ test('origin axes overlay preference still restores explicit user opt-in', () =>
   const settings = renderSettings();
 
   assert.equal(settings.showOriginsOverlay, true);
+
+  dom.window.close();
+});
+
+test('collision overlay defaults to depth-occluded rendering when no preference is saved', () => {
+  const dom = installDom();
+  resetUiStore();
+  dom.window.localStorage.removeItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY);
+  dom.window.localStorage.removeItem('urdf_viewer_collision_always_on_top');
+
+  const settings = renderSettings();
+
+  assert.equal(settings.showCollisionAlwaysOnTop, false);
 
   dom.window.close();
 });

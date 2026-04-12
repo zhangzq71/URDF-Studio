@@ -13,8 +13,17 @@ export interface PointerClickThresholdOptions {
 export function shouldDeferSelectionUntilPointerUp(
   toolMode: ToolMode,
   hasDirectJointDragTarget = false,
+  hasDeferredViewModeSelection = false,
+  hasHelperTarget = false,
 ): boolean {
-  return toolMode === 'select' && !hasDirectJointDragTarget;
+  if (hasHelperTarget) {
+    return false;
+  }
+
+  return (
+    (toolMode === 'select' && !hasDirectJointDragTarget) ||
+    (toolMode === 'view' && hasDeferredViewModeSelection)
+  );
 }
 
 export function isPointerInteractionWithinClickThreshold({

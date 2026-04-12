@@ -121,6 +121,36 @@ test('pickPreferredImportFile keeps URDF first for self-contained mixed bundles'
   assert.equal(preferredFile?.name, 'demo_description/urdf/demo.urdf');
 });
 
+test('pickPreferredImportFile keeps a self-contained URDF preferred when the ranking set omits bundled mesh files', () => {
+  const urdfFile = createRobotFile(
+    'demo_description/urdf/demo.urdf',
+    'urdf',
+    `<?xml version="1.0"?>
+<robot name="demo_description">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://demo_description/meshes/base_link.stl" />
+      </geometry>
+    </visual>
+  </link>
+</robot>`,
+  );
+  const mjcfFile = createRobotFile(
+    'demo_description/xml/demo.xml',
+    'mjcf',
+    '<mujoco model="demo"><worldbody><body name="base_link" /></worldbody></mujoco>',
+  );
+  const meshFile = createRobotFile('demo_description/meshes/base_link.stl', 'mesh');
+
+  const preferredFile = pickPreferredImportFile(
+    [urdfFile, mjcfFile],
+    [urdfFile, mjcfFile, meshFile],
+  );
+
+  assert.equal(preferredFile?.name, 'demo_description/urdf/demo.urdf');
+});
+
 test('isUrdfSelfContainedInImportBundle detects missing package roots', () => {
   const urdfFile = createRobotFile(
     'vendor_bundle/demo.urdf',

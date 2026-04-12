@@ -58,6 +58,42 @@ test('LinkRotationController does not swallow joint catalog readiness failures',
     );
 });
 
+test('LinkRotationController logs joint catalog readiness timeouts instead of silently continuing', async () => {
+    const controller = new LinkRotationController();
+    controller.jointCatalogStatus = 'loading';
+    controller.jointCatalogError = 'still-building';
+    controller.stageSourcePath = '/robots/timed_out_joint_catalog.usd';
+    controller.startJointCatalogBuildIfNeeded = () => new Promise(() => { });
+
+    const originalWindow = globalThis.window;
+    const originalConsoleWarn = console.warn;
+    const loggedWarnings = [];
+    globalThis.window = {
+        setTimeout,
+        clearTimeout,
+    };
+    console.warn = (...args) => {
+        loggedWarnings.push(args);
+    };
+
+    try {
+        await controller.ensureJointCatalogReady({ maxWaitMs: 1 });
+    }
+    finally {
+        console.warn = originalConsoleWarn;
+        globalThis.window = originalWindow;
+    }
+
+    assert.equal(loggedWarnings.length, 1);
+    assert.match(String(loggedWarnings[0]?.[0] || ''), /Joint catalog readiness wait timed out/);
+    assert.deepEqual(loggedWarnings[0]?.[1], {
+        waitedMs: 1,
+        jointCatalogStatus: 'loading',
+        jointCatalogError: 'still-building',
+        stageSourcePath: '/robots/timed_out_joint_catalog.usd',
+    });
+});
+
 test('LinkRotationController logs joint catalog prewarm failures instead of silently swallowing them', async () => {
     const controller = new LinkRotationController();
     controller.ensureJointCatalogBuildScheduled = () => {};
@@ -117,12 +153,25 @@ test('LinkRotationController surfaces cached metadata getter failures as catalog
             throw new Error('cached-metadata-crashed');
         },
     });
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    console.error = (...args) => {
+        loggedErrors.push(args);
+    };
 
-    await assert.rejects(
-        controller.startJointCatalogBuildIfNeeded(),
-        /Failed to read cached render robot metadata snapshot/,
-    );
+    try {
+        await assert.rejects(
+            controller.startJointCatalogBuildIfNeeded(),
+            /Failed to read cached render robot metadata snapshot/,
+        );
+    }
+    finally {
+        console.error = originalConsoleError;
+    }
 
     assert.equal(controller.jointCatalogStatus, 'error');
     assert.match(String(controller.jointCatalogError || ''), /Failed to read cached render robot metadata snapshot/);
+    assert.ok(
+        loggedErrors.some((entry) => /Failed to read cached render robot metadata snapshot/.test(String(entry?.[0] || ''))),
+    );
 });

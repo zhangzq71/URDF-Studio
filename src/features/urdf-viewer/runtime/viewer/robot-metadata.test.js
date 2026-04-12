@@ -55,6 +55,12 @@ test('getRenderRobotMetadataSnapshot drops cached stale metadata snapshots', () 
 });
 
 test('warmupRenderRobotMetadataSnapshot rejects when warmup throws', async () => {
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    console.error = (...args) => {
+        loggedErrors.push(args);
+    };
+
     const renderInterface = {
         startRobotMetadataWarmupForStage() {
             throw new Error('warmup-failed');
@@ -75,12 +81,21 @@ test('warmupRenderRobotMetadataSnapshot rejects when warmup throws', async () =>
         },
     };
 
-    await assert.rejects(
-        warmupRenderRobotMetadataSnapshot(renderInterface, {
-            stageSourcePath: '/robots/test.usd',
-        }),
-        /Failed to warm up render robot metadata snapshot/,
-    );
+    try {
+        await assert.rejects(
+            warmupRenderRobotMetadataSnapshot(renderInterface, {
+                stageSourcePath: '/robots/test.usd',
+            }),
+            /Failed to warm up render robot metadata snapshot/,
+        );
+    }
+    finally {
+        console.error = originalConsoleError;
+    }
+
+    assert.equal(loggedErrors.length, 1);
+    assert.match(String(loggedErrors[0]?.[0] || ''), /Failed to warm up render robot metadata snapshot/);
+    assert.match(String(loggedErrors[0]?.[1] || ''), /warmup-failed/);
 });
 
 test('warmupRenderRobotMetadataSnapshot rejects stale metadata snapshots returned by the warmup path', async () => {
@@ -107,6 +122,36 @@ test('warmupRenderRobotMetadataSnapshot rejects stale metadata snapshots returne
         }),
         /not usable/,
     );
+});
+
+test('warmupRenderRobotMetadataSnapshot logs asynchronous warmup rejections instead of only bubbling them upward', async () => {
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    console.error = (...args) => {
+        loggedErrors.push(args);
+    };
+
+    try {
+        const renderInterface = {
+            async startRobotMetadataWarmupForStage() {
+                throw new Error('warmup-promise-failed');
+            },
+        };
+
+        await assert.rejects(
+            warmupRenderRobotMetadataSnapshot(renderInterface, {
+                stageSourcePath: '/robots/test.usd',
+            }),
+            /Render robot metadata warmup rejected/,
+        );
+    }
+    finally {
+        console.error = originalConsoleError;
+    }
+
+    assert.equal(loggedErrors.length, 1);
+    assert.match(String(loggedErrors[0]?.[0] || ''), /Render robot metadata warmup rejected/);
+    assert.match(String(loggedErrors[0]?.[1] || ''), /warmup-promise-failed/);
 });
 
 test('getRenderRobotMetadataSnapshot logs getter failures instead of silently hiding them', () => {

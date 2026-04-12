@@ -296,10 +296,23 @@ export async function createGeometryMesh(
 
   switch (type) {
     case 'plane': {
-      const sx = ((geom.size?.[0] ?? 1) || 1) * 2;
-      const sy = ((geom.size?.[1] ?? geom.size?.[0] ?? 1) || 1) * 2;
-      const geometry = new THREE.PlaneGeometry(sx, sy, 1, 1);
-      return new THREE.Mesh(geometry, createDefaultMaterial());
+      // MuJoCo plane: size[0]/size[1] are half-extents. When 0 or absent,
+      // MuJoCo treats the extent as infinite — use a reasonable default.
+      const INFINITE_HALF_EXTENT = 10;
+      const halfX = geom.size?.[0] || INFINITE_HALF_EXTENT;
+      const halfY = geom.size?.[1] || halfX;
+      const geometry = new THREE.PlaneGeometry(halfX * 2, halfY * 2, 1, 1);
+      // Lift the floor slightly above the reference grid (z=0) so the grid's
+      // transparent fade pass never wins the LEQUAL depth test over the floor.
+      geometry.translate(0, 0, 0.002);
+      const material = createDefaultMaterial();
+      material.side = THREE.DoubleSide;
+      const mesh = new THREE.Mesh(geometry, material);
+      // Ensure the material stays double-sided even when replaced later.
+      mesh.userData.mjcfPreferDoubleSide = true;
+      // Ground planes are scene helpers — exclude from hover / picking.
+      mesh.userData.isHelper = true;
+      return mesh;
     }
 
     case 'box': {
@@ -424,10 +437,6 @@ export async function createGeometryMesh(
     }
 
     default:
-      // Unknown type - log warning and create default sphere
-      console.error(`[MJCFLoader] Unknown geom type "${type}", defaulting to sphere`);
-      const defaultRadius = geom.size?.[0] || 0.05;
-      const defaultGeometry = new THREE.SphereGeometry(defaultRadius, 32, 32);
-      return new THREE.Mesh(defaultGeometry, createDefaultMaterial());
+      throw createMJCFGeometryError('Unsupported geom type', type);
   }
 }

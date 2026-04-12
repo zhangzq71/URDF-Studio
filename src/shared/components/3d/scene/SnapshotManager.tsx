@@ -14,6 +14,7 @@ import {
 } from './snapshotConfig';
 import {
   applySnapshotBackgroundStyle,
+  applySnapshotLightingPreset,
   applySnapshotSceneVisibility,
   applySnapshotShadowQuality,
   applySnapshotTextureQuality,
@@ -21,6 +22,10 @@ import {
 } from './snapshotSceneQuality';
 import { SnapshotExportLook } from './SnapshotExportLook';
 import { useSnapshotRenderContext } from './SnapshotRenderContext';
+import {
+  clampSnapshotRenderPlanToPixelBudget,
+  resolveSnapshotRenderTargetSamples,
+} from './snapshotResolution';
 import { renderSceneWithDofToCanvas, resolveSnapshotDofSettings } from './snapshotPostprocessing';
 
 const SNAPSHOT_RENDER_TARGET_SAMPLES = {
@@ -28,6 +33,14 @@ const SNAPSHOT_RENDER_TARGET_SAMPLES = {
   high: 8,
   ultra: 8,
 } as const;
+
+const SNAPSHOT_INTERNAL_RENDER_PIXEL_BUDGET = {
+  viewport: 16_000_000,
+  high: 33_000_000,
+  ultra: 48_000_000,
+} as const;
+
+const SNAPSHOT_DOF_PIXEL_BUDGET_MULTIPLIER = 0.72;
 
 const SNAPSHOT_HDR_PRELOAD_FILE = '/potsdamer_platz_1k.hdr';
 
@@ -112,6 +125,30 @@ export const SnapshotManager = ({
         maxRenderbufferSize: context.getParameter(context.MAX_RENDERBUFFER_SIZE),
         maxTextureSize: context.getParameter(context.MAX_TEXTURE_SIZE),
       });
+    };
+
+    const resolveSnapshotWarmupFrameCount = (
+      options: ReturnType<typeof normalizeSnapshotCaptureOptions>,
+    ) => {
+      let frameCount = options.environmentPreset === 'viewport' ? 2 : 3;
+      if (options.groundStyle === 'reflective') {
+        frameCount = Math.max(frameCount, 4);
+      }
+      if (options.dofMode !== 'off') {
+        frameCount = Math.max(frameCount, 3);
+      }
+      return frameCount;
+    };
+
+    const resolveSnapshotRenderPixelBudget = (
+      options: ReturnType<typeof normalizeSnapshotCaptureOptions>,
+    ) => {
+      const baseBudget = SNAPSHOT_INTERNAL_RENDER_PIXEL_BUDGET[options.detailLevel];
+      if (options.dofMode === 'off') {
+        return baseBudget;
+      }
+
+      return Math.max(12_000_000, Math.floor(baseBudget * SNAPSHOT_DOF_PIXEL_BUDGET_MULTIPLIER));
     };
 
     const downloadCanvas = async (
@@ -216,13 +253,13 @@ export const SnapshotManager = ({
       camera,
       width,
       height,
-      detailLevel,
+      requestedSamples,
     }: {
       scene: THREE.Scene;
       camera: THREE.Camera;
       width: number;
       height: number;
-      detailLevel: ReturnType<typeof normalizeSnapshotCaptureOptions>['detailLevel'];
+      requestedSamples: number;
     }) => {
       const renderTarget = new THREE.WebGLRenderTarget(width, height, {
         type: THREE.UnsignedByteType,
@@ -230,10 +267,12 @@ export const SnapshotManager = ({
         stencilBuffer: false,
       });
       renderTarget.texture.colorSpace = THREE.SRGBColorSpace;
-      renderTarget.samples = Math.min(
-        gl.capabilities.maxSamples,
-        SNAPSHOT_RENDER_TARGET_SAMPLES[detailLevel],
-      );
+      renderTarget.samples = resolveSnapshotRenderTargetSamples({
+        width,
+        height,
+        requestedSamples,
+        maxSupportedSamples: gl.capabilities.maxSamples,
+      });
 
       const previousRenderTarget = gl.getRenderTarget();
       const previousAutoClear = gl.autoClear;
@@ -295,12 +334,14 @@ export const SnapshotManager = ({
       const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
       const outputPlan = resolveSnapshotSize(snapshotOptions.longEdgePx);
       const supersampleScale = SNAPSHOT_DETAIL_SUPERSAMPLE_SCALE[snapshotOptions.detailLevel];
-      const renderPlan = resolveSnapshotSize(
-        Math.round(snapshotOptions.longEdgePx * supersampleScale),
+      const renderPlan = clampSnapshotRenderPlanToPixelBudget(
+        resolveSnapshotSize(Math.round(snapshotOptions.longEdgePx * supersampleScale)),
+        resolveSnapshotRenderPixelBudget(snapshotOptions),
       );
       let restoreSceneVisibility: (() => void) | null = null;
       let restoreTextureQuality: (() => void) | null = null;
       let restoreShadowQuality: (() => void) | null = null;
+      let restoreLightingPreset: (() => void) | null = null;
       let restoreBackgroundStyle: (() => void) | null = null;
       let backgroundFill: SnapshotBackgroundFill = { kind: 'transparent' };
 
@@ -321,6 +362,11 @@ export const SnapshotManager = ({
           latestScene,
           gl,
           snapshotOptions.detailLevel,
+        );
+        restoreLightingPreset = applySnapshotLightingPreset(
+          latestScene,
+          gl,
+          snapshotOptions.environmentPreset,
         );
         restoreShadowQuality = applySnapshotShadowQuality(
           latestScene,
@@ -361,7 +407,7 @@ export const SnapshotManager = ({
               camera: captureCamera,
               width: renderPlan.targetWidth,
               height: renderPlan.targetHeight,
-              detailLevel: snapshotOptions.detailLevel,
+              requestedSamples: SNAPSHOT_RENDER_TARGET_SAMPLES[snapshotOptions.detailLevel],
             });
           }
         } finally {
@@ -373,6 +419,8 @@ export const SnapshotManager = ({
 
         restoreShadowQuality();
         restoreShadowQuality = null;
+        restoreLightingPreset?.();
+        restoreLightingPreset = null;
         restoreTextureQuality();
         restoreTextureQuality = null;
         restoreSceneVisibility();
@@ -390,6 +438,7 @@ export const SnapshotManager = ({
       } catch (error) {
         restoreBackgroundStyle?.();
         restoreShadowQuality?.();
+        restoreLightingPreset?.();
         restoreTextureQuality?.();
         restoreSceneVisibility?.();
         invalidate();
@@ -407,7 +456,7 @@ export const SnapshotManager = ({
       invalidate();
 
       try {
-        await waitFrames(2);
+        await waitFrames(resolveSnapshotWarmupFrameCount(snapshotOptions));
         await renderAndDownloadHighRes(snapshotOptions, frozenCamera);
       } finally {
         setActiveSnapshotOptions(null);

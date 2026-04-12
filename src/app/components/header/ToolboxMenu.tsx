@@ -1,26 +1,12 @@
 import React from 'react';
-import { Activity, ArrowUpRight, Box, RefreshCw, Ruler, ScanSearch } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n/types';
-import { useEffectiveTheme } from '@/shared/hooks/useEffectiveTheme';
+import type { ToolboxItem } from './types';
 
 interface ToolboxMenuProps {
   t: TranslationKeys;
   onClose: () => void;
-  onOpenAI: () => void;
-  onOpenMeasureTool: () => void;
-  onOpenCollisionOptimizer: () => void;
-}
-
-type ToolboxItemTone = 'primary' | 'neutral' | 'logo';
-
-interface ToolboxItem {
-  key: string;
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  external?: boolean;
-  tone?: ToolboxItemTone;
+  items: ToolboxItem[];
 }
 
 function ToolboxItemCard({
@@ -28,11 +14,13 @@ function ToolboxItemCard({
   isActive,
   onHoverStart,
   onHoverEnd,
+  onClose,
 }: {
   item: ToolboxItem;
   isActive: boolean;
   onHoverStart: (item: ToolboxItem) => void;
   onHoverEnd: () => void;
+  onClose: () => void;
 }) {
   const iconToneClassName =
     item.tone === 'primary'
@@ -44,13 +32,16 @@ function ToolboxItemCard({
   return (
     <button
       type="button"
-      onClick={item.onClick}
+      onClick={() => {
+        onClose();
+        item.onClick();
+      }}
       onPointerEnter={() => onHoverStart(item)}
       onPointerLeave={onHoverEnd}
       onFocus={() => onHoverStart(item)}
       onBlur={onHoverEnd}
       aria-label={item.title}
-      className={`group relative flex min-h-[3.55rem] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-center transition-all duration-100 hover:-translate-y-0.5 hover:bg-element-hover/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
+      className={`group relative flex min-h-[3.45rem] flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 text-center transition-all duration-100 hover:-translate-y-0.5 hover:bg-element-hover/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
         isActive ? '-translate-y-0.5 bg-element-hover/90 shadow-sm' : ''
       }`}
     >
@@ -83,112 +74,8 @@ function ToolboxItemCard({
   );
 }
 
-export function ToolboxMenu({
-  t,
-  onClose,
-  onOpenAI,
-  onOpenMeasureTool,
-  onOpenCollisionOptimizer,
-}: ToolboxMenuProps) {
+export function ToolboxMenu({ t, onClose, items }: ToolboxMenuProps) {
   const [hoveredItemKey, setHoveredItemKey] = React.useState<string | null>(null);
-  const effectiveTheme = useEffectiveTheme();
-  const motrixLogoSrc =
-    effectiveTheme === 'dark' ? '/logos/motrix-logo-white.svg' : '/logos/motrix-logo.svg';
-
-  const openExternal = React.useCallback(
-    (url: string) => {
-      onClose();
-      window.open(url, '_blank', 'noopener,noreferrer');
-    },
-    [onClose],
-  );
-
-  const openAI = React.useCallback(() => {
-    onClose();
-    onOpenAI();
-  }, [onClose, onOpenAI]);
-
-  const openCollisionOptimizer = React.useCallback(() => {
-    onClose();
-    onOpenCollisionOptimizer();
-  }, [onClose, onOpenCollisionOptimizer]);
-
-  const openMeasureTool = React.useCallback(() => {
-    onClose();
-    onOpenMeasureTool();
-  }, [onClose, onOpenMeasureTool]);
-
-  const items: ToolboxItem[] = [
-    {
-      key: 'ai',
-      title: t.aiAssistant,
-      description: t.aiAssistantDesc,
-      icon: <ScanSearch className="h-[18px] w-[18px]" />,
-      onClick: openAI,
-      tone: 'primary',
-    },
-    {
-      key: 'measure',
-      title: t.measureMode,
-      description: t.measureToolboxDesc,
-      icon: <Ruler className="h-[18px] w-[18px]" />,
-      onClick: openMeasureTool,
-      tone: 'primary',
-    },
-    {
-      key: 'collision-optimizer',
-      title: t.collisionOptimizerDialog,
-      description: t.collisionOptimizerToolboxDesc,
-      icon: <Box className="h-[18px] w-[18px]" />,
-      onClick: openCollisionOptimizer,
-      tone: 'primary',
-    },
-    {
-      key: 'motion-tracking',
-      title: t.robotRedirect,
-      description: t.motionTrackingDesc,
-      icon: <RefreshCw className="h-[18px] w-[18px]" />,
-      onClick: () => openExternal('https://motion-tracking.axell.top/'),
-      external: true,
-      tone: 'neutral',
-    },
-    {
-      key: 'step2urdf',
-      title: t.step2urdf,
-      description: t.step2urdfDesc,
-      icon: <img src="/logos/step2urdf-logo.svg" alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://step2urdf.top/'),
-      external: true,
-      tone: 'logo',
-    },
-    {
-      key: 'motrix',
-      title: t.motrix,
-      description: t.motrixDesc,
-      icon: <img src={motrixLogoSrc} alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://motrix.motphys.com/'),
-      external: true,
-      tone: 'logo',
-    },
-    {
-      key: 'trajectory-editing',
-      title: t.trajectoryEditing,
-      description: t.trajectoryEditingDesc,
-      icon: <Activity className="h-[18px] w-[18px]" />,
-      onClick: () => openExternal('https://motion-editor.cyoahs.dev/'),
-      external: true,
-      tone: 'neutral',
-    },
-    {
-      key: 'bridgedp',
-      title: t.bridgedpEngine,
-      description: t.bridgedpEngineDesc,
-      icon: <img src="/logos/bridgedp-logo.png" alt="" className="h-5 w-5 object-contain" />,
-      onClick: () => openExternal('https://engine.bridgedp.com/'),
-      external: true,
-      tone: 'logo',
-    },
-  ];
 
   const hoveredItem = React.useMemo(
     () => items.find((item) => item.key === hoveredItemKey) ?? null,
@@ -198,8 +85,8 @@ export function ToolboxMenu({
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute top-full left-0 z-50 mt-1 w-[15.5rem] max-w-[calc(100vw-1rem)] rounded-2xl border border-border-black bg-panel-bg p-2 shadow-xl dark:shadow-black">
-        <div className="grid grid-cols-3 gap-x-1.5 gap-y-1">
+      <div className="absolute top-full left-0 z-50 mt-1 w-[23rem] max-w-[calc(100vw-1rem)] rounded-2xl border border-border-black bg-panel-bg p-2 shadow-xl dark:shadow-black sm:left-1/2 sm:-translate-x-1/2">
+        <div className="grid grid-cols-4 gap-x-0.5 gap-y-0.5">
           {items.map((item) => (
             <ToolboxItemCard
               key={item.key}
@@ -209,6 +96,7 @@ export function ToolboxMenu({
               onHoverEnd={() =>
                 setHoveredItemKey((currentKey) => (currentKey === item.key ? null : currentKey))
               }
+              onClose={onClose}
             />
           ))}
         </div>

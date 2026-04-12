@@ -4,6 +4,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
+import { PanelSelect, type SelectOption } from '@/shared/components/ui';
 import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
@@ -31,7 +32,6 @@ export const PROPERTY_EDITOR_HELPER_TEXT_CLASS = 'text-[9px] leading-4 text-text
 export const PROPERTY_EDITOR_INPUT_CLASS =
   'h-[22px] w-full rounded-md border border-border-strong bg-input-bg px-1.5 text-[10px] leading-4 text-text-primary focus:outline-none focus:border-system-blue focus:ring-2 focus:ring-system-blue/25';
 export const PROPERTY_EDITOR_READONLY_VALUE_CLASS = `${PROPERTY_EDITOR_INPUT_CLASS} flex items-center bg-element-bg/60`;
-export const PROPERTY_EDITOR_SELECT_CLASS = `${PROPERTY_EDITOR_INPUT_CLASS} pr-7`;
 export const PROPERTY_EDITOR_COMPACT_INPUT_CLASS =
   'h-6 w-full rounded-md border border-border-strong bg-input-bg px-1.5 text-[10px] leading-4 text-text-primary focus:outline-none focus:border-system-blue focus:ring-2 focus:ring-system-blue/25';
 export const PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS =
@@ -53,7 +53,7 @@ export const PROPERTY_EDITOR_LINK_CLASS =
 export const PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS =
   'inline-flex h-6 items-center justify-center gap-1 rounded-md bg-system-blue-solid px-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-system-blue-hover';
 export const PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS =
-  'inline-flex h-6 items-center justify-center gap-1 rounded-md border border-border-strong px-1.5 text-[10px] font-medium text-text-secondary transition-colors hover:bg-element-hover';
+  'inline-flex h-6 items-center justify-center gap-1 rounded-md border border-border-strong bg-panel-bg px-1.5 text-[10px] font-medium text-text-secondary shadow-sm transition-colors cursor-pointer hover:border-border-black hover:bg-element-hover hover:text-text-primary active:bg-element-active focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/25 disabled:cursor-not-allowed disabled:opacity-50';
 export const PROPERTY_EDITOR_ICON_SEGMENTED_GROUP_CLASS =
   'grid gap-0.5 rounded-md border border-border-strong bg-element-bg/70 p-0.5';
 export const PROPERTY_EDITOR_ICON_SEGMENTED_BUTTON_CLASS =
@@ -115,6 +115,21 @@ export const ReadonlyValueField = ({
   children: React.ReactNode;
   className?: string;
 }) => <div className={`${PROPERTY_EDITOR_READONLY_VALUE_CLASS} ${className}`}>{children}</div>;
+
+interface PropertyEditorSelectProps extends Omit<
+  React.ComponentProps<typeof PanelSelect>,
+  'options' | 'variant'
+> {
+  options: readonly SelectOption[];
+}
+
+export function PropertyEditorSelect({
+  options,
+  className = '',
+  ...props
+}: PropertyEditorSelectProps) {
+  return <PanelSelect options={options} variant="property" className={className} {...props} />;
+}
 
 export const ReadonlyStatField = ({
   label,
@@ -194,6 +209,7 @@ export const CollapsibleSection = ({
       triggerClassName={PROPERTY_EDITOR_SECTION_TRIGGER_CLASS}
       iconClassName="opacity-60"
       contentInnerClassName="border-t border-border-black bg-panel-bg px-1.5 py-1"
+      expandedMaxHeightClassName="max-h-[1200px]"
     >
       {children}
     </SharedCollapsibleSection>

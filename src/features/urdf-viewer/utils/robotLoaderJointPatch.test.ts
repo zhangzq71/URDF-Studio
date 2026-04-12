@@ -62,6 +62,58 @@ test('patchJointInPlace handles joints without explicit axis or limits', () => {
   assert.equal(invalidations.length, 1);
 });
 
+test('patchJointInPlace preserves MJCF scalar joint values and initializes missing limits', () => {
+  const robot = new THREE.Group() as THREE.Group & {
+    joints?: Record<string, RuntimeURDFJoint>;
+  };
+  const joint = new RuntimeURDFJoint() as RuntimeURDFJoint & {
+    lastSetValue?: number;
+  };
+  joint.name = 'joint_1';
+  joint.jointType = JointType.REVOLUTE;
+  joint.axis = new THREE.Vector3(0, 0, 1);
+  joint.jointValue = [0.42];
+  joint.origPosition = joint.position.clone();
+  joint.origQuaternion = joint.quaternion.clone();
+  joint.setJointValue = function setJointValue(...values: Array<number | null>) {
+    const value = typeof values[0] === 'number' ? values[0] : 0;
+    RuntimeURDFJoint.prototype.setJointValue.call(this, value);
+    this.lastSetValue = value;
+    return true;
+  } as RuntimeURDFJoint['setJointValue'];
+  robot.joints = { joint_1: joint };
+
+  const patch = {
+    jointName: 'joint_1',
+    previousJointData: makeJointPatchData(),
+    jointData: makeJointPatchData({
+      axis: { x: 0, y: 1, z: 0 },
+      origin: {
+        xyz: { x: 0, y: 0, z: 0.2 },
+        rpy: { r: 0.2, p: -0.15, y: 0.05 },
+      },
+    }),
+  };
+
+  const invalidations: number[] = [];
+  const applied = patchJointInPlace(robot, patch, () => {
+    invalidations.push(1);
+  });
+
+  assert.equal(applied, true);
+  assert.equal(joint.lastSetValue, 0.42);
+  assert.deepEqual(joint.axis.toArray(), [0, 1, 0]);
+  assert.equal(joint.limit?.lower, 0);
+  assert.equal(joint.limit?.upper, 0);
+  assert.equal(joint.ignoreLimits, true);
+  assert.equal(joint.position.z, 0.2);
+  const expectedQuaternion = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(0.2, -0.15, 0.05, 'ZYX'))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.42));
+  assert.ok(joint.quaternion.angleTo(expectedQuaternion) < 1e-6);
+  assert.equal(invalidations.length, 1);
+});
+
 test('patchJointsInPlace applies batched root-anchor updates without remounting the runtime scene', () => {
   const robot = new THREE.Group() as THREE.Group & {
     joints?: Record<string, RuntimeURDFJoint>;
@@ -82,44 +134,48 @@ test('patchJointsInPlace applies batched root-anchor updates without remounting 
   };
 
   const invalidations: number[] = [];
-  const applied = patchJointsInPlace(robot, [
-    {
-      jointName: 'joint_a',
-      previousJointData: makeJointPatchData({
-        id: 'joint_a',
-        name: 'joint_a',
-        childLinkId: 'link_a',
-      }),
-      jointData: makeJointPatchData({
-        id: 'joint_a',
-        name: 'joint_a',
-        childLinkId: 'link_a',
-        origin: {
-          xyz: { x: 0.25, y: 0, z: 0 },
-          rpy: { r: 0, p: 0, y: 0 },
-        },
-      }),
+  const applied = patchJointsInPlace(
+    robot,
+    [
+      {
+        jointName: 'joint_a',
+        previousJointData: makeJointPatchData({
+          id: 'joint_a',
+          name: 'joint_a',
+          childLinkId: 'link_a',
+        }),
+        jointData: makeJointPatchData({
+          id: 'joint_a',
+          name: 'joint_a',
+          childLinkId: 'link_a',
+          origin: {
+            xyz: { x: 0.25, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+        }),
+      },
+      {
+        jointName: 'joint_b',
+        previousJointData: makeJointPatchData({
+          id: 'joint_b',
+          name: 'joint_b',
+          childLinkId: 'link_b',
+        }),
+        jointData: makeJointPatchData({
+          id: 'joint_b',
+          name: 'joint_b',
+          childLinkId: 'link_b',
+          origin: {
+            xyz: { x: -0.5, y: 0.1, z: 0.2 },
+            rpy: { r: 0, p: 0.2, y: 0 },
+          },
+        }),
+      },
+    ],
+    () => {
+      invalidations.push(1);
     },
-    {
-      jointName: 'joint_b',
-      previousJointData: makeJointPatchData({
-        id: 'joint_b',
-        name: 'joint_b',
-        childLinkId: 'link_b',
-      }),
-      jointData: makeJointPatchData({
-        id: 'joint_b',
-        name: 'joint_b',
-        childLinkId: 'link_b',
-        origin: {
-          xyz: { x: -0.5, y: 0.1, z: 0.2 },
-          rpy: { r: 0, p: 0.2, y: 0 },
-        },
-      }),
-    },
-  ], () => {
-    invalidations.push(1);
-  });
+  );
 
   assert.equal(applied, true);
   assert.equal(jointA.position.x, 0.25);

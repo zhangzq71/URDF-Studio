@@ -1,6 +1,11 @@
 import React from 'react';
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import type { TranslationKeys } from '@/shared/i18n';
+import {
+  classifyLibraryFileKind,
+  isLibraryComponentAddableFile,
+  isLibraryPreviewableFile,
+} from '@/shared/utils/robotFileSupport';
 import type { RobotFile } from '@/types';
 import { getFileIcon, type FileTreeNode } from '../utils';
 
@@ -49,13 +54,18 @@ const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
   selectedFileName,
   t,
 }) => {
+  const fileKind = node.file ? classifyLibraryFileKind(node.file) : null;
   const isExpanded = expandedFolders.has(node.path);
   const isSelectedFile = Boolean(node.file && selectedFileName === node.file.name);
   const isEditingFolder = Boolean(node.isFolder && editingFolderPath === node.path);
   const paddingLeft = depth * 12 + 8;
   const canDeleteFolder = Boolean(onDeleteFromLibrary && node.isFolder);
   const canDeleteFile = Boolean(onDeleteFromLibrary && node.file);
-  const showAddButton = Boolean(node.file && showAddAsComponent && onAddAsComponent);
+  const canAddFileAsComponent = Boolean(
+    node.file && showAddAsComponent && onAddAsComponent && isLibraryComponentAddableFile(node.file),
+  );
+  const canPreviewFile = Boolean(node.file && onLoadRobot && isLibraryPreviewableFile(node.file));
+  const showAddButton = canAddFileAsComponent;
   const showDeleteButton = canDeleteFolder || canDeleteFile;
 
   const handleClick = () => {
@@ -66,14 +76,19 @@ const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
       return;
     }
 
-    if (node.file && onLoadRobot) {
+    if (node.file && canAddFileAsComponent && onAddAsComponent) {
+      onAddAsComponent(node.file);
+      return;
+    }
+
+    if (node.file && canPreviewFile && onLoadRobot) {
       onLoadRobot(node.file);
     }
   };
 
   const handleAddAsComponent = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (node.file && onAddAsComponent) {
+    if (node.file && onAddAsComponent && isLibraryComponentAddableFile(node.file)) {
       onAddAsComponent(node.file);
     }
   };
@@ -173,14 +188,19 @@ const FileTreeNodeComponentBase: React.FC<FileTreeNodeComponentProps> = ({
                     ? 'bg-element-bg dark:bg-element-hover text-text-secondary'
                     : node.file.format === 'mjcf'
                       ? 'bg-orange-100 dark:bg-orange-900/25 text-orange-600 dark:text-orange-300'
-                      : node.file.format === 'mesh'
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                        : 'bg-element-bg dark:bg-element-hover text-text-tertiary'
+                      : node.file.format === 'usd'
+                        ? 'bg-violet-100 dark:bg-violet-900/25 text-violet-700 dark:text-violet-300'
+                        : fileKind === 'image'
+                          ? 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300'
+                          : fileKind === 'mesh'
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
             }`}
           >
-            {node.file.format === 'mesh'
-              ? (node.file.name.split('.').pop()?.toUpperCase() ?? 'MESH')
-              : node.file.format.toUpperCase()}
+            {fileKind === 'robot'
+              ? node.file.format.toUpperCase()
+              : (node.file.name.split('.').pop()?.toUpperCase() ??
+                (fileKind === 'image' ? 'IMAGE' : 'ASSET'))}
           </span>
         )}
 

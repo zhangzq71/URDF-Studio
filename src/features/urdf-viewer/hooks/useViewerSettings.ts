@@ -45,7 +45,7 @@ function readStoredBoolean(key: string): boolean | null {
 
 function resolveInitialActiveOverlayLayer(): ViewerOverlayLayer | null {
   if (typeof window === 'undefined') {
-    return 'collision';
+    return null;
   }
 
   const savedActiveOverlayLayer = localStorage.getItem(ACTIVE_OVERLAY_LAYER_STORAGE_KEY);
@@ -75,7 +75,7 @@ function resolveInitialActiveOverlayLayer(): ViewerOverlayLayer | null {
     return null;
   }
 
-  return 'collision';
+  return null;
 }
 
 export interface ViewerSettings {
@@ -311,11 +311,15 @@ export function useViewerSettings(): ViewerSettings {
       setViewOption('showCollision', resolvedValue);
       if (resolvedValue) {
         bumpInteractionLayer('collision');
+        if (!showCollisionAlwaysOnTop && activeOverlayLayer === null) {
+          setActiveOverlayLayerState('collision');
+        }
       } else if (showCollisionAlwaysOnTop) {
         setActiveOverlayLayer(null);
       }
     },
     [
+      activeOverlayLayer,
       bumpInteractionLayer,
       setActiveOverlayLayer,
       setViewOption,

@@ -34,12 +34,15 @@ test('MeshAssetNode routes OBJ assets with the derived base directory', () => {
       assets: { 'robots/go2/meshes/thigh.obj': 'blob:obj' },
       material,
       color: '#abcdef',
+      preserveOriginalMaterial: true,
     }) as React.ReactElement<React.ComponentProps<typeof OBJRenderer>>;
 
     assert.equal(element.type, OBJRenderer);
     assert.equal(element.props.url, 'blob:obj');
     assert.equal(element.props.color, '#abcdef');
     assert.equal(element.props.assetBaseDir, 'robots/go2/meshes/');
+    assert.equal(element.props.logicalAssetPath, 'robots/go2/meshes/thigh.obj');
+    assert.equal(element.props.preserveOriginalMaterial, true);
     assert.equal(element.props.enableShadows, true);
   } finally {
     material.dispose();

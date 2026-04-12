@@ -451,6 +451,12 @@ async function clickElement(element: Element) {
   });
 }
 
+async function doubleClickElement(element: Element) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  });
+}
+
 test('GeometryEditor reads and updates the selected visual objectIndex instead of always using the primary visual', async () => {
   const { dom, container, root } = createComponentRoot();
   try {
@@ -466,12 +472,32 @@ test('GeometryEditor reads and updates the selected visual objectIndex instead o
 
     await act(async () => {
       dispatchReactChange(colorInput, '#abcdef');
+      await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
     const nextLink = updates.at(-1);
     assert.ok(nextLink, 'GeometryEditor should emit an updated link');
     assert.equal(nextLink.visual.color, '#ff0000');
     assert.equal(nextLink.visualBodies?.[0]?.color, '#abcdef');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor exposes the geometry type selector through the shared combobox trigger', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+
+    await renderGeometryEditor(root, link, () => {});
+
+    const typeCombobox = container.querySelector(
+      'button[role="combobox"][aria-label="Type"]',
+    ) as HTMLButtonElement | null;
+
+    assert.ok(typeCombobox, 'expected the geometry type field to render the shared combobox');
+    assert.match(typeCombobox.className, /\bbg-input-bg\b/);
+    assert.match(typeCombobox.className, /\bborder-border-strong\b/);
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -1127,6 +1153,84 @@ for (const sourceType of [
   }
 }
 
+test('GeometryEditor restores the matched visual mesh when converting a collision cylinder back to mesh', async () => {
+  const { dom, container, root } = createComponentRoot();
+  const originalWorker = globalThis.Worker;
+  const fakeWorker = new FakeWorker();
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: class {
+      constructor() {
+        return fakeWorker as unknown as Worker;
+      }
+    },
+  });
+
+  try {
+    const link = createCollisionVisualMeshReferenceLink(
+      GeometryType.CYLINDER,
+      'secondary-cylinder-to-mesh',
+    );
+    const robot = createRobot(link);
+    robot.selection = {
+      type: 'link',
+      id: link.id,
+      subType: 'collision',
+      objectIndex: 1,
+    };
+
+    const updates: UrdfLink[] = [];
+    await renderGeometryEditor(
+      root,
+      link,
+      (nextLink) => {
+        updates.push(nextLink);
+      },
+      robot,
+      'collision',
+    );
+
+    const typeSelect = container.querySelector('select');
+    assert.ok(typeSelect, 'geometry type select should exist');
+
+    await act(async () => {
+      dispatchReactSelectChange(typeSelect as HTMLSelectElement, GeometryType.MESH);
+      await new Promise<void>((resolve) => {
+        dom.window.requestAnimationFrame(() => resolve());
+      });
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await new Promise<void>((resolve) => {
+        dom.window.requestAnimationFrame(() => resolve());
+      });
+    });
+
+    assert.equal(
+      fakeWorker.postedMessages.length,
+      0,
+      'restoring the matched visual mesh should not require a mesh analysis worker',
+    );
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'collision mesh restoration should emit an updated link');
+    assert.equal(nextLink.collisionBodies?.[0]?.type, GeometryType.MESH);
+    assert.equal(nextLink.collisionBodies?.[0]?.meshPath, 'meshes/secondary-cylinder-to-mesh.dae');
+    assert.deepEqual(nextLink.collisionBodies?.[0]?.dimensions, link.visualBodies?.[0]?.dimensions);
+    assert.deepEqual(nextLink.collisionBodies?.[0]?.origin, link.visualBodies?.[0]?.origin);
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('GeometryEditor matches a collision mesh to its visual mesh by stem before falling back to objectIndex', async () => {
   const { dom, container, root } = createComponentRoot();
   const originalWorker = globalThis.Worker;
@@ -1227,6 +1331,7 @@ test('GeometryEditor normalizes alpha colors for the picker while preserving alp
 
     await act(async () => {
       dispatchReactChange(colorInput, '#abcdef');
+      await new Promise((resolve) => setTimeout(resolve, 80));
     });
 
     const nextLink = updates.at(-1);
@@ -1237,52 +1342,202 @@ test('GeometryEditor normalizes alpha colors for the picker while preserving alp
   }
 });
 
-test('GeometryEditor shows authored material colors instead of a white fallback for multi-material mesh visuals', async () => {
+test('GeometryEditor shows the effective legacy link material color when the primary visual has no inline color', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    link.visual = {
+      ...link.visual,
+      color: undefined,
+    };
+
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+    robot.materials = {
+      base_link: {
+        color: '#b2b2b2',
+      },
+    };
+
+    await renderGeometryEditor(root, link, () => {}, robot);
+
+    const colorInput = getColorInput(container);
+    assert.equal(colorInput.value.toLowerCase(), '#b2b2b2');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor coalesces authored material color drag updates before committing', async () => {
   const { dom, container, root } = createComponentRoot();
   try {
     const link = createMultiMaterialMeshLink();
     const robot = createRobot(link);
     robot.selection.objectIndex = 0;
+    const updates: UrdfLink[] = [];
 
     await renderGeometryEditor(
       root,
       link,
-      () => {
-        throw new Error('multi-material display should not emit updates without user edits');
+      (nextLink) => {
+        updates.push(nextLink);
       },
       robot,
     );
 
+    const bodyColorInput = container.querySelector(
+      'input[type="color"][aria-label="Color body"]',
+    ) as HTMLInputElement | null;
+    assert.ok(bodyColorInput, 'expected a dedicated color picker for the body material');
+    if (!bodyColorInput) {
+      assert.fail('expected a dedicated color picker for the body material');
+    }
+
+    await act(async () => {
+      dispatchReactChange(bodyColorInput, '#c0ffee');
+      dispatchReactChange(bodyColorInput, '#ff6c0a');
+      dispatchReactChange(bodyColorInput, '#007aff');
+      assert.equal(updates.length, 0);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0]?.visual.authoredMaterials?.[0]?.color, '#007aff');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor lets users edit each authored material color for multi-material mesh visuals', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createMultiMaterialMeshLink();
+    const updates: UrdfLink[] = [];
+    const rerenderEditor = async (nextLink: UrdfLink) => {
+      const rerenderedRobot = createRobot(nextLink);
+      rerenderedRobot.selection.objectIndex = 0;
+      await renderGeometryEditor(
+        root,
+        nextLink,
+        (updatedLink) => {
+          updates.push(updatedLink);
+        },
+        rerenderedRobot,
+      );
+    };
+
+    await rerenderEditor(link);
+
     assert.ok(container.textContent?.includes('Multiple Materials'));
-    assert.ok(container.textContent?.includes('#bebebe'));
-    assert.ok(container.textContent?.includes('#ffffff'));
-    assert.ok(container.textContent?.includes('#000000'));
+    assert.ok(container.textContent?.includes('body'));
+    assert.ok(container.textContent?.includes('trim'));
+    assert.ok(container.textContent?.includes('fastener'));
+    const inputValues = Array.from(container.querySelectorAll('input')).map((input) =>
+      (input as HTMLInputElement).value.trim().toLowerCase(),
+    );
+    assert.ok(inputValues.includes('#bebebe'));
+    assert.ok(inputValues.includes('#ffffff'));
+    assert.ok(inputValues.includes('#000000'));
     assert.ok(
       container.textContent?.includes(
         'This visual uses multiple authored materials. Base texture editing is read-only here.',
       ),
     );
     assert.equal(container.querySelector('input[type="color"][aria-label="Color"]'), null);
+    const bodyColorInput = container.querySelector(
+      'input[type="color"][aria-label="Color body"]',
+    ) as HTMLInputElement | null;
+    assert.ok(bodyColorInput, 'expected a dedicated color picker for the body material');
+    if (!bodyColorInput) {
+      assert.fail('expected a dedicated color picker for the body material');
+    }
+
+    await act(async () => {
+      dispatchReactChange(bodyColorInput, '#c0ffee');
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    let nextLink = updates.at(-1);
+    assert.ok(nextLink, 'editing a material slot should emit an updated link');
+    assert.equal(nextLink.visual.authoredMaterials?.[0]?.color, '#c0ffee');
+    assert.equal(nextLink.visual.authoredMaterials?.[1]?.color, '#ffffff');
+    assert.equal(nextLink.visual.authoredMaterials?.[2]?.color, '#000000');
+
+    await rerenderEditor(nextLink);
+
+    const lighterToneButton = container.querySelector(
+      'button[title="Lighter body 7%"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(lighterToneButton, 'expected tone nudges for each authored material slot');
+    if (!lighterToneButton) {
+      assert.fail('expected tone nudges for each authored material slot');
+    }
+
+    await clickElement(lighterToneButton);
+
+    nextLink = updates.at(-1);
+    assert.ok(nextLink, 'clicking a tone nudge should emit an updated link');
+    assert.notEqual(nextLink.visual.authoredMaterials?.[0]?.color, '#c0ffee');
+
+    await rerenderEditor(nextLink);
+
+    const presetSwatch = container.querySelector(
+      'button[title="body #ff6c0a"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(presetSwatch, 'expected quick preset swatches for the body material');
+    if (!presetSwatch) {
+      assert.fail('expected quick preset swatches for the body material');
+    }
+
+    await clickElement(presetSwatch);
+
+    nextLink = updates.at(-1);
+    assert.ok(nextLink, 'clicking a preset swatch should emit an updated link');
+    assert.equal(nextLink.visual.authoredMaterials?.[0]?.color, '#ff6c0a');
+
+    await rerenderEditor(nextLink);
+
+    const recentColorButton = container.querySelector(
+      'button[title="Recent #c0ffee"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(recentColorButton, 'expected recent color shortcuts for authored materials');
+    if (!recentColorButton) {
+      assert.fail('expected recent color shortcuts for authored materials');
+    }
+
+    await clickElement(recentColorButton);
+
+    nextLink = updates.at(-1);
+    assert.ok(nextLink, 'clicking a recent color should emit an updated link');
+    assert.equal(nextLink.visual.authoredMaterials?.[0]?.color, '#c0ffee');
+
+    await rerenderEditor(nextLink);
+
+    const resetButton = container.querySelector(
+      'button[title="Reset body"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(resetButton, 'expected a reset action for each authored material slot');
+    if (!resetButton) {
+      assert.fail('expected a reset action for each authored material slot');
+    }
+
+    await clickElement(resetButton);
+
+    nextLink = updates.at(-1);
+    assert.ok(nextLink, 'resetting a material slot should emit an updated link');
+    assert.equal(nextLink.visual.authoredMaterials?.[0]?.color, '#bebebe');
     assert.equal(
       Array.from(container.querySelectorAll('button')).some((button) =>
         button.textContent?.includes('Upload Image'),
       ),
       false,
     );
-
-    const inputValues = Array.from(container.querySelectorAll('input')).map((input) =>
-      (input as HTMLInputElement).value.trim().toLowerCase(),
-    );
-    assert.ok(
-      !inputValues.includes('#ffffff'),
-      'multi-material meshes should not appear as editable white',
-    );
   } finally {
     await destroyComponentRoot(dom, root);
   }
 });
 
-test('GeometryEditor shows the primary visual legacy texture and promotes edits into authored materials', async () => {
+test('GeometryEditor previews the primary visual legacy texture before promoting edits into authored materials', async () => {
   const { dom, container, root } = createComponentRoot();
   try {
     const link = createLink('#00ff00');
@@ -1317,9 +1572,107 @@ test('GeometryEditor shows the primary visual legacy texture and promotes edits 
     assert.ok(nextTextureButton, 'updated texture asset should render');
     await clickElement(nextTextureButton);
 
+    assert.equal(
+      updates.length,
+      0,
+      'single-clicking a texture should stay in preview mode without committing',
+    );
+    assert.ok(
+      container.querySelector('img[src="blob:updated-texture"]'),
+      'preview mode should render the selected texture image',
+    );
+
+    const applyButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Apply',
+    );
+    assert.ok(applyButton, 'preview mode should expose an apply action');
+    await clickElement(applyButton);
+
     const nextLink = updates.at(-1);
     assert.ok(nextLink, 'texture selection should emit an updated link');
     assert.equal(nextLink.visual.authoredMaterials?.[0]?.texture, 'textures/updated.png');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor keeps showing the applied texture image inside the material properties', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    link.visual = {
+      ...link.visual,
+      authoredMaterials: [{ texture: 'textures/applied.png' }],
+    };
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+
+    await renderGeometryEditor(root, link, () => {}, robot, 'visual', {
+      assets: {
+        'textures/applied.png': 'blob:applied-texture',
+      },
+    });
+
+    assert.ok(
+      container.querySelector('img[src="blob:applied-texture"]'),
+      'applied textures should continue rendering their preview image in the material properties',
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('GeometryEditor preserves the effective legacy link material color when promoting a texture into authored materials', async () => {
+  const { dom, container, root } = createComponentRoot();
+  try {
+    const link = createLink('#00ff00');
+    link.visual = {
+      ...link.visual,
+      color: undefined,
+    };
+
+    const robot = createRobot(link);
+    robot.selection.objectIndex = 0;
+    robot.materials = {
+      base_link: {
+        color: '#b2b2b2',
+        texture: 'textures/legacy.png',
+      },
+    };
+
+    const updates: UrdfLink[] = [];
+    await renderGeometryEditor(
+      root,
+      link,
+      (nextLink) => {
+        updates.push(nextLink);
+      },
+      robot,
+      'visual',
+      {
+        assets: {
+          'textures/legacy.png': 'blob:legacy-texture',
+          'textures/updated.png': 'blob:updated-texture',
+        },
+      },
+    );
+
+    const nextTextureButton = container.querySelector('[title="textures/updated.png"]');
+    assert.ok(nextTextureButton, 'updated texture asset should render');
+    await clickElement(nextTextureButton);
+
+    const applyButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Apply',
+    );
+    assert.ok(applyButton, 'preview mode should expose an apply action');
+    await clickElement(applyButton);
+
+    const nextLink = updates.at(-1);
+    assert.ok(nextLink, 'texture selection should emit an updated link');
+    assert.deepEqual(nextLink.visual.authoredMaterials?.[0], {
+      color: '#b2b2b2',
+      texture: 'textures/updated.png',
+    });
   } finally {
     await destroyComponentRoot(dom, root);
   }
@@ -1357,7 +1710,7 @@ test('GeometryEditor keeps secondary visual textures independent from the link-l
 
     const secondaryTextureButton = container.querySelector('[title="textures/secondary.png"]');
     assert.ok(secondaryTextureButton, 'secondary texture asset should render');
-    await clickElement(secondaryTextureButton);
+    await doubleClickElement(secondaryTextureButton);
 
     const nextLink = updates.at(-1);
     assert.ok(nextLink, 'secondary texture selection should emit an updated link');

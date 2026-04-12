@@ -1,4 +1,4 @@
-import { ensureUsdWasmRuntime } from '@/features/urdf-viewer';
+import { ensureUsdWasmRuntime } from '@/features/urdf-viewer/utils/usdWasmRuntime';
 
 type BinaryReadyUsdLayer = {
   Export?: (...args: unknown[]) => unknown;
@@ -12,7 +12,11 @@ type BinaryReadyUsdStage = {
 
 type BinaryReadyUsdModule = Awaited<ReturnType<typeof ensureUsdWasmRuntime>>['USD'] & {
   FS_readFile?: (path: string, opts?: { encoding?: 'utf8'; flags?: string }) => Uint8Array | string;
-  FS_writeFile?: (path: string, data: string | ArrayLike<number> | ArrayBufferView, opts?: { flags?: string }) => void;
+  FS_writeFile?: (
+    path: string,
+    data: string | ArrayLike<number> | ArrayBufferView,
+    opts?: { flags?: string },
+  ) => void;
   UsdStage?: {
     Open?: (path: string) => BinaryReadyUsdStage | null;
   };
@@ -35,7 +39,10 @@ function createFsRoot(label: string): string {
 }
 
 function ensureVirtualDirectory(module: BinaryReadyUsdModule, absoluteDirectoryPath: string): void {
-  const normalized = absoluteDirectoryPath.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+  const normalized = absoluteDirectoryPath
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/$/, '');
   if (!normalized || normalized === '/') return;
 
   let parent = '/';
@@ -74,7 +81,10 @@ function readUsdMagic(data: Uint8Array | string): string {
   return new TextDecoder('latin1').decode(data.slice(0, 8));
 }
 
-function readUsdFileFromFs(module: BinaryReadyUsdModule, absolutePath: string): Uint8Array | string | null {
+function readUsdFileFromFs(
+  module: BinaryReadyUsdModule,
+  absolutePath: string,
+): Uint8Array | string | null {
   try {
     const data = module.FS_readFile?.(absolutePath);
     return data instanceof Uint8Array || typeof data === 'string' ? data : null;
@@ -138,11 +148,7 @@ function exportUsdLayerAsCrate(
 export async function convertUsdArchiveFilesToBinaryCore(
   archiveFiles: Map<string, Blob>,
   options: {
-    onProgress?: (progress: {
-      current: number;
-      total: number;
-      filePath: string;
-    }) => void;
+    onProgress?: (progress: { current: number; total: number; filePath: string }) => void;
     loadRuntime?: () => Promise<BinaryReadyUsdRuntime>;
   } = {},
 ): Promise<Map<string, Blob>> {
@@ -151,10 +157,10 @@ export async function convertUsdArchiveFilesToBinaryCore(
   const USD = runtime.USD as BinaryReadyUsdModule;
 
   if (
-    typeof USD.FS_createPath !== 'function'
-    || typeof USD.FS_writeFile !== 'function'
-    || typeof USD.FS_readFile !== 'function'
-    || typeof USD.UsdStage?.Open !== 'function'
+    typeof USD.FS_createPath !== 'function' ||
+    typeof USD.FS_writeFile !== 'function' ||
+    typeof USD.FS_readFile !== 'function' ||
+    typeof USD.UsdStage?.Open !== 'function'
   ) {
     throw new Error('USD binary export runtime is unavailable.');
   }
@@ -233,11 +239,7 @@ export async function convertUsdArchiveFilesToBinaryCore(
 export async function convertUsdArchiveFilesToBinary(
   archiveFiles: Map<string, Blob>,
   options: {
-    onProgress?: (progress: {
-      current: number;
-      total: number;
-      filePath: string;
-    }) => void;
+    onProgress?: (progress: { current: number; total: number; filePath: string }) => void;
     loadRuntime?: () => Promise<BinaryReadyUsdRuntime>;
   } = {},
 ): Promise<Map<string, Blob>> {

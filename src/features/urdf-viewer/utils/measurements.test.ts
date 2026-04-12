@@ -13,6 +13,7 @@ import {
   getActiveMeasureGroup,
   getActiveMeasureMeasurement,
   getLinkMeasureCenter,
+  getMeasureRelativePose,
   getMeasureStateMeasurements,
   getObjectWorldCenter,
   getMeasurementMetrics,
@@ -88,12 +89,15 @@ test('re-picking the active slot overwrites the same group instead of creating e
 
 test('supports multiple measurement groups and keeps one measurement per group', () => {
   const firstGroupState = applyMeasurePick(
-    applyMeasurePick(createEmptyMeasureState(), createMeasureTarget({
-      linkName: 'group1_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 0, 0),
-    })),
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'group1_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 0, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group1_b',
       objectType: 'visual',
@@ -104,12 +108,15 @@ test('supports multiple measurement groups and keeps one measurement per group',
 
   const withSecondGroup = addMeasureGroup(firstGroupState);
   const secondGroupState = applyMeasurePick(
-    applyMeasurePick(withSecondGroup, createMeasureTarget({
-      linkName: 'group2_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 1, 0),
-    })),
+    applyMeasurePick(
+      withSecondGroup,
+      createMeasureTarget({
+        linkName: 'group2_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 1, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group2_b',
       objectType: 'visual',
@@ -132,12 +139,15 @@ test('supports multiple measurement groups and keeps one measurement per group',
 
 test('removes a measurement group and activates the nearest remaining group', () => {
   const firstGroupState = applyMeasurePick(
-    applyMeasurePick(createEmptyMeasureState(), createMeasureTarget({
-      linkName: 'group1_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 0, 0),
-    })),
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'group1_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 0, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group1_b',
       objectType: 'visual',
@@ -148,12 +158,15 @@ test('removes a measurement group and activates the nearest remaining group', ()
 
   const secondGroup = addMeasureGroup(firstGroupState);
   const secondGroupState = applyMeasurePick(
-    applyMeasurePick(secondGroup, createMeasureTarget({
-      linkName: 'group2_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 1, 0),
-    })),
+    applyMeasurePick(
+      secondGroup,
+      createMeasureTarget({
+        linkName: 'group2_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 1, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group2_b',
       objectType: 'visual',
@@ -172,12 +185,15 @@ test('removes a measurement group and activates the nearest remaining group', ()
 
 test('removing the last measurement group resets the measure state', () => {
   const completed = applyMeasurePick(
-    applyMeasurePick(createEmptyMeasureState(), createMeasureTarget({
-      linkName: 'base_link',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 0, 0),
-    })),
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'base_link',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 0, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'arm_link',
       objectType: 'visual',
@@ -220,12 +236,15 @@ test('clears the requested measure slot and keeps the other slot intact', () => 
 
 test('clears only the active measurement group when requested', () => {
   const completed = applyMeasurePick(
-    applyMeasurePick(createEmptyMeasureState(), createMeasureTarget({
-      linkName: 'group_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 0, 0),
-    })),
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'group_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 0, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group_b',
       objectType: 'visual',
@@ -244,12 +263,15 @@ test('clears only the active measurement group when requested', () => {
 
 test('clearMeasureState recreates a single empty measurement group', () => {
   const completed = applyMeasurePick(
-    applyMeasurePick(createEmptyMeasureState(), createMeasureTarget({
-      linkName: 'group_a',
-      objectType: 'visual',
-      objectIndex: 0,
-      point: new THREE.Vector3(0, 0, 0),
-    })),
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'group_a',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(0, 0, 0),
+      }),
+    ),
     createMeasureTarget({
       linkName: 'group_b',
       objectType: 'visual',
@@ -269,10 +291,7 @@ test('clearMeasureState recreates a single empty measurement group', () => {
 });
 
 test('computes xyz decomposition for diagonal mesh measurements', () => {
-  const metrics = getMeasurementMetrics(
-    new THREE.Vector3(1, 2, 3),
-    new THREE.Vector3(4, 6, 15),
-  );
+  const metrics = getMeasurementMetrics(new THREE.Vector3(1, 2, 3), new THREE.Vector3(4, 6, 15));
 
   assert.equal(metrics.distance, 13);
   assert.deepEqual(metrics.delta, { x: 3, y: 4, z: 12 });
@@ -281,24 +300,68 @@ test('computes xyz decomposition for diagonal mesh measurements', () => {
 });
 
 test('marks axis-aligned mesh measurements as non-diagonal', () => {
-  const metrics = getMeasurementMetrics(
-    new THREE.Vector3(5, 1, -2),
-    new THREE.Vector3(5, 1, 8),
-  );
+  const metrics = getMeasurementMetrics(new THREE.Vector3(5, 1, -2), new THREE.Vector3(5, 1, 8));
 
   assert.equal(metrics.distance, 10);
   assert.deepEqual(metrics.delta, { x: 0, y: 0, z: 10 });
   assert.equal(metrics.isDiagonal, false);
 });
 
+test('computes a relative pose from the first anchor frame to the second anchor frame', () => {
+  const firstPose = new THREE.Matrix4().makeTranslation(1, 0, 0);
+  const secondPose = new THREE.Matrix4().makeRotationZ(Math.PI / 2).setPosition(1, 2, 0);
+
+  const relativePose = getMeasureRelativePose(firstPose, secondPose);
+
+  assert.ok(relativePose);
+  assert.deepEqual(relativePose.translation, { x: 0, y: 2, z: 0 });
+  assert.equal(relativePose.rpy.r, 0);
+  assert.equal(relativePose.rpy.p, 0);
+  assert.ok(Math.abs(relativePose.rpy.y - Math.PI / 2) < 1e-6);
+  assert.equal(relativePose.quaternion.x, 0);
+  assert.equal(relativePose.quaternion.y, 0);
+  assert.ok(Math.abs(relativePose.quaternion.z - Math.sqrt(0.5)) < 1e-6);
+  assert.ok(Math.abs(relativePose.quaternion.w - Math.sqrt(0.5)) < 1e-6);
+  assert.deepEqual(relativePose.axisAngle.axis, { x: 0, y: 0, z: 1 });
+  assert.ok(Math.abs(relativePose.axisAngle.angle - Math.PI / 2) < 1e-6);
+});
+
+test('includes the relative pose on completed measurements when both targets expose pose matrices', () => {
+  const firstPose = new THREE.Matrix4().makeTranslation(1, 2, 3);
+  const secondPose = new THREE.Matrix4().makeRotationZ(Math.PI / 2).setPosition(4, 6, 3);
+
+  const completed = applyMeasurePick(
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'base_link',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(1, 2, 3),
+        poseWorldMatrix: firstPose,
+      }),
+    ),
+    createMeasureTarget({
+      linkName: 'tool_link',
+      objectType: 'visual',
+      objectIndex: 0,
+      point: new THREE.Vector3(4, 6, 3),
+      poseWorldMatrix: secondPose,
+    }),
+  );
+
+  const measurement = getActiveMeasureMeasurement(completed);
+
+  assert.ok(measurement?.relativePose);
+  assert.deepEqual(measurement.relativePose.translation, { x: 3, y: 4, z: 0 });
+  assert.ok(Math.abs(measurement.relativePose.rpy.y - Math.PI / 2) < 1e-6);
+});
+
 test('computes world center from the selected mesh object instead of the hit surface point', () => {
   const group = new THREE.Group();
   group.position.set(10, -3, 2);
 
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 4, 6),
-    new THREE.MeshBasicMaterial(),
-  );
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 6), new THREE.MeshBasicMaterial());
   mesh.position.set(1, 2, 3);
   group.add(mesh);
   group.updateMatrixWorld(true);
@@ -315,10 +378,7 @@ test('uses the selected visual body center instead of the full link subtree cent
 
   const visual = new THREE.Group() as THREE.Group & { isURDFVisual?: boolean };
   visual.isURDFVisual = true;
-  const visualMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 2, 2),
-    new THREE.MeshBasicMaterial(),
-  );
+  const visualMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
   visualMesh.position.set(1, 0, 0);
   visual.add(visualMesh);
   link.add(visual);
@@ -330,10 +390,7 @@ test('uses the selected visual body center instead of the full link subtree cent
   childLink.isURDFLink = true;
   const childVisual = new THREE.Group() as THREE.Group & { isURDFVisual?: boolean };
   childVisual.isURDFVisual = true;
-  const childMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 2, 2),
-    new THREE.MeshBasicMaterial(),
-  );
+  const childMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
   childMesh.position.set(100, 0, 0);
   childVisual.add(childMesh);
   childLink.add(childVisual);
@@ -347,26 +404,20 @@ test('uses the selected visual body center instead of the full link subtree cent
   assert.deepEqual(center.toArray(), [1, 0, 0]);
 });
 
-test('uses the current link center when a link has multiple direct visual bodies', () => {
+test('uses the selected direct visual body center when a link has multiple visual bodies', () => {
   const link = new THREE.Group() as THREE.Group & { isURDFLink?: boolean };
   link.name = 'arm_link';
   link.isURDFLink = true;
 
   const firstVisual = new THREE.Group() as THREE.Group & { isURDFVisual?: boolean };
   firstVisual.isURDFVisual = true;
-  const firstMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 2, 2),
-    new THREE.MeshBasicMaterial(),
-  );
+  const firstMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
   firstMesh.position.set(2, 0, 0);
   firstVisual.add(firstMesh);
 
   const secondVisual = new THREE.Group() as THREE.Group & { isURDFVisual?: boolean };
   secondVisual.isURDFVisual = true;
-  const secondMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(2, 2, 2),
-    new THREE.MeshBasicMaterial(),
-  );
+  const secondMesh = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
   secondMesh.position.set(8, 0, 0);
   secondVisual.add(secondMesh);
 
@@ -376,5 +427,5 @@ test('uses the current link center when a link has multiple direct visual bodies
 
   const center = getLinkMeasureCenter(link, 'visual', 1);
 
-  assert.deepEqual(center.toArray(), [5, 0, 0]);
+  assert.deepEqual(center.toArray(), [8, 0, 0]);
 });

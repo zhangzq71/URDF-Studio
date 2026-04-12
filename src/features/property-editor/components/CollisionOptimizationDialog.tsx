@@ -10,6 +10,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
+import { CompactSwitch } from '@/shared/components/ui';
 import { useDraggableWindow } from '@/shared/hooks';
 import { translations } from '@/shared/i18n';
 import { GeometryType } from '@/types';
@@ -263,37 +264,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     <div className="mb-1 mt-2 text-[8.5px] font-semibold tracking-[0.02em] text-text-tertiary first:mt-0">
       {children}
     </div>
-  );
-}
-
-function Toggle({
-  value,
-  onChange,
-  disabled = false,
-}: {
-  value: boolean;
-  onChange: (value: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => !disabled && onChange(!value)}
-      disabled={disabled}
-      className={`relative h-[18px] w-8 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30 ${
-        disabled
-          ? 'bg-switch-off opacity-50 cursor-not-allowed'
-          : value
-            ? 'bg-system-blue'
-            : 'bg-switch-off'
-      }`}
-    >
-      <span
-        className={`absolute left-0.5 top-0.5 h-[14px] w-[14px] rounded-full shadow transition-transform ${
-          value ? 'translate-x-[14px] bg-white' : 'translate-x-0 bg-white dark:bg-element-bg'
-        }`}
-      />
-    </button>
   );
 }
 
@@ -1361,8 +1331,6 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
       className="z-[110] flex flex-col overflow-hidden rounded-lg border border-border-black bg-panel-bg text-text-primary shadow-lg"
       headerClassName="flex h-10 shrink-0 items-center justify-between border-b border-border-black bg-element-bg px-2"
       interactionClassName="select-none"
-      headerDraggableClassName="cursor-grab"
-      headerDraggingClassName="cursor-grabbing"
       showMinimizeButton={false}
       showMaximizeButton={false}
       closeTitle={t.close}
@@ -1601,7 +1569,11 @@ export const CollisionOptimizationDialog: React.FC<CollisionOptimizationDialogPr
                             {copy.avoidSiblingOverlapDesc}
                           </div>
                         </div>
-                        <Toggle value={avoidSiblingOverlap} onChange={setAvoidSiblingOverlap} />
+                        <CompactSwitch
+                          checked={avoidSiblingOverlap}
+                          onChange={setAvoidSiblingOverlap}
+                          ariaLabel={copy.avoidSiblingOverlap}
+                        />
                       </div>
                     </div>
 

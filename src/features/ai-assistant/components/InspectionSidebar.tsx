@@ -1,176 +1,392 @@
-import { Check, ChevronDown, ChevronRight, Loader2, Minus, RefreshCw } from 'lucide-react'
-import type { Dispatch, SetStateAction } from 'react'
-import type { Language, TranslationKeys } from '@/shared/i18n'
-import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
+import { Check, ChevronDown, ChevronRight, Minus } from 'lucide-react';
+import type { Dispatch, SetStateAction } from 'react';
+import type { Language, TranslationKeys } from '@/shared/i18n';
+import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria';
 
-export type SelectedInspectionItems = Record<string, Set<string>>
+export type SelectedInspectionItems = Record<string, Set<string>>;
 
 interface InspectionSidebarProps {
-  lang: Language
-  t: TranslationKeys
-  isGeneratingAI: boolean
-  expandedCategories: Set<string>
-  selectedItems: SelectedInspectionItems
-  setExpandedCategories: Dispatch<SetStateAction<Set<string>>>
-  setSelectedItems: Dispatch<SetStateAction<SelectedInspectionItems>>
-  onRunInspection: () => void
+  lang: Language;
+  t: TranslationKeys;
+  isGeneratingAI: boolean;
+  readOnly?: boolean;
+  focusedCategoryId: string;
+  expandedCategories: Set<string>;
+  selectedItems: SelectedInspectionItems;
+  setExpandedCategories: Dispatch<SetStateAction<Set<string>>>;
+  setSelectedItems: Dispatch<SetStateAction<SelectedInspectionItems>>;
+  onFocusCategory: (categoryId: string) => void;
+  onNavigateToCategory?: (categoryId: string) => void;
+  onNavigateToItem?: (categoryId: string, itemId: string) => void;
 }
 
 export function InspectionSidebar({
   lang,
   t,
   isGeneratingAI,
+  readOnly = false,
+  focusedCategoryId,
   expandedCategories,
   selectedItems,
   setExpandedCategories,
   setSelectedItems,
-  onRunInspection
+  onFocusCategory,
+  onNavigateToCategory,
+  onNavigateToItem,
 }: InspectionSidebarProps) {
-  const toggleCategorySelection = (categoryId: string) => {
-    setSelectedItems(prev => {
-      const newItems = { ...prev }
-      const category = INSPECTION_CRITERIA.find(c => c.id === categoryId)
-      if (!category) return prev
+  const isInteractionLocked = isGeneratingAI;
+  const isRunningInspection = isGeneratingAI && readOnly;
+  const totalItemCount = INSPECTION_CRITERIA.reduce(
+    (sum, category) => sum + category.items.length,
+    0,
+  );
+  let totalSelectedCount = 0;
+  let selectedCategoryCount = 0;
 
-      const allSelected = category.items.every(item => newItems[categoryId]?.has(item.id))
+  INSPECTION_CRITERIA.forEach((category) => {
+    const count = selectedItems[category.id]?.size ?? 0;
+    totalSelectedCount += count;
+    if (count > 0) {
+      selectedCategoryCount += 1;
+    }
+  });
+
+  const visibleCategories = readOnly
+    ? INSPECTION_CRITERIA.filter((category) => (selectedItems[category.id]?.size ?? 0) > 0)
+    : INSPECTION_CRITERIA;
+
+  const toggleCategorySelection = (categoryId: string) => {
+    setSelectedItems((prev) => {
+      const newItems = { ...prev };
+      const category = INSPECTION_CRITERIA.find((c) => c.id === categoryId);
+      if (!category) return prev;
+
+      const allSelected = category.items.every((item) => newItems[categoryId]?.has(item.id));
       if (allSelected) {
-        newItems[categoryId] = new Set()
+        newItems[categoryId] = new Set();
       } else {
-        newItems[categoryId] = new Set(category.items.map(item => item.id))
+        newItems[categoryId] = new Set(category.items.map((item) => item.id));
       }
-      return newItems
-    })
-  }
+      return newItems;
+    });
+  };
 
   const toggleItemSelection = (categoryId: string, itemId: string) => {
-    setSelectedItems(prev => {
-      const newItems = { ...prev }
+    setSelectedItems((prev) => {
+      const newItems = { ...prev };
       if (!newItems[categoryId]) {
-        newItems[categoryId] = new Set()
+        newItems[categoryId] = new Set();
       }
-      const itemSet = new Set(newItems[categoryId])
+      const itemSet = new Set(newItems[categoryId]);
       if (itemSet.has(itemId)) {
-        itemSet.delete(itemId)
+        itemSet.delete(itemId);
       } else {
-        itemSet.add(itemId)
+        itemSet.add(itemId);
       }
-      newItems[categoryId] = itemSet
-      return newItems
-    })
-  }
+      newItems[categoryId] = itemSet;
+      return newItems;
+    });
+  };
 
   const toggleCategoryExpand = (categoryId: string) => {
-    setExpandedCategories(prev => {
-      const next = new Set(prev)
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
       if (next.has(categoryId)) {
-        next.delete(categoryId)
+        next.delete(categoryId);
       } else {
-        next.add(categoryId)
+        next.add(categoryId);
       }
-      return next
-    })
-  }
+      return next;
+    });
+  };
+
+  const resolveCategoryImpactLabel = (weight: number) => {
+    if (weight >= 0.2) {
+      return t.inspectionCategoryImpactHigh;
+    }
+    if (weight >= 0.15) {
+      return t.inspectionCategoryImpactMedium;
+    }
+    return t.inspectionCategoryImpactBaseline;
+  };
 
   return (
-    <div className="w-56 border-r border-border-black bg-panel-bg dark:bg-element-bg flex flex-col shrink-0">
-      <div className="p-3 border-b border-border-black bg-element-bg">
-        <h3 className="text-[10px] font-medium text-text-tertiary tracking-wide mb-2 px-1">
-          {t.inspectionItems}
-        </h3>
-        <button
-          onClick={onRunInspection}
-          disabled={isGeneratingAI}
-          className="w-full h-8 bg-system-blue-solid hover:bg-system-blue-hover text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-sm"
+    <div className="flex min-h-0 w-72 shrink-0 flex-col overflow-hidden border-r border-border-black bg-panel-bg dark:bg-element-bg">
+      <div className="shrink-0 border-b border-border-black bg-element-bg p-3">
+        <div className="min-w-0">
+          <h3 className="px-1 text-[10px] font-medium tracking-wide text-text-tertiary">
+            {t.inspectionItems}
+          </h3>
+          <p className="mt-1 px-1 text-[11px] leading-4 text-text-secondary">
+            {t.inspectionScopeDescription}
+          </p>
+        </div>
+
+        <div
+          className={`mt-3 rounded-xl border p-2.5 ${
+            isRunningInspection
+              ? 'border-system-blue/20 bg-system-blue/5'
+              : 'border-border-black bg-panel-bg'
+          }`}
         >
-          {isGeneratingAI ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          {isGeneratingAI ? t.thinking : t.runInspection}
-        </button>
+          <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.08em] text-text-tertiary">
+            <span>{t.runInspection}</span>
+            <span>
+              {selectedCategoryCount}/{INSPECTION_CRITERIA.length}
+            </span>
+          </div>
+          <div className="mt-1 text-xs font-semibold text-text-primary">
+            {t.inspectionSelectedChecksSummary
+              .replace('{selected}', String(totalSelectedCount))
+              .replace('{total}', String(totalItemCount))}
+          </div>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-        {INSPECTION_CRITERIA.map(category => {
-          const categoryName = lang === 'zh' ? category.nameZh : category.name
-          const selectedItemIds = selectedItems[category.id] || new Set()
-          const allSelected = category.items.every(item => selectedItemIds.has(item.id))
-          const someSelected = category.items.some(item => selectedItemIds.has(item.id))
-          const isExpanded = expandedCategories.has(category.id)
+      <div
+        className={`custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-2 ${
+          isInteractionLocked ? 'opacity-70' : ''
+        }`}
+      >
+        {visibleCategories.map((category) => {
+          const categoryName = lang === 'zh' ? category.nameZh : category.name;
+          const selectedItemIds = selectedItems[category.id] || new Set();
+          const selectedCount = selectedItemIds.size;
+          const allSelected = category.items.every((item) => selectedItemIds.has(item.id));
+          const someSelected = category.items.some((item) => selectedItemIds.has(item.id));
+          const isExpanded = expandedCategories.has(category.id);
+          const isFocused = focusedCategoryId === category.id;
+          const visibleItems = readOnly
+            ? category.items.filter((item) => selectedItemIds.has(item.id))
+            : category.items;
+          const canNavigateCategory =
+            readOnly && selectedCount > 0 && Boolean(onNavigateToCategory);
 
           return (
             <div
               key={category.id}
               className={`rounded-xl transition-colors ${
-                isExpanded
-                  ? 'bg-panel-bg dark:bg-panel-bg border border-border-black shadow-sm'
-                  : 'hover:bg-element-hover'
+                !readOnly && isFocused
+                  ? 'border border-system-blue/35 bg-system-blue/10 shadow-sm'
+                  : someSelected || isExpanded
+                    ? 'border border-border-black bg-panel-bg shadow-sm'
+                    : 'border border-transparent hover:border-border-black hover:bg-element-hover'
               }`}
             >
-              <div className="flex items-center p-2.5 group">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="flex items-start gap-2 p-2.5">
+                {readOnly ? (
                   <div
-                    className={`w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer ${
-                      allSelected
-                        ? 'bg-system-blue-solid border-system-blue-solid'
-                      : someSelected
-                          ? 'bg-system-blue/80 border-system-blue'
-                          : 'border-border-strong hover:border-system-blue'
+                    aria-hidden="true"
+                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      someSelected ? 'bg-system-blue' : 'bg-border-strong'
                     }`}
-                    onClick={() => toggleCategorySelection(category.id)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    aria-label={categoryName}
+                    className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                      isGeneratingAI
+                        ? 'border-border-strong bg-element-bg'
+                        : allSelected
+                          ? 'border-system-blue-solid bg-system-blue-solid'
+                          : someSelected
+                            ? 'border-system-blue bg-system-blue/80'
+                            : 'border-border-strong bg-panel-bg hover:border-system-blue'
+                    }`}
+                    onClick={() => {
+                      toggleCategorySelection(category.id);
+                      onFocusCategory(category.id);
+                    }}
                   >
                     {allSelected ? (
-                      <Check className="w-3 h-3 text-white" />
+                      <Check className="h-3 w-3 text-white" />
                     ) : someSelected ? (
-                      <Minus className="w-2.5 h-2.5 text-white" />
+                      <Minus className="h-2.5 w-2.5 text-white" />
                     ) : null}
-                  </div>
-                  <button
-                    className="flex-1 text-left truncate text-xs font-semibold text-text-primary"
-                    onClick={() => toggleCategoryExpand(category.id)}
-                  >
-                    {categoryName}
                   </button>
+                )}
+
+                <div className="min-w-0 flex-1">
+                  {readOnly ? (
+                    canNavigateCategory ? (
+                      <button
+                        type="button"
+                        className="w-full rounded-lg text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                        onClick={() => {
+                          onFocusCategory(category.id);
+                          onNavigateToCategory?.(category.id);
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-xs font-semibold text-text-primary">
+                            {categoryName}
+                          </span>
+                          <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                            {Math.round(category.weight * 100)}%
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                          <span>
+                            {selectedCount}/{category.items.length}
+                          </span>
+                          <span aria-hidden="true">•</span>
+                          <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="w-full">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-xs font-semibold text-text-primary">
+                            {categoryName}
+                          </span>
+                          <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                            {Math.round(category.weight * 100)}%
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                          <span>
+                            {selectedCount}/{category.items.length}
+                          </span>
+                          <span aria-hidden="true">•</span>
+                          <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full text-left"
+                      onClick={() => onFocusCategory(category.id)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-xs font-semibold text-text-primary">
+                          {categoryName}
+                        </span>
+                        <span className="shrink-0 rounded-md border border-border-black bg-element-bg px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                          {Math.round(category.weight * 100)}%
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-text-tertiary">
+                        <span>
+                          {selectedCount}/{category.items.length}
+                        </span>
+                        <span aria-hidden="true">•</span>
+                        <span>{resolveCategoryImpactLabel(category.weight)}</span>
+                      </div>
+                    </button>
+                  )}
                 </div>
+
                 <button
-                  className="p-1 hover:bg-element-hover rounded-md transition-colors"
-                  onClick={() => toggleCategoryExpand(category.id)}
+                  type="button"
+                  disabled={isInteractionLocked}
+                  className="rounded-md p-1 transition-colors hover:bg-element-hover disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+                  onClick={() => {
+                    onFocusCategory(category.id);
+                    toggleCategoryExpand(category.id);
+                  }}
                 >
                   {isExpanded ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-text-tertiary" />
+                    <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" />
                   ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-text-tertiary" />
+                    <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" />
                   )}
                 </button>
               </div>
 
               {isExpanded && (
-                <div className="px-2 pb-2 space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
-                  {category.items.map(item => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-2 p-1.5 hover:bg-element-hover rounded-lg cursor-pointer group/item transition-colors"
-                      onClick={() => toggleItemSelection(category.id, item.id)}
-                    >
-                      <div
-                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
-                          selectedItemIds.has(item.id)
-                            ? 'bg-system-blue-solid border-system-blue-solid'
-                            : 'border-border-strong group-hover/item:border-system-blue'
-                        }`}
-                      >
-                        {selectedItemIds.has(item.id) && <Check className="w-2.5 h-2.5 text-white" />}
-                      </div>
-                      <span className="text-[11px] text-text-secondary font-medium truncate">
-                        {lang === 'zh' ? item.nameZh : item.name}
-                      </span>
-                    </div>
-                  ))}
+                <div className="animate-in fade-in slide-in-from-top-1 border-t border-border-black/80 px-2 pb-2 pt-2 duration-200">
+                  <div className="space-y-1">
+                    {visibleItems.map((item) => {
+                      const isSelected = selectedItemIds.has(item.id);
+                      const itemName = lang === 'zh' ? item.nameZh : item.name;
+
+                      if (readOnly) {
+                        const canNavigateItem = isSelected && Boolean(onNavigateToItem);
+
+                        if (canNavigateItem) {
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-lg bg-element-bg px-1.5 py-1.5 text-left transition-colors hover:bg-element-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/30"
+                              onClick={() => {
+                                onFocusCategory(category.id);
+                                onNavigateToItem?.(category.id, item.id);
+                              }}
+                            >
+                              <div
+                                aria-hidden="true"
+                                className="h-2 w-2 shrink-0 rounded-full bg-system-blue"
+                              />
+                              <span className="truncate text-[11px] font-medium text-text-secondary">
+                                {itemName}
+                              </span>
+                            </button>
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 ${
+                              isSelected ? 'bg-element-bg' : 'bg-transparent'
+                            }`}
+                          >
+                            <div
+                              aria-hidden="true"
+                              className={`h-2 w-2 shrink-0 rounded-full ${
+                                isSelected ? 'bg-system-blue' : 'bg-border-strong'
+                              }`}
+                            />
+                            <span
+                              className={`truncate text-[11px] font-medium ${
+                                isSelected ? 'text-text-secondary' : 'text-text-tertiary'
+                              }`}
+                            >
+                              {itemName}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`flex w-full items-center gap-2 rounded-lg p-1.5 text-left transition-colors ${
+                            isSelected ? 'bg-element-bg' : 'hover:bg-element-hover'
+                          }`}
+                          onClick={() => {
+                            toggleItemSelection(category.id, item.id);
+                            onFocusCategory(category.id);
+                          }}
+                        >
+                          <div
+                            className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                              isSelected
+                                ? 'border-system-blue-solid bg-system-blue-solid'
+                                : 'border-border-strong bg-panel-bg'
+                            }`}
+                          >
+                            {isSelected && <Check className="h-2.5 w-2.5 text-white" />}
+                          </div>
+                          <span className="truncate text-[11px] font-medium text-text-secondary">
+                            {itemName}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }
 
-export default InspectionSidebar
+export default InspectionSidebar;

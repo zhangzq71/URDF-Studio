@@ -1,19 +1,32 @@
-import type { Dispatch, MouseEventHandler, SetStateAction } from 'react';
+import type { Dispatch, MouseEventHandler, ReactNode, SetStateAction } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { translations } from '@/shared/i18n';
 import type { AppMode, Theme } from '@/types';
 
 export type HeaderTranslations = (typeof translations)['en'];
+
+export type ToolboxItemTone = 'primary' | 'neutral' | 'logo';
+
+export interface ToolboxItem {
+  key: string;
+  title: string;
+  description: string;
+  icon: ReactNode;
+  onClick: () => void;
+  external?: boolean;
+  tone?: ToolboxItemTone;
+}
 export type HeaderMenuKey = 'file' | 'edit' | 'toolbox' | 'view' | 'more' | null;
 
 export interface HeaderViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean;
-  showVisualizerOptionsPanel: boolean;
   showJointPanel: boolean;
 }
 
-export type HeaderOptionsPanelKey = 'showOptionsPanel' | 'showVisualizerOptionsPanel';
+export interface HeaderViewAvailability {
+  jointPanel: boolean;
+}
 
 export type HeaderSetViewConfig = Dispatch<SetStateAction<HeaderViewConfig>>;
 

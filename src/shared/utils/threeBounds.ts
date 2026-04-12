@@ -133,9 +133,9 @@ export function getLowestMeshZ(root: THREE.Object3D, options?: LowestMeshZOption
  * Move an object's local Z so its lowest rendered mesh point sits on a target world-space Z plane.
  *
  * Notes:
- * - This mutates `root.position.z`.
- * - It assumes the parent transform keeps world Z aligned with local Z, which is true for the
- *   viewer and visualizer root groups in this project.
+ * - This mutates `root.position`.
+ * - The translation is resolved in parent-local space so rotated/scaled ancestors still move the
+ *   child by the requested world-space Z delta.
  */
 export function alignObjectLowestPointToZ(
   root: THREE.Object3D,
@@ -147,7 +147,20 @@ export function alignObjectLowestPointToZ(
     return null;
   }
 
-  root.position.z += targetZ - minZ;
+  const deltaWorldZ = targetZ - minZ;
+  if (deltaWorldZ === 0) {
+    refreshWorldMatrices(root);
+    return targetZ;
+  }
+
+  if (root.parent) {
+    const localOrigin = root.parent.worldToLocal(new THREE.Vector3(0, 0, 0));
+    const localTarget = root.parent.worldToLocal(new THREE.Vector3(0, 0, deltaWorldZ));
+    root.position.add(localTarget.sub(localOrigin));
+  } else {
+    root.position.z += deltaWorldZ;
+  }
+
   refreshWorldMatrices(root);
   return targetZ;
 }

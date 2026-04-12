@@ -1,12 +1,12 @@
 import { useCallback, type RefObject } from 'react';
 import { useSelectionStore, useUIStore } from '@/store';
 import type { InteractionSelection, RobotState } from '@/types';
-import type { ViewerHelperKind } from '@/features/urdf-viewer';
+import type { ViewerHelperKind } from '@/features/editor';
 import { normalizeMergedAppMode } from '@/shared/utils/appMode';
 import {
   resolveDetailLinkTabAfterGeometrySelection,
   resolveDetailLinkTabAfterViewerMeshSelect,
-} from '@/features/property-editor';
+} from '@/features/property-editor/utils';
 
 interface UseViewerOrchestrationOptions {
   setSelection: (selection: RobotState['selection']) => void;
@@ -28,6 +28,12 @@ export function useViewerOrchestration({
       useSelectionStore.getState().isInteractionAllowed(selection),
     [],
   );
+  const ensureCollisionVisible = useCallback(() => {
+    const uiState = useUIStore.getState();
+    if (!uiState.viewOptions.showCollision) {
+      uiState.setViewOption('showCollision', true);
+    }
+  }, []);
 
   const applyHelperSelectionUiState = useCallback((helperKind?: ViewerHelperKind) => {
     if (!helperKind) {
@@ -86,27 +92,54 @@ export function useViewerOrchestration({
         return;
       }
 
+      if (nextSelection.type === 'link' && nextSelection.subType === 'collision') {
+        ensureCollisionVisible();
+      }
       setSelection(nextSelection);
     },
-    [isInteractionAllowed, preserveCollisionObjectIndex, setSelection, transformPendingRef],
+    [
+      ensureCollisionVisible,
+      isInteractionAllowed,
+      preserveCollisionObjectIndex,
+      setSelection,
+      transformPendingRef,
+    ],
   );
 
   const handleSelectGeometry = useCallback(
-    (linkId: string, subType: 'visual' | 'collision', objectIndex = 0) => {
+    (
+      linkId: string,
+      subType: 'visual' | 'collision',
+      objectIndex = 0,
+      suppressPulse = false,
+      suppressAutoReveal = false,
+    ) => {
       if (transformPendingRef.current) return;
       const nextSelection = { type: 'link' as const, id: linkId, subType, objectIndex };
       if (!isInteractionAllowed(nextSelection)) {
         return;
       }
 
+      if (subType === 'collision' && !suppressAutoReveal) {
+        ensureCollisionVisible();
+      }
       setSelection(nextSelection);
+      if (!suppressPulse) {
+        pulseSelection(nextSelection);
+      }
       const uiState = useUIStore.getState();
-      const nextTab = resolveDetailLinkTabAfterGeometrySelection(subType);
+      const nextTab = resolveDetailLinkTabAfterGeometrySelection(subType, uiState.detailLinkTab);
       if (uiState.detailLinkTab !== nextTab) {
         uiState.setDetailLinkTab(nextTab);
       }
     },
-    [isInteractionAllowed, setSelection, transformPendingRef],
+    [
+      ensureCollisionVisible,
+      isInteractionAllowed,
+      pulseSelection,
+      setSelection,
+      transformPendingRef,
+    ],
   );
 
   const handleViewerSelect = useCallback(
@@ -125,6 +158,9 @@ export function useViewerOrchestration({
         return;
       }
 
+      if (nextSelection.type === 'link' && nextSelection.subType === 'collision') {
+        ensureCollisionVisible();
+      }
       setSelection(nextSelection);
       if (helperKind) {
         setHoveredSelection({ type: null, id: null });
@@ -134,6 +170,7 @@ export function useViewerOrchestration({
     },
     [
       applyHelperSelectionUiState,
+      ensureCollisionVisible,
       preserveCollisionObjectIndex,
       pulseSelection,
       isInteractionAllowed,
@@ -156,6 +193,9 @@ export function useViewerOrchestration({
         return;
       }
 
+      if (objectType === 'collision') {
+        ensureCollisionVisible();
+      }
       setSelection(nextSelection);
       const uiState = useUIStore.getState();
       const nextTab = resolveDetailLinkTabAfterViewerMeshSelect(
@@ -168,7 +208,13 @@ export function useViewerOrchestration({
       }
       pulseSelection(nextSelection);
     },
-    [isInteractionAllowed, pulseSelection, setSelection, transformPendingRef],
+    [
+      ensureCollisionVisible,
+      isInteractionAllowed,
+      pulseSelection,
+      setSelection,
+      transformPendingRef,
+    ],
   );
 
   const handleTransformPendingChange = useCallback(

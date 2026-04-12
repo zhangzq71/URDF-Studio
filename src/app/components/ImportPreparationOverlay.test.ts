@@ -16,5 +16,21 @@ test('ImportPreparationOverlay keeps the workspace visible while folder imports 
 
   assert.match(markup, /fixed inset-x-0 bottom-4/);
   assert.match(markup, /pointer-events-none/);
-  assert.doesNotMatch(markup, /fixed inset-0 z-\[160\] flex items-center justify-center bg-black\/35/);
+  assert.doesNotMatch(
+    markup,
+    /fixed inset-0 z-\[160\] flex items-center justify-center bg-black\/35/,
+  );
+});
+
+test('ImportPreparationOverlay can share the viewer corner presentation', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(ImportPreparationOverlay, {
+      label: 'Preparing import…',
+      detail: 'Scanning files',
+      placement: 'viewer-corner',
+    }),
+  );
+
+  assert.match(markup, /absolute inset-0 z-20 flex items-end justify-end p-4/);
+  assert.doesNotMatch(markup, /fixed inset-x-0 bottom-4/);
 });

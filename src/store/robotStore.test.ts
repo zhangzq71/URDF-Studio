@@ -69,6 +69,31 @@ test('setRobot can replace USD load state without appending undo history', () =>
   assert.equal(useRobotStore.getState()._history.past.length, 1);
 });
 
+test('addChild offsets the default child link body away from the parent joint', () => {
+  resetRobotStore();
+
+  const { linkId, jointId } = useRobotStore.getState().addChild('base_link');
+  const nextState = useRobotStore.getState();
+  const newLink = nextState.links[linkId];
+  const newJoint = nextState.joints[jointId];
+
+  assert.equal(newJoint.origin.xyz.z, 0.5);
+  assert.equal(newLink.visual.origin.xyz.z, 0.25);
+  assert.equal(newLink.collision.origin.xyz.z, 0.25);
+  assert.equal(newLink.inertial?.origin.xyz.z, 0.25);
+});
+
+test('resetRobot creates a base_link whose frame sits at the bottom of the default body', () => {
+  useRobotStore.getState().resetRobot();
+
+  const state = useRobotStore.getState();
+  const rootLink = state.links[state.rootLinkId];
+
+  assert.equal(rootLink.visual.origin.xyz.z, 0.25);
+  assert.equal(rootLink.collision.origin.xyz.z, 0.25);
+  assert.equal(rootLink.inertial?.origin.xyz.z, 0.25);
+});
+
 test('setRobot can reset undo history for a fresh USD file load', () => {
   resetRobotStore();
 
@@ -91,33 +116,86 @@ test('setRobot syncs link visual colors from tracked materials during load', () 
   resetRobotStore();
 
   const state = useRobotStore.getState();
-  state.setRobot({
-    name: 'material_sync_robot',
-    links: {
-      base_link: {
-        ...state.links.base_link,
-        id: 'base_link',
-        name: 'base_link',
-        visual: {
-          ...state.links.base_link.visual,
-          type: GeometryType.BOX,
-          color: '#808080',
-          dimensions: { x: 0.2, y: 0.3, z: 0.4 },
+  state.setRobot(
+    {
+      name: 'material_sync_robot',
+      links: {
+        base_link: {
+          ...state.links.base_link,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...state.links.base_link.visual,
+            type: GeometryType.BOX,
+            color: '#808080',
+            dimensions: { x: 0.2, y: 0.3, z: 0.4 },
+          },
         },
       },
+      joints: {},
+      rootLinkId: 'base_link',
+      materials: {
+        base_link: { color: '#12ab34' },
+      },
     },
-    joints: {},
-    rootLinkId: 'base_link',
-    materials: {
-      base_link: { color: '#12ab34' },
+    {
+      skipHistory: true,
     },
-  }, {
-    skipHistory: true,
-  });
+  );
 
   const nextState = useRobotStore.getState();
   assert.equal(nextState.links.base_link.visual.color, '#12ab34');
   assert.equal(nextState.materials?.base_link?.color, '#12ab34');
+});
+
+test('setRobot preserves inspection context for AI inspection and follow-up chat', () => {
+  resetRobotStore();
+
+  const state = useRobotStore.getState();
+  state.setRobot(
+    {
+      name: 'inspection_context_robot',
+      links: {
+        base_link: {
+          ...state.links.base_link,
+        },
+      },
+      joints: {},
+      rootLinkId: 'base_link',
+      inspectionContext: {
+        sourceFormat: 'mjcf',
+        mjcf: {
+          siteCount: 3,
+          tendonCount: 1,
+          tendonActuatorCount: 1,
+          bodiesWithSites: [
+            {
+              bodyId: 'torso',
+              siteCount: 2,
+              siteNames: ['imu', 'camera'],
+            },
+          ],
+          tendons: [
+            {
+              name: 'hip_tendon',
+              type: 'fixed',
+              attachmentRefs: ['torso', 'leg'],
+              attachments: [],
+              actuatorNames: ['hip_motor'],
+            },
+          ],
+        },
+      },
+    },
+    {
+      skipHistory: true,
+    },
+  );
+
+  const nextState = useRobotStore.getState();
+  assert.equal(nextState.inspectionContext?.sourceFormat, 'mjcf');
+  assert.equal(nextState.inspectionContext?.mjcf?.siteCount, 3);
+  assert.equal(nextState.inspectionContext?.mjcf?.tendons[0]?.name, 'hip_tendon');
 });
 
 test('updateLink keeps robot materials in sync with visual color edits', () => {
@@ -135,6 +213,38 @@ test('updateLink keeps robot materials in sync with visual color edits', () => {
   const nextState = useRobotStore.getState();
   assert.equal(nextState.links.base_link.visual.color, '#12ab34');
   assert.equal(nextState.materials?.base_link?.color, '#12ab34');
+});
+
+test('updateLink keeps robot materials in sync with primary visual texture edits', () => {
+  resetRobotStore();
+
+  const state = useRobotStore.getState();
+  state.materials = {
+    ...(state.materials || {}),
+    base_link: {
+      color: '#0e0e10',
+      texture: 'textures/legacy.png',
+      usdMaterial: {
+        mapPath: 'textures/legacy.png',
+        roughness: 0.6,
+      },
+    },
+  };
+
+  state.updateLink('base_link', {
+    visual: {
+      ...state.links.base_link.visual,
+      type: GeometryType.MESH,
+      meshPath: 'meshes/base_link.stl',
+      color: '#0e0e10',
+      authoredMaterials: [{ texture: 'textures/updated.png' }],
+    },
+  });
+
+  const nextState = useRobotStore.getState();
+  assert.equal(nextState.materials?.base_link?.color, '#0e0e10');
+  assert.equal(nextState.materials?.base_link?.texture, 'textures/updated.png');
+  assert.equal(nextState.materials?.base_link?.usdMaterial, undefined);
 });
 
 test('updateLink persists collision body transform edits in robot state', () => {

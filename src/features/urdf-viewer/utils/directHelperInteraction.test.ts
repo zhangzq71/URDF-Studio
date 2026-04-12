@@ -1,0 +1,83 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+
+import { resolveDirectHelperInteraction } from './directHelperInteraction.ts';
+
+function createBoxMesh(material?: THREE.Material): THREE.Mesh {
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    material ?? new THREE.MeshStandardMaterial({ color: 0xffffff }),
+  );
+}
+
+test('resolveDirectHelperInteraction returns the directly hit helper without screen-space fallback', () => {
+  const robot = new THREE.Group();
+
+  const jointObject = new THREE.Group() as THREE.Group & { isURDFJoint?: boolean; type?: string };
+  jointObject.name = 'joint_1';
+  jointObject.isURDFJoint = true;
+  jointObject.type = 'URDFJoint';
+
+  const helperGroup = new THREE.Group();
+  helperGroup.name = '__joint_axis__';
+  helperGroup.userData = {
+    isGizmo: true,
+    isSelectableHelper: true,
+    viewerHelperKind: 'joint-axis',
+  };
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+  helperMesh.position.set(0, 0, -2);
+  helperMesh.userData = {
+    isGizmo: true,
+    isSelectableHelper: true,
+    viewerHelperKind: 'joint-axis',
+  };
+  helperGroup.add(helperMesh);
+  jointObject.add(helperGroup);
+  robot.add(jointObject);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+
+  const result = resolveDirectHelperInteraction({
+    robot,
+    raycaster,
+    helperTargets: [helperMesh],
+    interactionLayerPriority: ['joint-axis', 'collision', 'visual'],
+  });
+
+  assert.equal(result?.targetKind, 'helper');
+  assert.equal(result?.type, 'joint');
+  assert.equal(result?.id, 'joint_1');
+  assert.equal(result?.helperKind, 'joint-axis');
+});
+
+test('resolveDirectHelperInteraction returns null when the ray does not hit a helper mesh', () => {
+  const robot = new THREE.Group();
+
+  const helperMesh = createBoxMesh(new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+  helperMesh.position.set(4, 0, -2);
+  helperMesh.userData = {
+    isGizmo: true,
+    isSelectableHelper: true,
+    viewerHelperKind: 'origin-axes',
+    parentLinkName: 'base_link',
+  };
+  robot.add(helperMesh);
+
+  robot.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+
+  const result = resolveDirectHelperInteraction({
+    robot,
+    raycaster,
+    helperTargets: [helperMesh],
+    interactionLayerPriority: ['origin-axes', 'collision', 'visual'],
+  });
+
+  assert.equal(result, null);
+});

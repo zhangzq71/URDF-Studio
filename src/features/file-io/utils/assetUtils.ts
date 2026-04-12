@@ -6,19 +6,16 @@
 import { normalizeMeshPathForExport, resolveMeshAssetUrl } from '@/core/parsers/meshPathUtils';
 import { getVisualGeometryEntries } from '@/core/robot';
 import type { AssetFile } from '../types';
-import { isAssetFile } from './formatDetection';
 
 /**
- * Create blob URLs for asset files using stable library-relative keys.
+ * Create blob URLs for imported library files using stable library-relative keys.
  * Ambiguous global aliases like bare filenames are intentionally avoided so
  * different robot packages can safely contain files with the same name.
  */
 export function createAssetUrls(assetFiles: AssetFile[]): Record<string, string> {
   const assets: Record<string, string> = {};
 
-  assetFiles.forEach(f => {
-    if (!isAssetFile(f.name)) return;
-
+  assetFiles.forEach((f) => {
     const url = URL.createObjectURL(f.blob);
     const normalizedPath = f.name.replace(/\\/g, '/').replace(/^\/+/, '');
     assets[normalizedPath] = url;
@@ -32,7 +29,7 @@ export function createAssetUrls(assetFiles: AssetFile[]): Record<string, string>
  */
 export function collectReferencedMeshes(
   links: Record<string, import('@/types').UrdfLink>,
-  geometryType: import('@/types').GeometryType
+  geometryType: import('@/types').GeometryType,
 ): Set<string> {
   const referencedFiles = new Set<string>();
 
@@ -60,7 +57,7 @@ export function collectReferencedMeshes(
  */
 export async function fetchMeshBlobs(
   meshPaths: Set<string>,
-  assets: Record<string, string>
+  assets: Record<string, string>,
 ): Promise<Array<{ name: string; blob: Blob }>> {
   const results: Array<{ name: string; blob: Blob }> = [];
   const exportedMeshPaths = new Set<string>();

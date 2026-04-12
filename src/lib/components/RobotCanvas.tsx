@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Object3D } from 'three';
 import { translations } from '../../shared/i18n';
 import { useResolvedTheme } from '../../shared/hooks/useTheme';
-import { URDFViewerCanvas } from '../../features/urdf-viewer/components/URDFViewerCanvas';
+import { ViewerCanvas } from '../../features/urdf-viewer/components/ViewerCanvas';
 import { JointInteraction } from '../../features/urdf-viewer/components/JointInteraction';
 import { RobotModel } from '../../features/urdf-viewer/components/RobotModel';
 import { isSingleDofJoint } from '../../features/urdf-viewer/utils/jointTypes';
@@ -73,7 +73,9 @@ export const RobotCanvas = memo(function RobotCanvas({
     defaultValue: defaultSelection,
     onChange: onSelectionChange,
   });
-  const [resolvedJointAngles, setResolvedJointAngles] = useControllableState<Record<string, number>>({
+  const [resolvedJointAngles, setResolvedJointAngles] = useControllableState<
+    Record<string, number>
+  >({
     value: jointAngles,
     defaultValue: defaultJointAngles,
     onChange: onJointAnglesChange,
@@ -108,7 +110,7 @@ export const RobotCanvas = memo(function RobotCanvas({
         return nextAngles;
       });
     },
-    [jointAngles, onRobotLoaded, setResolvedJointAngles]
+    [jointAngles, onRobotLoaded, setResolvedJointAngles],
   );
 
   const handleJointAngleChange = useCallback(
@@ -124,14 +126,14 @@ export const RobotCanvas = memo(function RobotCanvas({
         [jointName]: angle,
       }));
     },
-    [robot, setResolvedJointAngles]
+    [robot, setResolvedJointAngles],
   );
 
   const handleJointChangeCommit = useCallback(
     (jointName: string, angle: number) => {
       onJointChange?.(jointName, angle);
     },
-    [onJointChange]
+    [onJointChange],
   );
 
   const handleTransformPending = useCallback(
@@ -139,7 +141,7 @@ export const RobotCanvas = memo(function RobotCanvas({
       transformPendingRef.current = pending;
       onTransformPendingChange?.(pending);
     },
-    [onTransformPendingChange]
+    [onTransformPendingChange],
   );
 
   useEffect(() => {
@@ -153,7 +155,7 @@ export const RobotCanvas = memo(function RobotCanvas({
     (nextSelection: RobotCanvasSelection) => {
       setResolvedSelection(nextSelection);
     },
-    [setResolvedSelection]
+    [setResolvedSelection],
   );
 
   const handleSelect = useCallback(
@@ -168,11 +170,16 @@ export const RobotCanvas = memo(function RobotCanvas({
         subType,
       });
     },
-    [handleSelectionUpdate]
+    [handleSelectionUpdate],
   );
 
   const handleMeshSelection = useCallback(
-    (linkId: string, jointId: string | null, objectIndex: number, objectType: 'visual' | 'collision') => {
+    (
+      linkId: string,
+      jointId: string | null,
+      objectIndex: number,
+      objectType: 'visual' | 'collision',
+    ) => {
       onMeshSelect?.(linkId, jointId, objectIndex, objectType);
       handleSelectionUpdate({
         type: 'link',
@@ -181,11 +188,16 @@ export const RobotCanvas = memo(function RobotCanvas({
         objectIndex,
       });
     },
-    [handleSelectionUpdate, onMeshSelect]
+    [handleSelectionUpdate, onMeshSelect],
   );
 
   const handleHover = useCallback(
-    (type: 'link' | 'joint' | null, id: string | null, subType?: 'visual' | 'collision', objectIndex?: number) => {
+    (
+      type: 'link' | 'joint' | null,
+      id: string | null,
+      subType?: 'visual' | 'collision',
+      objectIndex?: number,
+    ) => {
       onHoverChange?.({
         type,
         id,
@@ -193,7 +205,7 @@ export const RobotCanvas = memo(function RobotCanvas({
         objectIndex,
       });
     },
-    [onHoverChange]
+    [onHoverChange],
   );
 
   const handlePointerMissedInternal = useCallback(() => {
@@ -232,13 +244,8 @@ export const RobotCanvas = memo(function RobotCanvas({
   }, [resolvedSelection.id, resolvedSelection.type, robot]);
 
   return (
-    <div
-      className={rootClassName}
-      style={style}
-      data-lang={lang}
-      data-theme={resolvedTheme}
-    >
-      <URDFViewerCanvas
+    <div className={rootClassName} style={style} data-lang={lang} data-theme={resolvedTheme}>
+      <ViewerCanvas
         lang={lang}
         resolvedTheme={resolvedTheme}
         groundOffset={groundPlaneOffset}
@@ -272,7 +279,7 @@ export const RobotCanvas = memo(function RobotCanvas({
           onJointChangeCommit={handleJointChangeCommit}
           initialJointAngles={resolvedJointAngles}
           setIsDragging={setIsDragging}
-          setActiveJoint={setActiveJoint}
+          setActiveJoint={(jointName) => setActiveJoint(jointName)}
           justSelectedRef={justSelectedRef}
           t={t}
           mode={mode}
@@ -304,7 +311,7 @@ export const RobotCanvas = memo(function RobotCanvas({
           isMeshPreview={isMeshPreview}
           groundPlaneOffset={groundPlaneOffset}
         />
-      </URDFViewerCanvas>
+      </ViewerCanvas>
 
       {enableJointInteraction && activeJoint && robot?.joints?.[activeJoint] ? (
         <JointInteraction

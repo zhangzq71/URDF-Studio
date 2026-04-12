@@ -154,6 +154,7 @@ export function buildResolveRobotImportWorkerDispatch(
       };
     }
     case 'mesh':
+    case 'asset':
       return {
         options: {},
         contextCacheKey: null,
@@ -172,12 +173,14 @@ export function buildResolveRobotImportWorkerDispatch(
           new Set<RobotFile['format']>(['mjcf']),
           file,
         ),
+        allFileContents: options.allFileContents ?? {},
       };
       return {
         options: {},
         contextCacheKey: hasContextSnapshotContent(contextSnapshot)
           ? buildContextCacheKey('resolve', file, {
               availableFiles: options.availableFiles,
+              allFileContents: options.allFileContents,
             })
           : null,
         contextSnapshot: hasContextSnapshotContent(contextSnapshot) ? contextSnapshot : null,

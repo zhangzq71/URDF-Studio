@@ -4,7 +4,7 @@ import {
   buildUsdExportBundleFromSnapshot,
   resolveUsdExportSceneSnapshot,
   type UsdExportBundle,
-} from '@/features/urdf-viewer';
+} from '@/features/editor';
 
 export interface ResolveCurrentUsdExportBundleOptions {
   stageSourcePath: string;
@@ -23,7 +23,9 @@ export function resolveCurrentUsdExportBundle({
 }: ResolveCurrentUsdExportBundleOptions): UsdExportBundle | null {
   const snapshot = resolveUsdExportSceneSnapshot({
     stageSourcePath,
-    cachedSnapshot: cachedSnapshot as Parameters<typeof resolveUsdExportSceneSnapshot>[0]['cachedSnapshot'],
+    cachedSnapshot: cachedSnapshot as Parameters<
+      typeof resolveUsdExportSceneSnapshot
+    >[0]['cachedSnapshot'],
     targetWindow,
   });
 

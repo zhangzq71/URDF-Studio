@@ -4,7 +4,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link2, Minus, Plus } from 'lucide-react';
 import { DraggableWindow } from '@/shared/components';
-import { SegmentedControl } from '@/shared/components/ui';
+import { PanelSelect, SegmentedControl, type SelectOption } from '@/shared/components/ui';
 import { useDraggableWindow } from '@/shared/hooks';
 import { getMjcfLinkDisplayName } from '@/shared/utils/robot/mjcfDisplayNames';
 import { useSelectionStore } from '@/store/selectionStore';
@@ -79,6 +79,7 @@ const BRIDGE_SECTION_CLASS =
   'rounded-lg border border-border-black bg-panel-bg/70 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_22%,transparent)]';
 const BRIDGE_SECTION_TITLE_CLASS =
   'shrink-0 text-[8px] font-semibold uppercase tracking-[0.14em] leading-4 text-text-tertiary';
+const BRIDGE_EMPTY_SELECT_OPTION: SelectOption = { value: '', label: '--' };
 
 type BridgeRotationDisplayMode = 'euler_deg' | 'euler_rad' | 'quaternion';
 type BridgeEulerAxisKey = 'r' | 'p' | 'y';
@@ -742,73 +743,6 @@ function BridgeAxisSpinnerField({
   );
 }
 
-interface BridgeSelectFieldProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  onFocus?: () => void;
-  children: React.ReactNode;
-  inline?: boolean;
-  fieldKey?: string;
-  className?: string;
-  labelClassName?: string;
-  layout?: 'stack' | 'inspector';
-}
-
-function BridgeSelectField({
-  label,
-  value,
-  onChange,
-  onFocus,
-  children,
-  inline = false,
-  fieldKey,
-  className = '',
-  labelClassName = '',
-  layout = 'stack',
-}: BridgeSelectFieldProps) {
-  const selectId = React.useId();
-  const selectControl = (
-    <select
-      id={selectId}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      onFocus={onFocus}
-      className={BRIDGE_SELECT_CLASS}
-    >
-      <option value="">--</option>
-      {children}
-    </select>
-  );
-
-  if (inline) {
-    return (
-      <BridgeInlineFieldRow
-        label={label}
-        htmlFor={selectId}
-        fieldKey={fieldKey}
-        className={className}
-        labelClassName={labelClassName}
-      >
-        {selectControl}
-      </BridgeInlineFieldRow>
-    );
-  }
-
-  return (
-    <BridgeFieldGroup
-      label={label}
-      htmlFor={selectId}
-      fieldKey={fieldKey}
-      className={className}
-      labelClassName={labelClassName}
-      layout={layout}
-    >
-      {selectControl}
-    </BridgeFieldGroup>
-  );
-}
-
 interface BridgeSideCardProps {
   side: BridgePickTarget;
   isActive: boolean;
@@ -823,8 +757,8 @@ interface BridgeSideCardProps {
   onActivate: () => void;
   onComponentChange: (value: string) => void;
   onLinkChange: (value: string) => void;
-  componentOptions: Array<{ id: string; name: string }>;
-  linkOptions: Array<{ id: string; name: string }>;
+  componentOptions: SelectOption[];
+  linkOptions: SelectOption[];
 }
 
 function BridgeRelationConnector() {
@@ -911,40 +845,30 @@ function BridgeSideCard({
           data-bridge-field={`${side}-component`}
           className="min-w-0 rounded-lg border border-border-black/80 bg-panel-bg/85 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_18%,transparent)]"
         >
-          <select
+          <PanelSelect
+            variant="property"
             aria-label={componentLabel}
+            options={componentOptions}
             value={componentValue}
             onChange={(event) => onComponentChange(event.target.value)}
             onFocus={onActivate}
             className={BRIDGE_SELECT_CLASS}
-          >
-            <option value="">--</option>
-            {componentOptions.map((component) => (
-              <option key={component.id} value={component.id}>
-                {component.name}
-              </option>
-            ))}
-          </select>
+          />
         </div>
 
         <div
           data-bridge-field={`${side}-link`}
           className="min-w-0 rounded-lg border border-border-black/80 bg-panel-bg/85 p-1.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_18%,transparent)]"
         >
-          <select
+          <PanelSelect
+            variant="property"
             aria-label={linkLabel}
+            options={linkOptions}
             value={linkValue}
             onChange={(event) => onLinkChange(event.target.value)}
             onFocus={onActivate}
             className={BRIDGE_SELECT_CLASS}
-          >
-            <option value="">--</option>
-            {linkOptions.map((link) => (
-              <option key={link.id} value={link.id}>
-                {link.name}
-              </option>
-            ))}
-          </select>
+          />
         </div>
       </div>
     </div>
@@ -1125,6 +1049,63 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
   );
   const parentLinks = parentComp ? Object.values(parentComp.robot.links) : [];
   const childLinks = childComp ? Object.values(childComp.robot.links) : [];
+  const jointTypeSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      { value: JointType.FIXED, label: t.jointTypeFixed },
+      { value: JointType.REVOLUTE, label: t.jointTypeRevolute },
+      { value: JointType.CONTINUOUS, label: t.jointTypeContinuous },
+      { value: JointType.PRISMATIC, label: t.jointTypePrismatic },
+    ],
+    [t.jointTypeContinuous, t.jointTypeFixed, t.jointTypePrismatic, t.jointTypeRevolute],
+  );
+  const hardwareInterfaceSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      { value: 'position', label: t.hardwareInterfacePosition },
+      { value: 'effort', label: t.hardwareInterfaceEffort },
+      { value: 'velocity', label: t.hardwareInterfaceVelocity },
+    ],
+    [t.hardwareInterfaceEffort, t.hardwareInterfacePosition, t.hardwareInterfaceVelocity],
+  );
+  const parentComponentSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      BRIDGE_EMPTY_SELECT_OPTION,
+      ...parentComponentOptions.map((component) => ({
+        value: component.id,
+        label: component.name,
+      })),
+    ],
+    [parentComponentOptions],
+  );
+  const childComponentSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      BRIDGE_EMPTY_SELECT_OPTION,
+      ...childComponentOptions.map((component) => ({
+        value: component.id,
+        label: component.name,
+      })),
+    ],
+    [childComponentOptions],
+  );
+  const parentLinkSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      BRIDGE_EMPTY_SELECT_OPTION,
+      ...parentLinks.map((link) => ({
+        value: link.id,
+        label: getBridgeLinkDisplayName(parentComp?.robot, link.id),
+      })),
+    ],
+    [parentComp?.robot, parentLinks],
+  );
+  const childLinkSelectOptions = useMemo<SelectOption[]>(
+    () => [
+      BRIDGE_EMPTY_SELECT_OPTION,
+      ...childLinks.map((link) => ({
+        value: link.id,
+        label: getBridgeLinkDisplayName(childComp?.robot, link.id),
+      })),
+    ],
+    [childComp?.robot, childLinks],
+  );
   const suggestedBridgeName = useMemo(
     () =>
       buildSuggestedBridgeName({
@@ -1683,8 +1664,6 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
       headerClassName="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border-black bg-element-bg px-2.5"
       headerLeftClassName="flex min-w-0 flex-1 items-center gap-2"
       headerRightClassName="flex shrink-0 items-center gap-1"
-      headerDraggableClassName="cursor-grab"
-      headerDraggingClassName="cursor-grabbing"
       interactionClassName="select-none"
       showMinimizeButton={false}
       showMaximizeButton={false}
@@ -1729,17 +1708,14 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
               labelClassName={compactLabelWidthClassName}
               layout={usesInlineIdentityRow ? 'contents' : 'row'}
             >
-              <select
+              <PanelSelect
+                variant="property"
                 id={jointTypeSelectId}
+                options={jointTypeSelectOptions}
                 value={jointType}
                 onChange={(event) => setJointType(event.target.value as JointType)}
                 className={BRIDGE_SELECT_CLASS}
-              >
-                <option value={JointType.FIXED}>{t.jointTypeFixed}</option>
-                <option value={JointType.REVOLUTE}>{t.jointTypeRevolute}</option>
-                <option value={JointType.CONTINUOUS}>{t.jointTypeContinuous}</option>
-                <option value={JointType.PRISMATIC}>{t.jointTypePrismatic}</option>
-              </select>
+              />
             </BridgeInlineFieldRow>
             {jointSupportsAxisAndLimits ? (
               <BridgeInlineFieldRow
@@ -1748,18 +1724,16 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                 className={`${usesInlineIdentityRow ? 'col-span-full ' : ''}min-w-0`.trim()}
                 labelClassName={compactLabelWidthClassName}
               >
-                <select
+                <PanelSelect
+                  variant="property"
                   aria-label={t.hardwareInterface}
+                  options={hardwareInterfaceSelectOptions}
                   value={hardwareInterface}
                   onChange={(event) =>
                     setHardwareInterface(event.target.value as JointHardwareInterface)
                   }
                   className={BRIDGE_SELECT_CLASS}
-                >
-                  <option value="position">{t.hardwareInterfacePosition}</option>
-                  <option value="effort">{t.hardwareInterfaceEffort}</option>
-                  <option value="velocity">{t.hardwareInterfaceVelocity}</option>
-                </select>
+                />
               </BridgeInlineFieldRow>
             ) : null}
           </div>
@@ -1789,14 +1763,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       setPickTarget('parent');
                       setParentLinkId(value);
                     }}
-                    componentOptions={parentComponentOptions.map((component) => ({
-                      id: component.id,
-                      name: component.name,
-                    }))}
-                    linkOptions={parentLinks.map((link) => ({
-                      id: link.id,
-                      name: getBridgeLinkDisplayName(parentComp?.robot, link.id),
-                    }))}
+                    componentOptions={parentComponentSelectOptions}
+                    linkOptions={parentLinkSelectOptions}
                   />
 
                   <BridgeRelationConnector />
@@ -1822,14 +1790,8 @@ export const BridgeCreateModal: React.FC<BridgeCreateModalProps> = ({
                       setPickTarget('child');
                       setChildLinkId(value);
                     }}
-                    componentOptions={childComponentOptions.map((component) => ({
-                      id: component.id,
-                      name: component.name,
-                    }))}
-                    linkOptions={childLinks.map((link) => ({
-                      id: link.id,
-                      name: getBridgeLinkDisplayName(childComp?.robot, link.id),
-                    }))}
+                    componentOptions={childComponentSelectOptions}
+                    linkOptions={childLinkSelectOptions}
                   />
                 </div>
               </BridgeSection>

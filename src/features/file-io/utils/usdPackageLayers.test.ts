@@ -27,7 +27,7 @@ const createLayeredRobot = (): RobotState => {
         axis: { x: 0, y: 1, z: 0 },
         angle: 0,
         limit: { lower: -Math.PI / 6, upper: Math.PI / 3, effort: 10, velocity: 3 },
-        dynamics: { damping: 0, friction: 0 },
+        dynamics: { damping: 0.2, friction: 0 },
         hardware: { armature: 0, motorType: 'None', motorId: '', motorDirection: 1 },
       },
     },
@@ -132,6 +132,10 @@ test('usd package layers serialize articulation, joint paths, and mesh collision
   assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 1, 0\)/);
   assert.match(physicsLayer, /float physics:lowerLimit = -30/);
   assert.match(physicsLayer, /float physics:upperLimit = 60/);
+  assert.match(physicsLayer, /prepend apiSchemas = \["PhysicsDriveAPI:angular"\]/);
+  assert.match(physicsLayer, /uniform token drive:angular:physics:type = "force"/);
+  assert.match(physicsLayer, /float drive:angular:physics:damping = 0\.2/);
+  assert.match(physicsLayer, /float drive:angular:physics:maxForce = 10/);
   assert.match(
     physicsLayer,
     /over "collision_0" \(\n\s+prepend apiSchemas = \["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"\]\n\s*\)\n\s+\{/,

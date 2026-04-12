@@ -6,7 +6,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
 import { MeasurePanel } from './MeasurePanel';
-import { clearMeasureState } from '../utils/measurements';
+import {
+  applyMeasurePick,
+  clearMeasureState,
+  createEmptyMeasureState,
+  createMeasureTarget,
+} from '../utils/measurements';
+import * as THREE from 'three';
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
@@ -53,7 +59,32 @@ function createComponentRoot() {
   return { dom, container, root };
 }
 
-async function renderPanel(root: Root) {
+function createCompletedMeasureState() {
+  const firstPose = new THREE.Matrix4().makeTranslation(1, 2, 3);
+  const secondPose = new THREE.Matrix4().makeRotationZ(Math.PI / 2).setPosition(4, 6, 3);
+
+  return applyMeasurePick(
+    applyMeasurePick(
+      createEmptyMeasureState(),
+      createMeasureTarget({
+        linkName: 'base_link',
+        objectType: 'visual',
+        objectIndex: 0,
+        point: new THREE.Vector3(1, 2, 3),
+        poseWorldMatrix: firstPose,
+      }),
+    ),
+    createMeasureTarget({
+      linkName: 'tool_link',
+      objectType: 'visual',
+      objectIndex: 0,
+      point: new THREE.Vector3(4, 6, 3),
+      poseWorldMatrix: secondPose,
+    }),
+  );
+}
+
+async function renderPanel(root: Root, measureState = clearMeasureState()) {
   await act(async () => {
     root.render(
       React.createElement(MeasurePanel, {
@@ -62,12 +93,14 @@ async function renderPanel(root: Root) {
         measurePanelPos: null,
         onMouseDown: () => {},
         onClose: () => {},
-        measureState: clearMeasureState(),
+        measureState,
         setMeasureState: () => {},
         measureAnchorMode: 'frame',
         setMeasureAnchorMode: () => {},
         showMeasureDecomposition: false,
         setShowMeasureDecomposition: () => {},
+        measurePoseRepresentation: 'matrix',
+        setMeasurePoseRepresentation: () => {},
         lang: 'zh',
       }),
     );
@@ -86,38 +119,61 @@ test('MeasurePanel keeps the snap selector compact and drops the verbose helper 
     false,
     'measure panel should not render the old explanatory sentence',
   );
-  assert.equal(container.textContent?.includes('吸附'), true);
+  assert.equal(container.textContent?.includes('锚点'), true);
 
-  const anchorButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(
-    (button) => ['原点', '质心', '几何中心'].includes(button.textContent?.trim() ?? ''),
+  const anchorSelect = container.querySelector(
+    'select[aria-label="锚点"]',
+  ) as HTMLSelectElement | null;
+  assert.ok(anchorSelect, 'measure panel should render a compact anchor selector');
+  const anchorCombobox = container.querySelector('button[role="combobox"][aria-label="锚点"]');
+  assert.ok(anchorCombobox, 'measure panel should render a visible custom combobox trigger');
+  assert.deepEqual(
+    Array.from(anchorSelect.options).map((option) => option.textContent?.trim()),
+    ['原点', '质心', '几何中心'],
+  );
+  assert.match(
+    anchorCombobox.className,
+    /h-\[25px\]/,
+    'anchor selector should use the shared compact panel select height',
+  );
+  assert.match(
+    anchorCombobox.className,
+    /!text-\[11px\]/,
+    'anchor selector should inherit the shared compact panel select typography',
   );
 
-  assert.equal(anchorButtons.length, 3, 'measure panel should expose the three snap targets');
-  anchorButtons.forEach((button) => {
-    assert.match(
-      button.className,
-      /text-\[11px\]/,
-      'compact snap buttons should use the xs segmented control sizing',
-    );
+  await act(async () => {
+    root.unmount();
   });
+  dom.window.close();
+});
 
-  const segmentedControl = anchorButtons[0]?.parentElement as HTMLDivElement | null;
-  assert.ok(segmentedControl, 'segmented control wrapper should render');
-  assert.match(
-    segmentedControl.className,
-    /\[&>button\]:min-h-5/,
-    'snap control should apply the compact button-height override',
+test('MeasurePanel renders relative transform representation options for completed measurements', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  await renderPanel(root, createCompletedMeasureState());
+
+  assert.equal(container.textContent?.includes('相对位姿'), true);
+  assert.equal(container.textContent?.includes('base_link -> tool_link'), true);
+  const poseSelect = container.querySelector(
+    'select[aria-label="相对位姿"]',
+  ) as HTMLSelectElement | null;
+  assert.ok(
+    poseSelect,
+    'relative transform section should render a compact representation selector',
   );
-  assert.match(
-    segmentedControl.className,
-    /\[&>button\]:!px-1\.5/,
-    'snap control should use compact horizontal padding',
+  assert.deepEqual(
+    Array.from(poseSelect.options).map((option) => option.textContent?.trim()),
+    ['矩阵', 'RPY', '四元数', '轴角'],
   );
+  const poseCombobox = container.querySelector('button[role="combobox"][aria-label="相对位姿"]');
+  assert.ok(poseCombobox, 'relative transform section should use the shared panel select trigger');
   assert.match(
-    segmentedControl.className,
-    /\[&>button\]:whitespace-nowrap/,
-    'snap labels should stay on one line',
+    poseCombobox.className,
+    /!text-\[11px\]/,
+    'relative transform selector should inherit the shared compact panel select typography',
   );
+  assert.equal(container.textContent?.includes('相对平移'), true);
 
   await act(async () => {
     root.unmount();

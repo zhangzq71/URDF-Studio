@@ -12,6 +12,10 @@ import { disposeReplacedMaterials } from './robotLoaderPatchUtils';
 
 const COLLIDER_MESH_CACHE_KEY = '__collisionMeshesCache';
 
+function isCollisionGroupObject(object: THREE.Object3D | null | undefined): boolean {
+  return Boolean((object as any)?.isURDFCollider || object?.userData?.isCollisionGroup === true);
+}
+
 function getCollisionGeometryByIndex(linkData: UrdfLink | undefined, colliderIndex: number) {
   if (!linkData) return undefined;
   return getCollisionGeometryByObjectIndex(linkData, colliderIndex)?.geometry;
@@ -21,10 +25,11 @@ function isCollisionGeometryVisible(
   linkData: UrdfLink | undefined,
   colliderIndex: number,
   showCollision: boolean,
+  respectLinkVisibility: boolean,
 ): boolean {
   if (!showCollision) return false;
   if (!linkData) return true;
-  if (linkData.visible === false) return false;
+  if (respectLinkVisibility && linkData.visible === false) return false;
 
   const geometry = getCollisionGeometryByIndex(linkData, colliderIndex);
   return geometry ? geometry.visible !== false : true;
@@ -35,7 +40,7 @@ function getColliderIndex(collider: THREE.Object3D): number {
     collider.parent && (collider.parent as any).isURDFLink ? collider.parent : null;
   if (!linkObject) return 0;
 
-  const colliders = linkObject.children.filter((child: any) => child.isURDFCollider);
+  const colliders = linkObject.children.filter((child) => isCollisionGroupObject(child));
   const colliderIndex = colliders.indexOf(collider);
   return colliderIndex >= 0 ? colliderIndex : 0;
 }
@@ -44,7 +49,9 @@ export interface SyncCollisionGroupVisibilityOptions {
   collider: THREE.Object3D;
   linkData?: UrdfLink;
   showCollision: boolean;
+  showVisual?: boolean;
   showCollisionAlwaysOnTop?: boolean;
+  respectLinkVisibility?: boolean;
   highlightedMeshes?: ReadonlyMap<THREE.Mesh, unknown>;
 }
 
@@ -69,21 +76,21 @@ export function syncCollisionGroupVisibility({
   collider,
   linkData,
   showCollision,
+  showVisual = true,
   showCollisionAlwaysOnTop = true,
+  respectLinkVisibility = true,
   highlightedMeshes,
 }: SyncCollisionGroupVisibilityOptions): boolean {
   const colliderIndex = getColliderIndex(collider);
-  const isVisible = isCollisionGeometryVisible(linkData, colliderIndex, showCollision);
+  const isVisible = isCollisionGeometryVisible(
+    linkData,
+    colliderIndex,
+    showCollision,
+    respectLinkVisibility,
+  );
   let changed = collider.visible !== isVisible;
   const disposedMaterials = new Set<THREE.Material>();
-  const previousCollisionDepthTest = collisionBaseMaterial.depthTest;
-  const previousCollisionDepthWrite = collisionBaseMaterial.depthWrite;
-
-  syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
-  if (
-    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
-    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
-  ) {
+  if (syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop, showVisual)) {
     changed = true;
   }
 

@@ -36,7 +36,7 @@ import {
   type UrdfJoint,
   type UrdfLink,
 } from '@/types';
-import { collectURDFMaterialsFromLinks } from '@/features/urdf-viewer';
+import { collectURDFMaterialsFromLinks } from '@/features/editor';
 import { parseEditableRobotSourceWithWorker } from './robotImportWorkerBridge';
 
 type JsonLike = null | boolean | number | string | JsonLike[] | { [key: string]: JsonLike };
@@ -120,6 +120,20 @@ export function shouldUseGeneratedWorkspaceViewerReloadContent({
 
 export function buildLightweightWorkspaceViewerReloadContent(assemblyRevision: number): string {
   return `<robot name="workspace_viewer_${assemblyRevision}" />`;
+}
+
+export function isActiveWorkspaceTransformSession({
+  shouldRenderAssembly,
+  shouldReuseSelectedFileViewerForWorkspace,
+  workspaceTransformPending,
+}: {
+  shouldRenderAssembly: boolean;
+  shouldReuseSelectedFileViewerForWorkspace: boolean;
+  workspaceTransformPending: boolean;
+}): boolean {
+  return (
+    shouldRenderAssembly && !shouldReuseSelectedFileViewerForWorkspace && workspaceTransformPending
+  );
 }
 
 export function buildWorkspaceAssemblyViewerState({
@@ -435,14 +449,20 @@ export type WorkspaceAssemblyRenderFailureReason =
 
 export function getWorkspaceAssemblyRenderFailureReason({
   shouldRenderAssembly,
+  hasDisplayAssemblyState,
   mergedRobotData,
   viewerMergedRobotData,
 }: {
   shouldRenderAssembly: boolean;
+  hasDisplayAssemblyState: boolean;
   mergedRobotData: RobotData | null;
   viewerMergedRobotData: RobotData | null;
 }): WorkspaceAssemblyRenderFailureReason | null {
   if (!shouldRenderAssembly) {
+    return null;
+  }
+
+  if (!hasDisplayAssemblyState) {
     return null;
   }
 

@@ -19,7 +19,6 @@ export type MassInertiaChangeBehavior = 'ask' | 'preserve' | 'reestimate';
 export interface ViewConfig {
   showToolbar: boolean;
   showOptionsPanel: boolean; // For viewer scene options
-  showVisualizerOptionsPanel: boolean; // For visualizer scene options
   showJointPanel: boolean;
 }
 
@@ -152,7 +151,6 @@ interface UIState {
 const defaultViewConfig: ViewConfig = {
   showToolbar: true,
   showOptionsPanel: true,
-  showVisualizerOptionsPanel: true,
   showJointPanel: true,
 };
 
@@ -161,7 +159,7 @@ const defaultViewOptions: ViewOptions = {
   showAxes: true,
   showUsageGuide: true,
   showMjcfWorldLink: true,
-  showIkHandles: true,
+  showIkHandles: false,
   showJointAxes: false,
   showInertia: false,
   showCenterOfMass: false,
@@ -186,7 +184,13 @@ const defaultPanelLayout: PanelLayoutState = {
 };
 
 const normalizeDetailLinkTab = (value: unknown): DetailLinkTab =>
-  value === 'collision' || value === 'physics' ? value : value === 'joint' ? 'physics' : 'visual';
+  value === 'collision' || value === 'physics'
+    ? value
+    : value === 'material' || value === 'joint'
+      ? value === 'joint'
+        ? 'physics'
+        : 'visual'
+      : 'visual';
 
 // Detect system language
 const getSystemLang = (): Language => {
@@ -479,7 +483,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: 'urdf-studio-ui',
-      version: 13,
+      version: 16,
       migrate: (persistedState: unknown, persistedVersion) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState;
@@ -500,10 +504,23 @@ export const useUIStore = create<UIState>()(
           ...state.viewOptions,
         };
 
-        // `showMjcfWorldLink` used to default to false, which hid MJCF-authored
-        // world scenery such as MyoSuite floors/logo planes. Align persisted
-        // sessions with the current truth-preserving default when upgrading.
-        if ((persistedVersion ?? 0) < 13) {
+        // Earlier builds persisted MJCF world visibility as enabled by default.
+        // Reset upgraded sessions to the current hidden-by-default behavior so
+        // MJCF ground/world geometry stays opt-in unless the user toggles it again.
+        if ((persistedVersion ?? 0) < 14) {
+          migratedViewOptions.showMjcfWorldLink = false;
+        }
+
+        // IK handles should stay opt-in. Older sessions could carry them as
+        // always-visible, which leaves a green helper ball on first load.
+        if ((persistedVersion ?? 0) < 15) {
+          migratedViewOptions.showIkHandles = false;
+        }
+
+        // MJCF world link (ground plane) should be visible by default.
+        // Earlier migrations (v14) forced this to false; reset to true so
+        // imported MJCF scenes show their floor immediately.
+        if ((persistedVersion ?? 0) < 16) {
           migratedViewOptions.showMjcfWorldLink = true;
         }
 

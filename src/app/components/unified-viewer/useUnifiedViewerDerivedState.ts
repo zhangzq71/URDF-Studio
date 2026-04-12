@@ -13,10 +13,9 @@ import {
   resolveUnifiedViewerSessionState,
   type UnifiedViewerMountState,
 } from '@/app/utils/unifiedViewerMountState';
-import { resolveUnifiedViewerHandoffReadyState } from '@/app/utils/unifiedViewerHandoffReadyState';
 import { captureUnifiedViewerOptionsVisibility } from '@/app/utils/unifiedViewerOptionsRestore';
 import { buildUnifiedViewerResourceScopes } from '@/app/utils/unifiedViewerResourceScopes';
-import { resolveUnifiedViewerVisualizerRobot } from '@/app/utils/unifiedViewerSceneRobots';
+import { resolveUnifiedViewerEditorRobot } from '@/app/utils/unifiedViewerSceneRobots';
 import { resolveUnifiedViewerViewportState } from '@/app/utils/unifiedViewerViewportState';
 import { useUIStore } from '@/store';
 import type { AssemblySelection } from '@/store/assemblySelectionStore';
@@ -27,8 +26,7 @@ import {
   buildViewerRobotLinksScopeSignature,
   type ToolMode,
   type ViewerResourceScope,
-  type ViewerRobotSourceFormat,
-} from '@/features/urdf-viewer';
+} from '@/features/editor';
 
 import type { FilePreviewState } from './types';
 
@@ -38,8 +36,7 @@ interface UseUnifiedViewerDerivedStateParams {
   pendingViewerToolMode?: ToolMode | null;
   theme: Theme;
   showOptionsPanel: boolean;
-  showVisualizerOptionsPanel: boolean;
-  visualizerRobotInput?: RobotState;
+  editorRobotInput?: RobotState;
   robot: RobotState;
   assemblyWorkspaceActive: boolean;
   urdfContent: string;
@@ -68,8 +65,7 @@ export function useUnifiedViewerDerivedState({
   pendingViewerToolMode = null,
   theme,
   showOptionsPanel,
-  showVisualizerOptionsPanel,
-  visualizerRobotInput,
+  editorRobotInput,
   robot,
   assemblyWorkspaceActive,
   urdfContent,
@@ -106,29 +102,18 @@ export function useUnifiedViewerDerivedState({
       forceViewerSession: viewerToolSessionActive,
     }),
   );
-  const [viewerSceneReady, setViewerSceneReady] = React.useState(!isViewerMode);
   const resolvedTheme = useResolvedTheme(theme);
   const viewerOptionsVisibleRef = React.useRef(showOptionsPanel);
-  const visualizerOptionsVisibleRef = React.useRef(showVisualizerOptionsPanel);
-  const previousIsViewerModeRef = React.useRef(isViewerMode);
-  const viewerPendingLoadScopeRef = React.useRef<string | null>(null);
-  const viewerReleasedLoadScopeRef = React.useRef<string | null>(null);
   const viewerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
-  const visualizerResourceScopeRef = React.useRef<ViewerResourceScope | null>(null);
   const optionsVisibleAtPointerDownRef = React.useRef(
     captureUnifiedViewerOptionsVisibility({
       showViewerOptions: showOptionsPanel,
-      showVisualizerOptions: showVisualizerOptionsPanel,
     }),
   );
 
   React.useEffect(() => {
     viewerOptionsVisibleRef.current = showOptionsPanel;
   }, [showOptionsPanel]);
-
-  React.useEffect(() => {
-    visualizerOptionsVisibleRef.current = showVisualizerOptionsPanel;
-  }, [showVisualizerOptionsPanel]);
 
   React.useEffect(() => {
     setMountState((current) =>
@@ -140,30 +125,30 @@ export function useUnifiedViewerDerivedState({
     );
   }, [isPreviewing, mode, viewerToolSessionActive]);
 
-  const visualizerRobot = React.useMemo(
+  const editorRobot = React.useMemo(
     () =>
-      resolveUnifiedViewerVisualizerRobot({
-        robot: visualizerRobotInput ?? robot,
+      resolveUnifiedViewerEditorRobot({
+        robot: editorRobotInput ?? robot,
         viewerRobot: robot,
         assemblyWorkspaceActive,
       }),
-    [assemblyWorkspaceActive, robot, visualizerRobotInput],
+    [assemblyWorkspaceActive, editorRobotInput, robot],
   );
   const viewerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(activePreview ? undefined : robot.links),
-    [activePreview, robot.links],
+    () =>
+      buildViewerRobotLinksScopeSignature(
+        activePreview ? undefined : robot.links,
+        activePreview ? undefined : robot.materials,
+      ),
+    [activePreview, robot.links, robot.materials],
   );
   const viewerRobotLinksForScope = React.useMemo(
     () => (activePreview ? undefined : robot.links),
     [activePreview, viewerRobotLinksScopeSignature],
   );
-  const visualizerRobotLinksScopeSignature = React.useMemo(
-    () => buildViewerRobotLinksScopeSignature(visualizerRobot.links),
-    [visualizerRobot.links],
-  );
-  const visualizerRobotLinksForScope = React.useMemo(
-    () => visualizerRobot.links,
-    [visualizerRobotLinksScopeSignature],
+  const viewerRobotMaterialsForScope = React.useMemo(
+    () => (activePreview ? undefined : robot.materials),
+    [activePreview, viewerRobotLinksScopeSignature],
   );
   const {
     effectiveUrdfContent,
@@ -171,7 +156,6 @@ export function useUnifiedViewerDerivedState({
     effectiveSourceFile,
     activeViewportFileName,
     viewerResourceScope,
-    visualizerResourceScope,
   } = React.useMemo(() => {
     const next = buildUnifiedViewerResourceScopes({
       activePreview,
@@ -181,12 +165,10 @@ export function useUnifiedViewerDerivedState({
       assets,
       availableFiles,
       viewerRobotLinks: viewerRobotLinksForScope,
-      visualizerRobotLinks: visualizerRobotLinksForScope,
+      viewerRobotMaterials: viewerRobotMaterialsForScope,
       previousViewerResourceScope: viewerResourceScopeRef.current,
-      previousVisualizerResourceScope: visualizerResourceScopeRef.current,
     });
     viewerResourceScopeRef.current = next.viewerResourceScope;
-    visualizerResourceScopeRef.current = next.visualizerResourceScope;
     return next;
   }, [
     activePreview,
@@ -196,7 +178,7 @@ export function useUnifiedViewerDerivedState({
     sourceFilePath,
     urdfContent,
     viewerRobotLinksForScope,
-    visualizerRobotLinksForScope,
+    viewerRobotMaterialsForScope,
   ]);
 
   React.useEffect(() => {
@@ -263,65 +245,16 @@ export function useUnifiedViewerDerivedState({
     assemblySelection?.type === 'component' &&
     assemblySelection.id === sourceSceneAssemblyComponent.id,
   );
-
-  const pendingViewerLoadScopeKey = viewerPendingLoadScopeRef.current;
-  const releasedViewerLoadScopeKey = viewerReleasedLoadScopeRef.current;
   const viewportState = React.useMemo(
     () =>
       resolveUnifiedViewerViewportState({
-        mode,
         isViewerMode,
-        isPreviewing,
         mountState,
-        previousIsViewerMode: previousIsViewerModeRef.current,
-        viewerSceneReady,
         activeViewportFileName,
         viewerReloadKey,
-        pendingViewerLoadScopeKey,
-        releasedViewerLoadScopeKey,
         documentLoadState,
-        shouldUseVisualizerViewportHandoff: false,
       }),
-    [
-      activeViewportFileName,
-      documentLoadState,
-      isPreviewing,
-      isViewerMode,
-      mode,
-      mountState,
-      pendingViewerLoadScopeKey,
-      releasedViewerLoadScopeKey,
-      viewerReloadKey,
-      viewerSceneReady,
-    ],
-  );
-
-  const handoffReadyState = React.useMemo(
-    () =>
-      resolveUnifiedViewerHandoffReadyState({
-        isViewerMode,
-        isPreviewing,
-        visualizerAvailableForViewportHandoff: viewportState.visualizerAvailableForViewportHandoff,
-        viewerLoadScopeKey: viewportState.viewerLoadScopeKey,
-        pendingViewerLoadScopeKey,
-        releasedViewerLoadScopeKey,
-        startViewerViewportHandoff: viewportState.startViewerViewportHandoff,
-        continueViewerViewportHandoff: viewportState.continueViewerViewportHandoff,
-        keepExistingViewerViewportHandoff: viewportState.keepExistingViewerViewportHandoff,
-        hasPendingViewerHandoffForScope: viewportState.hasPendingViewerHandoffForScope,
-      }),
-    [
-      isPreviewing,
-      isViewerMode,
-      pendingViewerLoadScopeKey,
-      releasedViewerLoadScopeKey,
-      viewportState.continueViewerViewportHandoff,
-      viewportState.hasPendingViewerHandoffForScope,
-      viewportState.keepExistingViewerViewportHandoff,
-      viewportState.startViewerViewportHandoff,
-      viewportState.viewerLoadScopeKey,
-      viewportState.visualizerAvailableForViewportHandoff,
-    ],
+    [activeViewportFileName, documentLoadState, isViewerMode, mountState, viewerReloadKey],
   );
 
   return {
@@ -335,29 +268,19 @@ export function useUnifiedViewerDerivedState({
     viewerSceneMode,
     mountState,
     setMountState,
-    viewerSceneReady,
-    setViewerSceneReady,
     resolvedTheme,
     viewerOptionsVisibleRef,
-    visualizerOptionsVisibleRef,
-    previousIsViewerModeRef,
-    viewerPendingLoadScopeRef,
-    viewerReleasedLoadScopeRef,
     optionsVisibleAtPointerDownRef,
-    visualizerRobot,
+    editorRobot,
     effectiveUrdfContent,
     effectiveSourceFilePath,
     effectiveSourceFile,
     activeViewportFileName,
     viewerResourceScope,
-    visualizerResourceScope,
     sourceSceneAssemblyComponent,
     sourceSceneAssemblyComponentTransform,
     handleSourceSceneAssemblyComponentTransform,
     showSourceSceneAssemblyComponentControls,
-    pendingViewerLoadScopeKey,
-    releasedViewerLoadScopeKey,
     viewportState,
-    handoffReadyState,
   };
 }

@@ -12,6 +12,7 @@ import {
   type UrdfJoint,
   type UrdfLink,
   type UrdfVisual,
+  type UrdfVisualMaterial,
   type UsdClosedLoopConstraintEntry,
   type UsdJointCatalogEntry,
   type UsdLinkDynamicsEntry,
@@ -54,6 +55,18 @@ interface DescriptorEntry {
 interface DescriptorGroup {
   groupKey: string;
   entries: DescriptorEntry[];
+}
+
+interface DescriptorGeomSubsetSection {
+  start: number;
+  length: number;
+  materialId: string | null;
+}
+
+interface ResolvedDescriptorMaterialRecord {
+  materialId: string | null;
+  material: MaterialRecord;
+  authoredMaterial: UrdfVisualMaterial;
 }
 
 export type { ViewerRobotDataResolution } from './viewerRobotData';
@@ -177,6 +190,215 @@ function resolveSnapshotMaterialColorHex(
   }
 
   return null;
+}
+
+function getDescriptorGeomSubsetSections(
+  descriptor: MeshDescriptor,
+): DescriptorGeomSubsetSection[] {
+  const rawSections = Array.isArray(descriptor.geometry?.geomSubsetSections)
+    ? descriptor.geometry.geomSubsetSections
+    : [];
+
+  return rawSections
+    .map((section) => {
+      const start = Number(section?.start);
+      const length = Number(section?.length);
+      if (!Number.isFinite(start) || !Number.isFinite(length) || length <= 0) {
+        return null;
+      }
+
+      return {
+        start: Math.max(0, Math.floor(start)),
+        length: Math.max(0, Math.floor(length)),
+        materialId: normalizeUsdPath(section?.materialId || '') || null,
+      } satisfies DescriptorGeomSubsetSection;
+    })
+    .filter((section): section is DescriptorGeomSubsetSection => Boolean(section));
+}
+
+function resolveSnapshotMaterialTexturePath(
+  material: MaterialRecord | null | undefined,
+): string | undefined {
+  const texturePath = String(material?.mapPath || '').trim();
+  return texturePath || undefined;
+}
+
+function resolveSnapshotAuthoredMaterial(
+  material: MaterialRecord | null | undefined,
+  materialId?: string | null,
+): UrdfVisualMaterial | null {
+  if (!material) {
+    return null;
+  }
+
+  const name =
+    String(material.name || '').trim() ||
+    getPathBasename(material.materialId || materialId || '') ||
+    undefined;
+  const color = resolveSnapshotMaterialColorHex(material) || undefined;
+  const texture = resolveSnapshotMaterialTexturePath(material);
+  const opacity = Number(material.opacity);
+  const roughness = Number(material.roughness);
+  const metalness = Number(material.metalness);
+  const emissive = colorArrayToHex(material.emissive) || undefined;
+  const emissiveIntensity = Number(material.emissiveIntensity);
+
+  if (
+    !name &&
+    !color &&
+    !texture &&
+    !Number.isFinite(opacity) &&
+    !Number.isFinite(roughness) &&
+    !Number.isFinite(metalness) &&
+    !emissive &&
+    !Number.isFinite(emissiveIntensity)
+  ) {
+    return null;
+  }
+
+  return {
+    ...(name ? { name } : {}),
+    ...(color ? { color } : {}),
+    ...(texture ? { texture } : {}),
+    ...(Number.isFinite(opacity) ? { opacity } : {}),
+    ...(Number.isFinite(roughness) ? { roughness } : {}),
+    ...(Number.isFinite(metalness) ? { metalness } : {}),
+    ...(emissive ? { emissive } : {}),
+    ...(Number.isFinite(emissiveIntensity) ? { emissiveIntensity } : {}),
+  };
+}
+
+function getResolvedDescriptorMaterialRecords(
+  descriptor: MeshDescriptor,
+  materialLookup: Map<string, MaterialRecord>,
+): ResolvedDescriptorMaterialRecord[] {
+  const resolvedMaterials: ResolvedDescriptorMaterialRecord[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushResolvedMaterial = (materialId: string | null, material: MaterialRecord | null) => {
+    if (!material) {
+      return;
+    }
+
+    const authoredMaterial = resolveSnapshotAuthoredMaterial(material, materialId);
+    if (!authoredMaterial) {
+      return;
+    }
+
+    const dedupeKey =
+      materialId ||
+      JSON.stringify({
+        name: authoredMaterial.name || '',
+        color: authoredMaterial.color || '',
+        texture: authoredMaterial.texture || '',
+        opacity: authoredMaterial.opacity ?? null,
+        roughness: authoredMaterial.roughness ?? null,
+        metalness: authoredMaterial.metalness ?? null,
+        emissive: authoredMaterial.emissive || '',
+        emissiveIntensity: authoredMaterial.emissiveIntensity ?? null,
+      });
+    if (seenKeys.has(dedupeKey)) {
+      return;
+    }
+
+    seenKeys.add(dedupeKey);
+    resolvedMaterials.push({
+      materialId,
+      material,
+      authoredMaterial,
+    });
+  };
+
+  getDescriptorGeomSubsetSections(descriptor).forEach((section) => {
+    if (!section.materialId) {
+      return;
+    }
+
+    pushResolvedMaterial(section.materialId, materialLookup.get(section.materialId) || null);
+  });
+
+  const directMaterialId = getDescriptorMaterialId(descriptor);
+  if (directMaterialId) {
+    pushResolvedMaterial(directMaterialId, materialLookup.get(directMaterialId) || null);
+  }
+
+  return resolvedMaterials;
+}
+
+function applyVisualGroupMaterialsToLink(
+  link: UrdfLink,
+  linkId: string,
+  group: DescriptorGroup | null | undefined,
+  materialLookup: Map<string, MaterialRecord>,
+  materials: NonNullable<RobotData['materials']>,
+): void {
+  if (!group) {
+    return;
+  }
+
+  const resolvedMaterials: ResolvedDescriptorMaterialRecord[] = [];
+  const seenKeys = new Set<string>();
+  group.entries.forEach(({ descriptor }) => {
+    getResolvedDescriptorMaterialRecords(descriptor, materialLookup).forEach((resolvedMaterial) => {
+      const dedupeKey =
+        resolvedMaterial.materialId ||
+        JSON.stringify({
+          name: resolvedMaterial.authoredMaterial.name || '',
+          color: resolvedMaterial.authoredMaterial.color || '',
+          texture: resolvedMaterial.authoredMaterial.texture || '',
+          opacity: resolvedMaterial.authoredMaterial.opacity ?? null,
+          roughness: resolvedMaterial.authoredMaterial.roughness ?? null,
+          metalness: resolvedMaterial.authoredMaterial.metalness ?? null,
+          emissive: resolvedMaterial.authoredMaterial.emissive || '',
+          emissiveIntensity: resolvedMaterial.authoredMaterial.emissiveIntensity ?? null,
+        });
+      if (seenKeys.has(dedupeKey)) {
+        return;
+      }
+
+      seenKeys.add(dedupeKey);
+      resolvedMaterials.push(resolvedMaterial);
+    });
+  });
+  if (resolvedMaterials.length === 0) {
+    return;
+  }
+
+  if (resolvedMaterials.length > 1) {
+    link.visual = {
+      ...link.visual,
+      color: undefined,
+      authoredMaterials: resolvedMaterials.map(({ authoredMaterial }) => ({ ...authoredMaterial })),
+      materialSource: 'named',
+    };
+    delete materials[linkId];
+    return;
+  }
+
+  const [resolvedMaterial] = resolvedMaterials;
+  const color = resolvedMaterial?.authoredMaterial.color;
+  const texture = resolvedMaterial?.authoredMaterial.texture;
+  const hasUsdMaterial = hasMaterialRecordContent(resolvedMaterial?.material);
+
+  link.visual = {
+    ...link.visual,
+    ...(color && (link.visual.color === DEFAULT_LINK.visual.color || !link.visual.color)
+      ? { color }
+      : {}),
+    materialSource: 'named',
+  };
+  delete link.visual.authoredMaterials;
+
+  if (!color && !texture && !hasUsdMaterial) {
+    delete materials[linkId];
+    return;
+  }
+
+  materials[linkId] = {
+    ...(color ? { color } : {}),
+    ...(texture ? { texture } : {}),
+    ...(hasUsdMaterial ? { usdMaterial: structuredClone(resolvedMaterial.material) } : {}),
+  };
 }
 
 function getSnapshotMaterialLookup(snapshot: RobotSceneSnapshot): Map<string, MaterialRecord> {
@@ -793,6 +1015,14 @@ function createJointFromViewerEntry(
   const jointType = jointTypeFromViewerValue(entry.jointTypeName || entry.jointType);
   const lower = degreesToRadians(entry.lowerLimitDeg);
   const upper = degreesToRadians(entry.upperLimitDeg);
+  const driveDamping =
+    typeof entry.driveDamping === 'number' && Number.isFinite(entry.driveDamping)
+      ? entry.driveDamping
+      : undefined;
+  const driveMaxForce =
+    typeof entry.driveMaxForce === 'number' && Number.isFinite(entry.driveMaxForce)
+      ? entry.driveMaxForce
+      : undefined;
   const originXyz =
     entry.originXyz && typeof entry.originXyz.length === 'number'
       ? toVector3(entry.originXyz)
@@ -821,10 +1051,15 @@ function createJointFromViewerEntry(
         : { r: 0, p: 0, y: 0 },
     },
     axis: axisFromViewerEntry(entry),
+    dynamics: {
+      ...DEFAULT_JOINT.dynamics,
+      ...(driveDamping !== undefined ? { damping: driveDamping } : {}),
+    },
     limit: {
       ...DEFAULT_JOINT.limit,
       ...(lower !== undefined ? { lower } : {}),
       ...(upper !== undefined ? { upper } : {}),
+      ...(driveMaxForce !== undefined ? { effort: driveMaxForce } : {}),
     },
   };
 }
@@ -1097,49 +1332,6 @@ export function adaptUsdViewerSnapshotToRobotData(
     entries.sort((left, right) => left.ordinal - right.ordinal);
   });
 
-  descriptors.forEach((descriptor) => {
-    const sectionName = normalizeDescriptorSectionName(descriptor.sectionName);
-    if (sectionName !== 'visuals') {
-      return;
-    }
-
-    const linkPath = resolveUsdDescriptorTargetLinkPath({
-      descriptor,
-      knownLinkPaths: linkPaths,
-    });
-    const linkId = linkIdByPath.get(linkPath);
-    if (!linkId || materials[linkId]) {
-      return;
-    }
-
-    const materialId = getDescriptorMaterialId(descriptor);
-    const material = materialId ? materialLookup.get(materialId) : null;
-    if (!material) {
-      return;
-    }
-
-    const color = resolveSnapshotMaterialColorHex(material);
-    const texture = material.mapPath ? String(material.mapPath) : undefined;
-    if (!color && !texture && !hasMaterialRecordContent(material)) {
-      return;
-    }
-
-    const link = links[linkId];
-    if (link && (link.visual.color === DEFAULT_LINK.visual.color || !link.visual.color)) {
-      link.visual = {
-        ...link.visual,
-        ...(color ? { color } : {}),
-        materialSource: 'named',
-      };
-    }
-
-    materials[linkId] = {
-      ...(color ? { color } : {}),
-      ...(texture ? { texture } : {}),
-      ...(hasMaterialRecordContent(material) ? { usdMaterial: structuredClone(material) } : {}),
-    };
-  });
-
   visualDescriptorsByLinkPath.forEach((entries, linkPath) => {
     const parentLinkId = linkIdByPath.get(linkPath);
     if (!parentLinkId) {
@@ -1151,6 +1343,13 @@ export function adaptUsdViewerSnapshotToRobotData(
     primaryGroup?.entries.forEach(({ descriptor, ordinal }) => {
       visualDescriptorTargetLinkIds.set(getDescriptorEntryKey(descriptor, ordinal), parentLinkId);
     });
+    applyVisualGroupMaterialsToLink(
+      links[parentLinkId],
+      parentLinkId,
+      primaryGroup,
+      materialLookup,
+      materials,
+    );
 
     groupedEntries.slice(1).forEach((group, index) => {
       const descriptor = group.entries[0]?.descriptor;
@@ -1169,16 +1368,12 @@ export function adaptUsdViewerSnapshotToRobotData(
         usedJointIds,
         `${parentLinkId}_${childLinkId}_fixed`,
       );
-      const materialId = getDescriptorMaterialId(descriptor);
-      const material = materialId ? materialLookup.get(materialId) : null;
-      const color = resolveSnapshotMaterialColorHex(material) || DEFAULT_LINK.visual.color;
-      const texture = material?.mapPath ? String(material.mapPath) : undefined;
 
       links[childLinkId] = {
         ...DEFAULT_LINK,
         id: childLinkId,
         name: childLinkId,
-        visual: createPlaceholderVisual(GeometryType.MESH, color),
+        visual: createPlaceholderVisual(GeometryType.MESH, DEFAULT_LINK.visual.color),
         collision: createPlaceholderVisual(GeometryType.NONE, DEFAULT_LINK.collision.color),
         inertial: {
           ...DEFAULT_LINK.inertial,
@@ -1198,12 +1393,13 @@ export function adaptUsdViewerSnapshotToRobotData(
         },
         axis: { x: 0, y: 0, z: 1 },
       };
-
-      materials[childLinkId] = {
-        ...(color ? { color } : {}),
-        ...(texture ? { texture } : {}),
-        ...(hasMaterialRecordContent(material) ? { usdMaterial: structuredClone(material) } : {}),
-      };
+      applyVisualGroupMaterialsToLink(
+        links[childLinkId],
+        childLinkId,
+        group,
+        materialLookup,
+        materials,
+      );
 
       group.entries.forEach(({ descriptor: groupDescriptor, ordinal }) => {
         visualDescriptorTargetLinkIds.set(

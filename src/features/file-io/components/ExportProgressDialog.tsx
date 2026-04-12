@@ -13,10 +13,7 @@ interface ExportProgressDialogProps {
   progress: ExportProgressState;
 }
 
-export function ExportProgressDialog({
-  lang,
-  progress,
-}: ExportProgressDialogProps) {
+export function ExportProgressDialog({ lang, progress }: ExportProgressDialogProps) {
   const t = translations[lang];
   const windowState = useDraggableWindow({
     defaultSize: { width: 560, height: 540 },
@@ -41,8 +38,6 @@ export function ExportProgressDialog({
       className="z-[100] flex flex-col overflow-hidden rounded-2xl border border-border-black bg-panel-bg text-text-primary shadow-xl"
       headerClassName="flex h-10 shrink-0 items-center justify-between border-b border-border-black bg-element-bg px-3"
       interactionClassName="select-none"
-      headerDraggableClassName="cursor-grab"
-      headerDraggingClassName="cursor-grabbing"
       showMinimizeButton={false}
       showMaximizeButton={false}
       showCloseButton={false}

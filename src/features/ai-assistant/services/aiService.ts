@@ -14,6 +14,16 @@ import { normalizeAIRobotResponse } from '../utils/normalizeRobotData'
 import { processInspectionResults } from '../utils/processInspectionResults'
 import { INSPECTION_CRITERIA } from '../utils/inspectionCriteria'
 
+export type RobotInspectionStage =
+  | 'preparing-context'
+  | 'requesting-model'
+  | 'processing-response'
+  | 'finalizing-report'
+
+interface RunRobotInspectionOptions {
+  onStageChange?: (stage: RobotInspectionStage) => void
+}
+
 const getAiServiceTexts = (lang: Language) => {
   const t = translations[lang]
   return {
@@ -56,7 +66,7 @@ const createOpenAIClient = (): OpenAI => {
   return new OpenAI({
     apiKey: process.env.API_KEY,
     baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    dangerouslyAllowBrowser: true
+    dangerouslyAllowBrowser: true,
   })
 }
 
@@ -336,7 +346,8 @@ export const generateRobotFromPrompt = async (
 export const runRobotInspection = async (
   robot: RobotState,
   selectedItems?: Record<string, string[]>,
-  lang: Language = 'en'
+  lang: Language = 'en',
+  options: RunRobotInspectionOptions = {},
 ): Promise<InspectionReport | null> => {
   const text = getAiServiceTexts(lang)
   if (!process.env.API_KEY) {
@@ -355,6 +366,7 @@ export const runRobotInspection = async (
 
   const openai = createOpenAIClient()
   const modelName = getModelName()
+  options.onStageChange?.('preparing-context')
   const contextRobot = buildInspectionRobotContext(robot)
 
   const criteriaDescription = buildInspectionCriteriaDescription(selectedItems, lang)
@@ -362,6 +374,7 @@ export const runRobotInspection = async (
   const systemPrompt = getInspectionSystemPrompt(lang, { criteriaDescription, inspectionNotes })
 
   try {
+    options.onStageChange?.('requesting-model')
     const response = await openai.chat.completions.create({
       model: modelName,
       messages: [
@@ -388,6 +401,7 @@ export const runRobotInspection = async (
       }
     }
 
+    options.onStageChange?.('processing-response')
     const { result, error } = parseJSONResponse(content, lang)
     if (!result) {
       return {
@@ -402,6 +416,7 @@ export const runRobotInspection = async (
       }
     }
 
+    options.onStageChange?.('finalizing-report')
     return processInspectionResults(result, selectedItems, lang)
   } catch (e: unknown) {
     const error = e as { message?: string }

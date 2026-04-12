@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { isBlockingGizmoNode, isSelectableHelperObject } from './pickFilter.ts';
 import type { ViewerHelperKind } from '../types';
+import {
+  resolveGeometryObjectIndexFromMetadata,
+  subtreeContainsGeometryRole,
+} from './runtimeGeometrySelection';
 
 export interface ResolvedLinkTarget {
   linkId: string;
@@ -136,33 +140,20 @@ function findImmediateChildUnderLink(
   return current?.parent === linkObject ? current : null;
 }
 
-function subtreeContainsGeometryRole(
-  object: THREE.Object3D,
-  subType: 'visual' | 'collision',
-): boolean {
-  const matchesRole = subType === 'collision' ? isTaggedCollisionObject : isTaggedVisualObject;
-  if (matchesRole(object)) {
-    return true;
-  }
-
-  let found = false;
-  object.traverse((child) => {
-    if (found || child === object) {
-      return;
-    }
-    if (matchesRole(child)) {
-      found = true;
-    }
-  });
-
-  return found;
-}
-
 function resolveGeometryObjectIndex(
   linkObject: THREE.Object3D,
   geometryContainer: THREE.Object3D | null,
   subType: 'visual' | 'collision',
 ): number {
+  const metadataObjectIndex = resolveGeometryObjectIndexFromMetadata(
+    geometryContainer,
+    linkObject,
+    subType,
+  );
+  if (metadataObjectIndex !== null) {
+    return metadataObjectIndex;
+  }
+
   const directGeometryChild = findImmediateChildUnderLink(geometryContainer, linkObject);
   if (!directGeometryChild) {
     return 0;

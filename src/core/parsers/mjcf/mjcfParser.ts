@@ -30,6 +30,7 @@ import {
   type MJCFTexture,
 } from './mjcfUtils';
 import { assignMJCFBodyGeomRoles, classifyMJCFGeom } from './mjcfGeomClassification';
+import { buildMjcfCubeAuthoredMaterials, getMjcfCubeTextureFaceRecord } from './mjcfCubeTextures';
 import {
   clearParsedMJCFModelCache,
   normalizeMultiJointBodies,
@@ -1073,6 +1074,26 @@ function mjcfToRobotState(
     };
   }
 
+  function resolveGeomAuthoredMaterials(geom: MJCFGeom) {
+    const materialDef = geom.material ? materialMap.get(geom.material) : undefined;
+    const textureDef = materialDef?.texture ? textureMap.get(materialDef.texture) : undefined;
+    const cubeFaceRecord =
+      geom.type?.toLowerCase() === 'box' ? getMjcfCubeTextureFaceRecord(textureDef) : null;
+    if (!cubeFaceRecord) {
+      return undefined;
+    }
+
+    const explicitGeomRgba =
+      geom.hasExplicitRgba && geom.rgba && geom.rgba.length >= 3 ? geom.rgba : undefined;
+    const materialRgba =
+      materialDef?.rgba && materialDef.rgba.length >= 3 ? materialDef.rgba : undefined;
+    const inheritedGeomRgba = geom.rgba && geom.rgba.length >= 3 ? geom.rgba : undefined;
+    const resolvedRgba = explicitGeomRgba ?? materialRgba ?? inheritedGeomRgba;
+    const sharedColor = resolvedRgba ? rgbaToHexColor(resolvedRgba) || undefined : undefined;
+
+    return buildMjcfCubeAuthoredMaterials(cubeFaceRecord, sharedColor);
+  }
+
   function assignLinkMaterial(linkId: string, geom: MJCFGeom | null | undefined): void {
     if (!geom) {
       return;
@@ -1244,6 +1265,10 @@ function mjcfToRobotState(
     if (materialState?.color) {
       result.color = materialState.color;
     }
+    const authoredMaterials = resolveGeomAuthoredMaterials(geom);
+    if (authoredMaterials && authoredMaterials.length > 0) {
+      result.authoredMaterials = authoredMaterials;
+    }
 
     const geomRotation = toRPYObjectFromQuat(geom.quat);
     const hasMeaningfulRotation =
@@ -1374,6 +1399,7 @@ function mjcfToRobotState(
       const colGeo = processGeometry(mainPair.collision, linkFrameOffsetLocal);
       collision = {
         ...collision,
+        ...(mainPair.collision.name?.trim() ? { name: mainPair.collision.name.trim() } : {}),
         type: colGeo.type,
         dimensions: colGeo.dimensions,
         origin: colGeo.origin,
@@ -1544,6 +1570,7 @@ function mjcfToRobotState(
         const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
         const extraCollision: UrdfLink['collision'] = {
           ...DEFAULT_LINK.collision,
+          ...(pair.collision.name?.trim() ? { name: pair.collision.name.trim() } : {}),
           type: colGeo.type,
           dimensions: colGeo.dimensions,
           origin: colGeo.origin,
@@ -1579,6 +1606,7 @@ function mjcfToRobotState(
         const colGeo = processGeometry(pair.collision, linkFrameOffsetLocal);
         subCollision = {
           ...subCollision,
+          ...(pair.collision.name?.trim() ? { name: pair.collision.name.trim() } : {}),
           type: colGeo.type,
           dimensions: colGeo.dimensions,
           origin: colGeo.origin,

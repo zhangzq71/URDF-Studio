@@ -597,7 +597,7 @@ test('generated MJCF preserves inline-only mesh assets that have vertex data', (
   );
   assert.match(
     generated,
-    /<geom pos="0 0 0" rgba="[^"]+" group="3" contype="1" conaffinity="1" type="mesh" mesh="pyramid" \/>/,
+    /<geom(?=[^>]*rgba="[^"]+")(?=[^>]*group="3")(?=[^>]*contype="1")(?=[^>]*conaffinity="1")(?=[^>]*type="mesh")(?=[^>]*mesh="pyramid")[^>]*>/,
   );
 });
 
@@ -844,6 +844,60 @@ test('generated MJCF does not inject a duplicate freejoint when the root is alre
   assert.doesNotMatch(generated, /__joint_stage_0/);
 });
 
+test('generated MJCF preserves collision geom names through export and reparse', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'named-collisions',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.4, y: 0.3, z: 0.2 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.BOX,
+          name: 'base_collision',
+          dimensions: { x: 0.38, y: 0.28, z: 0.18 },
+          color: '#00ff00',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [
+          {
+            type: GeometryType.SPHERE,
+            name: 'motor_guard',
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#ffaa00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, { includeSceneHelpers: false, meshdir: 'meshes/' });
+  assert.match(generated, /<geom(?=[^>]*name="base_collision")(?=[^>]*group="3")[^>]*>/);
+  assert.match(generated, /<geom(?=[^>]*name="motor_guard")(?=[^>]*group="3")[^>]*>/);
+
+  const reparsed = parseMJCF(generated);
+  assert.equal(reparsed.links.base_link.collision.name, 'base_collision');
+  assert.equal(reparsed.links.base_link.collisionBodies?.[0]?.name, 'motor_guard');
+});
+
 test('unitree_go2 MJCF roundtrip preserves the floating root joint and base pose', () => {
   installDomParser();
 
@@ -892,6 +946,115 @@ test('generated MJCF preserves missing URDF inertial without crashing', () => {
 
   assert.match(generated, /<body name="base_link"/);
   assert.doesNotMatch(generated, /<inertial\b/);
+});
+
+test('generated MJCF enables balanceinertia when a link inertia is invalid for MuJoCo', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'invalid-inertia-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.5, y: 0.3, z: 0.15 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 33.86,
+          origin: { xyz: { x: -0.05, y: -0.007, z: -0.00984 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: {
+            ixx: 0.21092,
+            ixy: -0.000622,
+            ixz: 0.12531,
+            iyy: 0.7639,
+            iyz: -0.00139,
+            izz: 0.9483,
+          },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+  });
+
+  assert.match(
+    generated,
+    /<compiler(?=[^>]*meshdir="meshes\/")(?=[^>]*balanceinertia="true")[^>]*>/,
+  );
+  assert.match(
+    generated,
+    /<inertial pos="-0\.05 -0\.007 -0\.00984" mass="33\.86" fullinertia="0\.21092 0\.7639 0\.9483 -0\.000622 0\.12531 -0\.00139"\/>/,
+  );
+});
+
+test('generated MJCF keeps imported MJCF mesh geoms bound to mesh asset names instead of file paths', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'imported-mjcf-mesh-ref',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          meshPath: '/tmp/demo/assets/base_0.obj',
+          assetRef: 'base_0',
+          mjcfMesh: {
+            file: 'assets/base_0.obj',
+          },
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+  });
+
+  assert.match(generated, /<mesh name="base_0" file="assets\/base_0\.obj" \/>/);
+  assert.match(generated, /<geom[^>]*type="mesh" mesh="base_0" \/>/);
+  assert.doesNotMatch(generated, /mesh="\/tmp\/demo\/assets\/base_0\.obj"/);
 });
 
 test('generated MJCF writes visual materials from robot state and binds them on geoms', () => {
@@ -1067,6 +1230,77 @@ test('generated MJCF uses a neutral white rgba for texture-only materials', () =
   );
 });
 
+test('generated MJCF exports six-face box textures as a cube texture asset', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'cube-texture-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#ffffff',
+          authoredMaterials: [
+            { texture: 'textures/right.png' },
+            { texture: 'textures/left.png' },
+            { texture: 'textures/up.png' },
+            { texture: 'textures/down.png' },
+            { texture: 'textures/front.png' },
+            { texture: 'textures/back.png' },
+          ],
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+  });
+  const parsed = parseMJCFModel(generated);
+  const baseLinkBody = findBodyByName(parsed.worldBody as any, 'base_link');
+  const visualGeom = baseLinkBody?.geoms?.[0];
+  const visualMaterial = parsed.materialMap.get('base_link_mat');
+  const visualTexture = parsed.textureMap.get('base_link_cube_tex');
+
+  assert.ok(visualGeom);
+  assert.equal(visualGeom.material, 'base_link_mat');
+  assert.equal(visualMaterial?.texture, 'base_link_cube_tex');
+  assert.equal(visualMaterial?.rgba?.join(' '), '1 1 1 1');
+  assert.equal(visualTexture?.type, 'cube');
+  assert.equal(visualTexture?.fileright, 'right.png');
+  assert.equal(visualTexture?.fileleft, 'left.png');
+  assert.equal(visualTexture?.fileup, 'up.png');
+  assert.equal(visualTexture?.filedown, 'down.png');
+  assert.equal(visualTexture?.filefront, 'front.png');
+  assert.equal(visualTexture?.fileback, 'back.png');
+  assert.match(
+    generated,
+    /<texture name="base_link_cube_tex" type="cube" fileright="right\.png" fileleft="left\.png" fileup="up\.png" filedown="down\.png" filefront="front\.png" fileback="back\.png" \/>/,
+  );
+});
+
 test('generated MJCF scopes texture-backed materials per visual object', () => {
   installDomParser();
 
@@ -1182,6 +1416,61 @@ test('generated MJCF honors mesh export path overrides for converted assets', ()
 
   assert.match(generated, /<mesh name="dae_hip_dae" file="dae\/hip\.dae\.obj"/);
   assert.doesNotMatch(generated, /file="dae\/hip\.dae"/);
+});
+
+test('generated MJCF preserves nested meshPathOverrides without stripping inner mesh directories', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'nested-mesh-override',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.MESH,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          meshPath: 'b2_z1_description/meshes/arm_meshes/meshes/visual/z1_Link00.dae',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {},
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, {
+    includeSceneHelpers: false,
+    meshdir: 'meshes/',
+    meshPathOverrides: new Map([
+      [
+        'b2_z1_description/meshes/arm_meshes/meshes/visual/z1_Link00.dae',
+        'arm_meshes/meshes/visual/z1_Link00.dae.obj',
+      ],
+    ]),
+  });
+
+  assert.match(
+    generated,
+    /<mesh name="arm_meshes_meshes_visual_z1_Link00_dae" file="arm_meshes\/meshes\/visual\/z1_Link00\.dae\.obj"/,
+  );
+  assert.doesNotMatch(generated, /file="visual\/z1_Link00\.dae\.obj"/);
 });
 
 test('generated MJCF emits separate visual geoms for extracted mesh material variants', () => {
@@ -1305,4 +1594,278 @@ test('generated MJCF preserves collision colors and alpha through parser roundtr
   const parsed = parseMJCF(generated);
   assert.ok(parsed);
   assert.equal(parsed.links.base_link.collision.color, '#12345680');
+});
+
+test('generated MJCF exports joint armature when the source joint provides it', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'joint-armature-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+      child_link: {
+        id: 'child_link',
+        name: 'child_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {
+      arm_joint: {
+        id: 'arm_joint',
+        name: 'arm_joint',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0.3 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -1, upper: 1, effort: 3, velocity: 4 },
+        dynamics: { damping: 0.2, friction: 0.1 },
+        hardware: {
+          armature: 0.42,
+          motorType: 'None',
+          motorId: '',
+          motorDirection: 1,
+        },
+      },
+    },
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, { includeSceneHelpers: false });
+  const parsed = parseMJCFModel(generated);
+  const childBody = findBodyByName(parsed.worldBody as any, 'child_link');
+
+  assert.match(generated, /<joint name="arm_joint"[^>]* armature="0\.42"[^>]*\/>/);
+  assert.equal(childBody?.joints[0]?.armature, 0.42);
+});
+
+test('generated MJCF exports joint reference position and effort limits through official scalar joint attrs', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'joint-ref-and-effort-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+      child_link: {
+        id: 'child_link',
+        name: 'child_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {
+      arm_joint: {
+        id: 'arm_joint',
+        name: 'arm_joint',
+        type: JointType.REVOLUTE,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0.3 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: { x: 0, y: 0, z: 1 },
+        limit: { lower: -1, upper: 1, effort: 3, velocity: 4 },
+        dynamics: { damping: 0.2, friction: 0.1 },
+        hardware: {
+          armature: 0,
+          motorType: 'None',
+          motorId: '',
+          motorDirection: 1,
+        },
+        referencePosition: -0.25,
+        angle: 0.4,
+      },
+    },
+    materials: {},
+  };
+
+  const generated = generateMujocoXML(robot, { includeSceneHelpers: false });
+  const parsedModel = parseMJCFModel(generated);
+  const reparsed = parseMJCF(generated);
+  const childBody = findBodyByName(parsedModel.worldBody as any, 'child_link');
+  const exportedJoint = childBody?.joints[0];
+
+  assert.match(
+    generated,
+    /<joint name="arm_joint"[^>]* limited="true"[^>]* range="-1 1"[^>]* ref="-0\.25"[^>]* actuatorfrclimited="true" actuatorfrcrange="-3 3"[^>]*\/>/,
+  );
+  assert.equal(exportedJoint?.limited, true);
+  assert.equal(exportedJoint?.ref, -0.25);
+  assert.deepEqual(exportedJoint?.actuatorForceRange, [-3, 3]);
+  assert.equal(exportedJoint?.actuatorForceLimited, true);
+  assert.equal(reparsed.joints.arm_joint?.referencePosition, -0.25);
+  assert.equal(reparsed.joints.arm_joint?.angle, -0.25);
+  assert.equal(reparsed.joints.arm_joint?.limit?.effort, 3);
+});
+
+test('generated MJCF fails fast for unsupported planar joints instead of degrading them', () => {
+  installDomParser();
+
+  const robot: RobotState = {
+    name: 'planar-joint-export',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+      child_link: {
+        id: 'child_link',
+        name: 'child_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 1, y: 1, z: 1 },
+          color: '#808080',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#ff0000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+        inertial: {
+          mass: 1,
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          inertia: { ixx: 1, ixy: 0, ixz: 0, iyy: 1, iyz: 0, izz: 1 },
+        },
+      },
+    },
+    joints: {
+      planar_joint: {
+        id: 'planar_joint',
+        name: 'planar_joint',
+        type: JointType.PLANAR,
+        parentLinkId: 'base_link',
+        childLinkId: 'child_link',
+        origin: {
+          xyz: { x: 0, y: 0, z: 0.3 },
+          rpy: { r: 0, p: 0, y: 0 },
+        },
+        axis: { x: 0, y: 0, z: 1 },
+        dynamics: { damping: 0.2, friction: 0.1 },
+        hardware: {
+          armature: 0,
+          motorType: 'None',
+          motorId: '',
+          motorDirection: 1,
+        },
+      } as RobotState['joints'][string],
+    },
+    materials: {},
+  };
+
+  assert.throws(
+    () => generateMujocoXML(robot, { includeSceneHelpers: false }),
+    /\[MJCF export\] Joint "planar_joint" uses unsupported planar type\./,
+  );
 });

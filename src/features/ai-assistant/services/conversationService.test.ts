@@ -1,0 +1,189 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import {
+  buildConversationMessages,
+  extractConversationDelta,
+  isConversationAbortError,
+  sendConversationTurn,
+  sendConversationTurnStream,
+  serializeConversationHistory,
+} from './conversationService.ts'
+import OpenAI from 'openai'
+
+const API_KEY_ENV_NAMES = ['API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'] as const
+
+const captureApiKeyEnv = (): Record<(typeof API_KEY_ENV_NAMES)[number], string | undefined> => ({
+  API_KEY: process.env.API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+})
+
+const restoreApiKeyEnv = (snapshot: Record<(typeof API_KEY_ENV_NAMES)[number], string | undefined>) => {
+  for (const envName of API_KEY_ENV_NAMES) {
+    const value = snapshot[envName]
+    if (value === undefined) {
+      delete process.env[envName]
+      continue
+    }
+
+    process.env[envName] = value
+  }
+}
+
+test('buildConversationMessages keeps only valid recent history and appends current user message', () => {
+  const history = [
+    { role: 'user' as const, content: '  first question  ' },
+    { role: 'assistant' as const, content: '' },
+    { role: 'assistant' as const, content: 'first answer' },
+    { role: 'user' as const, content: 'second question' },
+  ]
+
+  const messages = buildConversationMessages(history, '  current question ')
+
+  assert.equal(messages.length, 4)
+  assert.deepEqual(messages[0], { role: 'user', content: 'first question' })
+  assert.deepEqual(messages[1], { role: 'assistant', content: 'first answer' })
+  assert.deepEqual(messages[2], { role: 'user', content: 'second question' })
+  assert.deepEqual(messages[3], { role: 'user', content: 'current question' })
+})
+
+test('buildConversationMessages limits history to the latest eight turns', () => {
+  const history = Array.from({ length: 10 }, (_, index) => ({
+    role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+    content: `turn-${index}`,
+  }))
+
+  const messages = buildConversationMessages(history, 'latest-question')
+
+  assert.equal(messages.length, 9)
+  assert.deepEqual(messages[0], { role: 'user', content: 'turn-2' })
+  assert.deepEqual(messages[7], { role: 'assistant', content: 'turn-9' })
+  assert.deepEqual(messages[8], { role: 'user', content: 'latest-question' })
+})
+
+test('serializeConversationHistory applies the same sanitization contract as message building', () => {
+  const history = [
+    { role: 'user' as const, content: '  hello  ' },
+    { role: 'assistant' as const, content: '' },
+    { role: 'assistant' as const, content: 'world' },
+  ]
+
+  const serialized = serializeConversationHistory(history)
+  assert.equal(serialized, '[{"role":"user","content":"hello"},{"role":"assistant","content":"world"}]')
+})
+
+test('sendConversationTurn returns localized fallback reply when api key is missing', async () => {
+  const envSnapshot = captureApiKeyEnv()
+  delete process.env.API_KEY
+  delete process.env.OPENAI_API_KEY
+  delete process.env.GEMINI_API_KEY
+
+  try {
+    const result = await sendConversationTurn({
+      mode: 'general',
+      lang: 'en',
+      context: '{"robot":{"name":"demo"}}',
+      history: [],
+      userMessage: 'What can this robot do?',
+    })
+
+    assert.match(result.reply, /Conversation service error/i)
+    assert.match(result.reply, /api key/i)
+  } finally {
+    restoreApiKeyEnv(envSnapshot)
+  }
+})
+
+test('sendConversationTurnStream returns localized fallback reply when api key is missing', async () => {
+  const envSnapshot = captureApiKeyEnv()
+  delete process.env.API_KEY
+  delete process.env.OPENAI_API_KEY
+  delete process.env.GEMINI_API_KEY
+
+  try {
+    const result = await sendConversationTurnStream({
+      mode: 'general',
+      lang: 'zh',
+      context: '{"robot":{"name":"demo"}}',
+      history: [],
+      userMessage: '这个机器人适合做什么？',
+    })
+
+    assert.equal(result.status, 'error')
+    assert.match(result.reply, /对话服务错误/)
+    assert.match(result.reply, /API Key/i)
+  } finally {
+    restoreApiKeyEnv(envSnapshot)
+  }
+})
+
+test('extractConversationDelta concatenates streamed content fragments', () => {
+  const delta = extractConversationDelta({
+    choices: [
+      { delta: { content: 'First' } },
+      { delta: { content: ' second' } },
+    ],
+  })
+
+  assert.equal(delta, 'First second')
+  assert.equal(extractConversationDelta(undefined), '')
+})
+
+test('isConversationAbortError recognizes SDK abort errors and AbortError names', () => {
+  assert.equal(isConversationAbortError(new OpenAI.APIUserAbortError()), true)
+
+  const abortError = new Error('Request aborted')
+  abortError.name = 'AbortError'
+  assert.equal(isConversationAbortError(abortError), true)
+
+  assert.equal(isConversationAbortError(new Error('Other error')), false)
+})
+
+test('sendConversationTurnStream falls back to non-streaming completion when stream request fails', async () => {
+  const envSnapshot = captureApiKeyEnv()
+  const originalCreate = OpenAI.Chat.Completions.prototype.create
+  const createCalls: Array<boolean> = []
+
+  delete process.env.API_KEY
+  process.env.OPENAI_API_KEY = 'test-openai-key'
+  delete process.env.GEMINI_API_KEY
+
+  OpenAI.Chat.Completions.prototype.create = (async function mockCreate(
+    this: unknown,
+    params: { stream?: boolean }
+  ) {
+    createCalls.push(Boolean(params.stream))
+
+    if (params.stream) {
+      throw new OpenAI.APIConnectionError({})
+    }
+
+    return {
+      choices: [
+        {
+          message: {
+            content: 'Recovered reply',
+          },
+        },
+      ],
+    }
+  }) as typeof OpenAI.Chat.Completions.prototype.create
+
+  try {
+    const result = await sendConversationTurnStream({
+      mode: 'general',
+      lang: 'en',
+      context: '{"robot":{"name":"demo"}}',
+      history: [],
+      userMessage: 'How should I improve this robot?',
+    })
+
+    assert.equal(result.status, 'completed')
+    assert.equal(result.reply, 'Recovered reply')
+    assert.deepEqual(createCalls, [true, false])
+  } finally {
+    OpenAI.Chat.Completions.prototype.create = originalCreate
+    restoreApiKeyEnv(envSnapshot)
+  }
+})

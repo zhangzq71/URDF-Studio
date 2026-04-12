@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import type { LinkIkPositionSolveRequest } from '@/core/robot';
+import type { LinkIkPositionSolveRequest, LinkIkSolveFailureReason } from '@/core/robot';
 import type { JointQuaternion } from '@/types';
 
 // Ignore sub-pixel proxy jitter so the drag loop only solves when the user
@@ -9,6 +9,9 @@ export const LINK_IK_TARGET_EPSILON_SQ = 1e-8;
 export const LINK_IK_PREVIEW_MAX_ITERATIONS = 6;
 export const LINK_IK_PREVIEW_POSITION_TOLERANCE = 2e-3;
 export const LINK_IK_PREVIEW_STALL_TOLERANCE = 1e-4;
+export const LINK_IK_PREVIEW_COORDINATE_PAIR_MAX_DISTANCE = 2;
+export const LINK_IK_PREVIEW_MAX_ANGLE_STEP = 0.025;
+export const LINK_IK_PREVIEW_MAX_QUATERNION_STEP_RADIANS = 0.025;
 export const LINK_IK_COMMIT_EPSILON = 1e-6;
 export const LINK_IK_PREVIEW_COMMIT_EPSILON = 1e-5;
 
@@ -75,6 +78,28 @@ export function resolveLinkIkCommittedStateEpsilon(preview: boolean): number {
   return preview ? LINK_IK_PREVIEW_COMMIT_EPSILON : LINK_IK_COMMIT_EPSILON;
 }
 
+export function shouldAcceptLinkIkSolveState({
+  seedState,
+  nextState,
+  preview,
+  converged,
+  failureReason,
+}: {
+  seedState: Partial<LinkIkDragKinematicState> | null | undefined;
+  nextState: Partial<LinkIkDragKinematicState> | null | undefined;
+  preview: boolean;
+  converged: boolean;
+  failureReason?: LinkIkSolveFailureReason;
+}): boolean {
+  if (converged || failureReason !== 'stalled') {
+    return true;
+  }
+
+  return hasLinkIkKinematicStateChanges(
+    diffLinkIkDragKinematicState(seedState, nextState, resolveLinkIkCommittedStateEpsilon(preview)),
+  );
+}
+
 export function diffLinkIkDragKinematicState(
   previousState: Partial<LinkIkDragKinematicState> | null | undefined,
   nextState: Partial<LinkIkDragKinematicState> | null | undefined,
@@ -99,6 +124,99 @@ export function diffLinkIkDragKinematicState(
   });
 
   return delta;
+}
+
+function limitNumberStep(previous: number | undefined, next: number, maxStep: number): number {
+  if (!Number.isFinite(next) || !Number.isFinite(previous)) {
+    return next;
+  }
+
+  const delta = next - previous;
+  if (Math.abs(delta) <= maxStep) {
+    return next;
+  }
+
+  return previous + Math.sign(delta) * maxStep;
+}
+
+function limitQuaternionStep(
+  previous: JointQuaternion | undefined,
+  next: JointQuaternion,
+  maxStepRadians: number,
+): JointQuaternion {
+  if (!previous) {
+    return next;
+  }
+
+  const previousQuaternion = new THREE.Quaternion(previous.x, previous.y, previous.z, previous.w);
+  const nextQuaternion = new THREE.Quaternion(next.x, next.y, next.z, next.w);
+  const normalizedNextQuaternion = nextQuaternion.clone().normalize();
+  const normalizedPreviousQuaternion = previousQuaternion.clone().normalize();
+
+  let dot = normalizedPreviousQuaternion.dot(normalizedNextQuaternion);
+  const shortestPathTarget =
+    dot < 0
+      ? new THREE.Quaternion(
+          -normalizedNextQuaternion.x,
+          -normalizedNextQuaternion.y,
+          -normalizedNextQuaternion.z,
+          -normalizedNextQuaternion.w,
+        )
+      : normalizedNextQuaternion;
+  dot = Math.min(1, Math.max(-1, Math.abs(dot)));
+
+  const deltaAngle = 2 * Math.acos(dot);
+  if (!Number.isFinite(deltaAngle) || deltaAngle <= maxStepRadians) {
+    return {
+      x: shortestPathTarget.x,
+      y: shortestPathTarget.y,
+      z: shortestPathTarget.z,
+      w: shortestPathTarget.w,
+    };
+  }
+
+  const t = Math.min(1, maxStepRadians / deltaAngle);
+  const limitedQuaternion = normalizedPreviousQuaternion.slerp(shortestPathTarget, t);
+  return {
+    x: limitedQuaternion.x,
+    y: limitedQuaternion.y,
+    z: limitedQuaternion.z,
+    w: limitedQuaternion.w,
+  };
+}
+
+export function limitLinkIkPreviewKinematicStateStep(
+  previousState: Partial<LinkIkDragKinematicState> | null | undefined,
+  nextState: Partial<LinkIkDragKinematicState> | null | undefined,
+  {
+    maxAngleStep = LINK_IK_PREVIEW_MAX_ANGLE_STEP,
+    maxQuaternionStepRadians = LINK_IK_PREVIEW_MAX_QUATERNION_STEP_RADIANS,
+  }: {
+    maxAngleStep?: number;
+    maxQuaternionStepRadians?: number;
+  } = {},
+): LinkIkDragKinematicState {
+  const limitedState = createEmptyLinkIkDragKinematicState();
+  const previousAngles = previousState?.angles ?? {};
+  const previousQuaternions = previousState?.quaternions ?? {};
+
+  Object.entries(nextState?.angles ?? {}).forEach(([jointId, nextAngle]) => {
+    limitedState.angles[jointId] = limitNumberStep(
+      previousAngles[jointId],
+      nextAngle,
+      maxAngleStep,
+    );
+  });
+
+  Object.entries(nextState?.quaternions ?? {}).forEach(([jointId, nextQuaternion]) => {
+    limitedState.quaternions[jointId] = limitQuaternionStep(
+      previousQuaternions[jointId],
+      nextQuaternion,
+      maxQuaternionStepRadians,
+    );
+  });
+
+  return limitedState;
 }
 
 export function hasMeaningfulLinkIkTargetDelta(
@@ -141,13 +259,17 @@ export function shouldScheduleLinkIkPreviewSolve({
 export function resolveLinkIkSolveRequestOptions(
   preview: boolean,
 ):
-  | Pick<LinkIkPositionSolveRequest, 'maxIterations' | 'positionTolerance' | 'stallTolerance'>
+  | Pick<
+      LinkIkPositionSolveRequest,
+      'coordinatePairMaxDistance' | 'maxIterations' | 'positionTolerance' | 'stallTolerance'
+    >
   | undefined {
   if (!preview) {
     return undefined;
   }
 
   return {
+    coordinatePairMaxDistance: LINK_IK_PREVIEW_COORDINATE_PAIR_MAX_DISTANCE,
     maxIterations: LINK_IK_PREVIEW_MAX_ITERATIONS,
     positionTolerance: LINK_IK_PREVIEW_POSITION_TOLERANCE,
     stallTolerance: LINK_IK_PREVIEW_STALL_TOLERANCE,

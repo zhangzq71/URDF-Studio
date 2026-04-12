@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Camera, X } from 'lucide-react';
-import { Button, Select, type SelectOption } from '@/shared/components/ui';
+import {
+  Button,
+  CompactSwitch,
+  PanelSegmentedControl,
+  PanelSelect,
+  type SegmentedControlOption,
+  type SelectOption,
+} from '@/shared/components/ui';
 import { DraggableWindow } from '@/shared/components';
 import { useDraggableWindow } from '@/shared/hooks';
 import {
@@ -22,34 +29,12 @@ const PANEL_SECTION_CLASS_NAME =
 const FIELD_ROW_CLASS_NAME = 'grid grid-cols-[78px_minmax(0,1fr)] items-center gap-2';
 const FIELD_LABEL_CLASS_NAME =
   'truncate text-[10px] font-medium tracking-[0.01em] text-text-secondary';
-const FIELD_SELECT_CLASS_NAME = [
-  'h-[25px]',
-  'rounded-md',
-  'border-border-black',
-  'bg-input-bg',
-  'px-2',
-  'pr-6',
-  'text-[12px]',
-  'font-medium',
-  'leading-none',
-  'shadow-sm',
-  'focus:border-system-blue',
-  'focus:ring-1',
-  'focus:ring-system-blue/30',
-].join(' ');
-
 interface SnapshotDialogProps {
   isOpen: boolean;
   isCapturing: boolean;
   lang: Language;
   onClose: () => void;
   onCapture: (options: SnapshotCaptureOptions) => Promise<void> | void;
-}
-
-interface SnapshotToggleOption<T extends string | number | boolean> {
-  value: T;
-  label: string;
-  disabled?: boolean;
 }
 
 function SnapshotSection({ title, children }: { title: string; children: React.ReactNode }) {
@@ -68,48 +53,6 @@ function SnapshotField({ label, children }: { label: string; children: React.Rea
     <div className={FIELD_ROW_CLASS_NAME}>
       <div className={FIELD_LABEL_CLASS_NAME}>{label}</div>
       <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
-
-function SnapshotToggleGroup<T extends string | number | boolean>({
-  value,
-  options,
-  disabled = false,
-  onChange,
-}: {
-  value: T;
-  options: ReadonlyArray<SnapshotToggleOption<T>>;
-  disabled?: boolean;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="flex overflow-hidden rounded-md border border-border-black bg-input-bg shadow-sm">
-      {options.map((option) => {
-        const isSelected = option.value === value;
-
-        return (
-          <button
-            key={String(option.value)}
-            type="button"
-            disabled={disabled || option.disabled}
-            onClick={() => {
-              if (!disabled && !option.disabled) {
-                onChange(option.value);
-              }
-            }}
-            className={[
-              'h-[25px] min-w-0 flex-1 border-l border-border-black px-2 text-[11px] font-medium transition-colors duration-150 first:border-l-0',
-              disabled || option.disabled ? 'cursor-not-allowed opacity-45' : '',
-              isSelected
-                ? 'bg-element-bg text-text-primary'
-                : 'bg-transparent text-text-secondary hover:bg-element-hover hover:text-text-primary',
-            ].join(' ')}
-          >
-            <span className="truncate">{option.label}</span>
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -280,16 +223,16 @@ export function SnapshotDialog({
     return options;
   }, [backgroundStyle, t]);
   const antialiasOptions = useMemo<
-    ReadonlyArray<SnapshotToggleOption<SnapshotCaptureOptions['detailLevel']>>
+    ReadonlyArray<SegmentedControlOption<SnapshotCaptureOptions['detailLevel']>>
   >(
     () => [
-      { value: 'viewport', label: '1x AA' },
-      { value: 'high', label: '2x AA' },
-      { value: 'ultra', label: '4x AA' },
+      { value: 'viewport', label: '1x' },
+      { value: 'high', label: '2x' },
+      { value: 'ultra', label: '4x' },
     ],
     [],
   );
-  const compressionOptions = useMemo<ReadonlyArray<SnapshotToggleOption<number | 'lossless'>>>(
+  const compressionOptions = useMemo<ReadonlyArray<SegmentedControlOption<number | 'lossless'>>>(
     () =>
       supportsLossyCompression
         ? [
@@ -299,13 +242,6 @@ export function SnapshotDialog({
           ]
         : [{ value: 'lossless', label: t.snapshotCompressionLossless, disabled: true }],
     [supportsLossyCompression, t],
-  );
-  const gridOptions = useMemo<ReadonlyArray<SnapshotToggleOption<boolean>>>(
-    () => [
-      { value: false, label: lang === 'zh' ? '显示' : 'Show' },
-      { value: true, label: lang === 'zh' ? '隐藏' : 'Hide' },
-    ],
-    [lang],
   );
   const compactLabels = useMemo(
     () => ({
@@ -320,7 +256,7 @@ export function SnapshotDialog({
       shadow: lang === 'zh' ? '阴影' : 'Shadow',
       ground: lang === 'zh' ? '地面' : 'Ground',
       dof: lang === 'zh' ? '景深' : 'DoF',
-      grid: lang === 'zh' ? '网格' : 'Grid',
+      grid: lang === 'zh' ? '隐藏网格' : 'Hide Grid',
     }),
     [lang],
   );
@@ -366,8 +302,6 @@ export function SnapshotDialog({
       }
       className="z-[95] overflow-hidden rounded-2xl border border-border-black bg-panel-bg text-text-primary shadow-xl pointer-events-auto"
       headerClassName="flex h-10 items-center justify-between border-b border-border-black bg-element-bg px-3"
-      headerDraggableClassName="cursor-grab"
-      headerDraggingClassName="cursor-grabbing"
       interactionClassName="select-none"
       controlButtonClassName="rounded-md p-1 text-text-tertiary transition-colors hover:bg-panel-bg hover:text-text-primary"
       closeButtonClassName="rounded-md p-1 text-text-tertiary transition-colors hover:bg-danger hover:text-white"
@@ -389,40 +323,44 @@ export function SnapshotDialog({
           <SnapshotSection title={compactLabels.output}>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
               <SnapshotField label={compactLabels.resolution}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={resolutionPreset}
                   options={resolutionOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) => setResolutionPreset(event.target.value)}
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.format}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={imageFormat}
                   options={formatOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setImageFormat(event.target.value as SnapshotCaptureOptions['imageFormat'])
                   }
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.aa}>
-                <SnapshotToggleGroup
+                <PanelSegmentedControl
                   value={detailLevel}
                   options={antialiasOptions}
                   disabled={isCapturing}
+                  className="w-full"
+                  stretch
                   onChange={(value) =>
                     setDetailLevel(value as SnapshotCaptureOptions['detailLevel'])
                   }
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.quality}>
-                <SnapshotToggleGroup
+                <PanelSegmentedControl
                   value={compressionPreset}
                   options={compressionOptions}
                   disabled={isCapturing || !supportsLossyCompression}
+                  className="w-full"
+                  stretch
                   onChange={(value) => {
                     if (typeof value === 'number') {
                       setImageQuality(value);
@@ -436,11 +374,11 @@ export function SnapshotDialog({
           <SnapshotSection title={compactLabels.scene}>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
               <SnapshotField label={compactLabels.lighting}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={environmentPreset}
                   options={environmentOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setEnvironmentPreset(
                       event.target.value as SnapshotCaptureOptions['environmentPreset'],
@@ -449,11 +387,11 @@ export function SnapshotDialog({
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.background}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={backgroundStyle}
                   options={backgroundOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setBackgroundStyle(
                       event.target.value as SnapshotCaptureOptions['backgroundStyle'],
@@ -462,44 +400,45 @@ export function SnapshotDialog({
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.shadow}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={shadowStyle}
                   options={shadowOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setShadowStyle(event.target.value as SnapshotCaptureOptions['shadowStyle'])
                   }
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.ground}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={groundStyle}
                   options={groundOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setGroundStyle(event.target.value as SnapshotCaptureOptions['groundStyle'])
                   }
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.dof}>
-                <Select
+                <PanelSelect
+                  variant="snapshot"
                   value={dofMode}
                   options={dofOptions}
                   disabled={isCapturing}
-                  className={FIELD_SELECT_CLASS_NAME}
                   onChange={(event) =>
                     setDofMode(event.target.value as SnapshotCaptureOptions['dofMode'])
                   }
                 />
               </SnapshotField>
               <SnapshotField label={compactLabels.grid}>
-                <SnapshotToggleGroup
-                  value={hideGrid}
-                  options={gridOptions}
+                <CompactSwitch
+                  checked={hideGrid}
+                  onChange={setHideGrid}
                   disabled={isCapturing}
-                  onChange={(value) => setHideGrid(value)}
+                  ariaLabel={t.snapshotHideGrid}
+                  className="w-full justify-end"
                 />
               </SnapshotField>
             </div>

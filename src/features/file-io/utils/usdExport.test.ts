@@ -277,6 +277,44 @@ function createTexturedMeshRobot(meshPath: string, texturePath: string): RobotSt
   return robot;
 }
 
+function createBoxFaceTextureRobot(): RobotState {
+  return {
+    name: 'box_face_robot',
+    rootLinkId: 'base_link',
+    selection: { type: null, id: null },
+    joints: {},
+    links: {
+      base_link: {
+        id: 'base_link',
+        name: 'base_link',
+        visible: true,
+        visual: {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.4, y: 0.3, z: 0.2 },
+          color: '#ffffff',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          authoredMaterials: [
+            { texture: 'textures/right.png' },
+            { texture: 'textures/left.png' },
+            { texture: 'textures/up.png' },
+            { texture: 'textures/down.png' },
+            { texture: 'textures/front.png' },
+            { texture: 'textures/back.png' },
+          ],
+        },
+        collision: {
+          type: GeometryType.NONE,
+          dimensions: { x: 0, y: 0, z: 0 },
+          color: '#000000',
+          origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+        },
+        collisionBodies: [],
+      },
+    },
+    materials: {},
+  };
+}
+
 function extractTriangleCount(baseLayer: string) {
   const match = baseLayer.match(/int\[] faceVertexCounts = \[([^\]]*)\]/);
   assert.ok(match, 'expected serialized mesh faceVertexCounts');
@@ -453,6 +491,10 @@ test('preserves link transforms and writes physics joints into separate USD laye
   assert.match(physicsLayer, /uniform token physics:axis = "Z"/);
   assert.match(physicsLayer, /float physics:lowerLimit = -90/);
   assert.match(physicsLayer, /float physics:upperLimit = 60/);
+  assert.match(physicsLayer, /prepend apiSchemas = \["PhysicsDriveAPI:angular"\]/);
+  assert.match(physicsLayer, /uniform token drive:angular:physics:type = "force"/);
+  assert.match(physicsLayer, /float drive:angular:physics:damping = 0\.1/);
+  assert.match(physicsLayer, /float drive:angular:physics:maxForce = 12/);
   assert.match(physicsLayer, /point3f physics:localPos0 = \(1, 2, 3\)/);
   assert.match(physicsLayer, /custom point3f urdf:originXyz = \(1, 2, 3\)/);
   assert.match(physicsLayer, /custom float3 urdf:axisLocal = \(0, 0, 1\)/);
@@ -789,6 +831,44 @@ test('exports texture-only mesh materials with a neutral white USD preview color
   assert.match(baseLayer, /asset inputs:file = @\.\.\/assets\/checker\.png@/);
   assert.doesNotMatch(baseLayer, /custom string urdf:materialColor = "#6699ff"/);
   assert.doesNotMatch(baseLayer, /color3f inputs:diffuseColor = \(0\.133209, 0\.318547, 1\)/);
+});
+
+test('exports six-face box textures into separate USDA mesh prims and packaged assets', async () => {
+  const textureDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/e+m+7wAAAABJRU5ErkJggg==';
+  const payload = await exportRobotToUsd({
+    robot: createBoxFaceTextureRobot(),
+    exportName: 'box_face_robot',
+    assets: {
+      'textures/right.png': textureDataUrl,
+      'textures/left.png': textureDataUrl,
+      'textures/up.png': textureDataUrl,
+      'textures/down.png': textureDataUrl,
+      'textures/front.png': textureDataUrl,
+      'textures/back.png': textureDataUrl,
+    },
+    fileFormat: 'usda',
+  });
+
+  const baseLayer = await readArchiveText(
+    payload,
+    'box_face_robot/usd/configuration/box_face_robot_description_base.usda',
+  );
+
+  assert.equal(payload.downloadFileName, 'box_face_robot.usda');
+  assert.equal((baseLayer.match(/def Mesh "Geometry_/g) ?? []).length, 6);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/right\.png"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/left\.png"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/up\.png"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/down\.png"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/front\.png"/);
+  assert.match(baseLayer, /custom string urdf:materialTexture = "textures\/back\.png"/);
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/right.png'));
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/left.png'));
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/up.png'));
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/down.png'));
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/front.png'));
+  assert.ok(payload.archiveFiles.has('box_face_robot/usd/assets/back.png'));
 });
 
 test('archives texture assets for mesh metadata even when the mesh has no UV coordinates', async () => {

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { UnifiedTransformControls, VISUALIZER_UNIFIED_GIZMO_SIZE } from '@/shared/components/3d';
+import { HELPER_RENDER_ORDER } from '@/shared/components/3d/unified-transform-controls/gizmoCore';
 import { computeVisibleMeshBounds } from '@/shared/utils/threeBounds';
 import { useSelectionStore } from '@/store/selectionStore';
 import type { AssemblyTransform } from '@/types';
@@ -24,7 +25,7 @@ const SourceSceneSelectionBounds = memo(function SourceSceneSelectionBounds({
 
     next.name = 'SourceSceneAssemblySelectionBounds';
     next.frustumCulled = false;
-    next.renderOrder = 999;
+    next.renderOrder = HELPER_RENDER_ORDER;
     next.visible = false;
     next.userData.isHelper = true;
     next.userData.excludeFromSceneBounds = true;

@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 
 import { translations } from '@/shared/i18n';
 import { useSelectionStore } from '@/store/selectionStore';
-import { DEFAULT_LINK, GeometryType, type RobotState } from '@/types';
+import { DEFAULT_LINK, GeometryType, JointType, type RobotState } from '@/types';
 import { TreeNode } from './TreeNode.tsx';
 
 function installDom() {
@@ -38,6 +38,9 @@ function installDom() {
   (globalThis as { cancelAnimationFrame?: typeof cancelAnimationFrame }).cancelAnimationFrame =
     dom.window.cancelAnimationFrame.bind(dom.window);
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  if (!dom.window.HTMLElement.prototype.scrollIntoView) {
+    dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoViewStub() {};
+  }
 
   return dom;
 }
@@ -91,6 +94,45 @@ function findButtonByText(text: string): HTMLButtonElement | null {
   return Array.from(document.querySelectorAll('button')).find((button) =>
     button.textContent?.includes(text),
   ) as HTMLButtonElement | null;
+}
+
+function getReactProps(node: Element) {
+  const reactPropsKey = Object.keys(node).find((key) => key.startsWith('__reactProps$'));
+  assert.ok(reactPropsKey, 'React props key should exist on rendered element');
+  return (node as unknown as Record<string, unknown>)[reactPropsKey] as Record<string, unknown>;
+}
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const prototype = input.ownerDocument.defaultView?.HTMLInputElement.prototype;
+  const valueSetter = prototype
+    ? Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+    : undefined;
+
+  assert.ok(valueSetter, 'HTMLInputElement value setter should exist');
+  valueSetter.call(input, value);
+}
+
+function dispatchReactChange(input: HTMLInputElement, value: string) {
+  setInputValue(input, value);
+  const reactProps = getReactProps(input);
+  const onChange = reactProps.onChange;
+  assert.equal(typeof onChange, 'function', 'React onChange handler should exist');
+
+  (onChange as (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void)({
+    target: input,
+    currentTarget: input,
+  });
+}
+
+function dispatchReactBlur(input: HTMLInputElement) {
+  const reactProps = getReactProps(input);
+  const onBlur = reactProps.onBlur;
+  assert.equal(typeof onBlur, 'function', 'React onBlur handler should exist');
+
+  (onBlur as (event: { target: HTMLInputElement; currentTarget: HTMLInputElement }) => void)({
+    target: input,
+    currentTarget: input,
+  });
 }
 
 test('TreeNode link context menu is portaled and exposes collision add/delete actions', async () => {
@@ -251,6 +293,333 @@ test('TreeNode deleting the selected collision geometry falls back to the parent
   }
 });
 
+test('TreeNode resolves joint selections by joint name so the joint row still highlights', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: 'joint', id: 'elbow_joint_name' },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: null, id: null },
+      focusTarget: null,
+    });
+
+    const robot: RobotState = {
+      name: 'named-joint-robot',
+      rootLinkId: 'base_link',
+      selection: { type: null, id: null },
+      joints: {
+        elbow_joint_id: {
+          id: 'elbow_joint_id',
+          name: 'elbow_joint_name',
+          type: JointType.REVOLUTE,
+          parentLinkId: 'base_link',
+          childLinkId: 'forearm_link',
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+          axis: { x: 0, y: 0, z: 1 },
+          limit: { lower: -1, upper: 1, effort: 1, velocity: 1 },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: {
+            armature: 0,
+            motorType: '',
+            motorId: '',
+            motorDirection: 1,
+          },
+        },
+      },
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+          },
+        },
+        forearm_link: {
+          ...DEFAULT_LINK,
+          id: 'forearm_link',
+          name: 'forearm_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+          },
+        },
+      },
+      materials: {},
+      closedLoopConstraints: [],
+    };
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            childJointsByParent={{
+              base_link: [robot.joints.elbow_joint_id],
+            }}
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={() => {}}
+            mode="editor"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    const jointRow = container.querySelector(
+      '[title="elbow_joint_name · Revolute"]',
+    ) as HTMLDivElement | null;
+    assert.ok(jointRow, 'joint row should render');
+    assert.match(
+      jointRow.className,
+      /bg-system-blue\/10 text-text-primary shadow-sm ring-1 ring-inset ring-system-blue\/20/,
+    );
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeNode opens joint rename input when the joint row is double-clicked', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: null, id: null },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: null, id: null },
+      focusTarget: null,
+    });
+
+    const robot: RobotState = {
+      name: 'joint-rename-robot',
+      rootLinkId: 'base_link',
+      selection: { type: null, id: null },
+      joints: {
+        elbow_joint: {
+          id: 'elbow_joint',
+          name: 'elbow_joint',
+          type: JointType.REVOLUTE,
+          parentLinkId: 'base_link',
+          childLinkId: 'forearm_link',
+          origin: {
+            xyz: { x: 0, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+          axis: { x: 0, y: 0, z: 1 },
+          limit: { lower: -1, upper: 1, effort: 1, velocity: 1 },
+          dynamics: { damping: 0, friction: 0 },
+          hardware: {
+            armature: 0,
+            motorType: '',
+            motorId: '',
+            motorDirection: 1,
+          },
+        },
+      },
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+          },
+        },
+        forearm_link: {
+          ...DEFAULT_LINK,
+          id: 'forearm_link',
+          name: 'forearm_link',
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.BOX,
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+          },
+        },
+      },
+      materials: {},
+      closedLoopConstraints: [],
+    };
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            childJointsByParent={{
+              base_link: [robot.joints.elbow_joint],
+            }}
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={() => {}}
+            mode="editor"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    const jointRow = container.querySelector(
+      '[title="elbow_joint · Revolute"]',
+    ) as HTMLDivElement | null;
+    assert.ok(jointRow, 'joint row should render');
+
+    await act(async () => {
+      jointRow.dispatchEvent(
+        new dom.window.MouseEvent('dblclick', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    const renameInput = container.querySelector('input') as HTMLInputElement | null;
+    assert.ok(renameInput, 'joint rename input should render on row double click');
+    assert.equal(renameInput.value, 'elbow_joint');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeNode collision rows support right-click rename and persist the edited name', async () => {
+  const { dom, container, root } = createComponentRoot();
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: null, id: null },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: null, id: null },
+      focusTarget: null,
+    });
+
+    function ControlledCollisionRenameHarness() {
+      const [robot, setRobot] = React.useState<RobotState>(() => {
+        const nextRobot = createRobotWithCollision();
+        nextRobot.links.base_link.collision.name = 'base_collision';
+        nextRobot.links.base_link.collisionBodies = [
+          {
+            type: GeometryType.SPHERE,
+            name: 'motor_guard',
+            dimensions: { x: 0.12, y: 0.12, z: 0.12 },
+            color: '#00ff00',
+            origin: { xyz: { x: 0.1, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        ];
+        return nextRobot;
+      });
+
+      return (
+        <TreeNode
+          linkId="base_link"
+          robot={robot}
+          showGeometryDetailsByDefault
+          onSelect={() => {}}
+          onSelectGeometry={(linkId, subType, objectIndex = 0) => {
+            useSelectionStore
+              .getState()
+              .setSelection({ type: 'link', id: linkId, subType, objectIndex });
+          }}
+          onAddChild={() => {}}
+          onAddCollisionBody={() => {}}
+          onDelete={() => {}}
+          onUpdate={(type, id, data) => {
+            if (type !== 'link' || id !== 'base_link') {
+              return;
+            }
+            setRobot((prev) => ({
+              ...prev,
+              links: {
+                ...prev.links,
+                base_link: data as RobotState['links'][string],
+              },
+            }));
+          }}
+          mode="editor"
+          t={translations.en}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <ControlledCollisionRenameHarness />
+        </div>,
+      );
+    });
+
+    const collisionRow = container.querySelector(
+      '[title="base_collision"]',
+    ) as HTMLDivElement | null;
+    assert.ok(collisionRow, 'named collision row should render');
+
+    await act(async () => {
+      collisionRow.dispatchEvent(
+        new dom.window.MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: 140,
+          clientY: 96,
+        }),
+      );
+    });
+
+    const renameButton = findButtonByText(translations.en.rename);
+    assert.ok(renameButton, 'geometry context menu should expose rename');
+
+    await act(async () => {
+      renameButton.dispatchEvent(
+        new dom.window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    const renameInput = container.querySelector(
+      'input[value="base_collision"]',
+    ) as HTMLInputElement | null;
+    assert.ok(renameInput, 'collision row should switch to inline rename mode');
+
+    await act(async () => {
+      dispatchReactChange(renameInput, 'torso_shell');
+    });
+
+    await act(async () => {
+      dispatchReactBlur(renameInput);
+    });
+
+    const renamedCollisionRow = container.querySelector(
+      '[title="torso_shell"]',
+    ) as HTMLDivElement | null;
+    assert.ok(renamedCollisionRow, 'renamed collision row should render with the updated name');
+  } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
 test('TreeNode geometry eye icons reflect inherited hidden state from the parent link', async () => {
   const { dom, container, root } = createComponentRoot();
 
@@ -311,6 +680,73 @@ test('TreeNode geometry eye icons reflect inherited hidden state from the parent
     assert.match(visualButton.innerHTML, /eye-off/i);
     assert.match(collisionButton.innerHTML, /eye-off/i);
   } finally {
+    await destroyComponentRoot(dom, root);
+  }
+});
+
+test('TreeNode relocates geometry attention to the parent link row', async () => {
+  const { dom, root } = createComponentRoot();
+  const scrollTargets: string[] = [];
+  const originalScrollIntoView = dom.window.HTMLElement.prototype.scrollIntoView;
+  const originalRequestAnimationFrame = dom.window.requestAnimationFrame;
+
+  dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoViewSpy() {
+    scrollTargets.push(this.getAttribute('title') ?? this.textContent?.trim() ?? '');
+  };
+  dom.window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  }) as typeof dom.window.requestAnimationFrame;
+  (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+    dom.window.requestAnimationFrame.bind(dom.window);
+
+  try {
+    useSelectionStore.setState({
+      selection: { type: 'link', id: 'base_link', subType: 'collision', objectIndex: 0 },
+      hoveredSelection: { type: null, id: null },
+      deferredHoveredSelection: { type: null, id: null },
+      hoverFrozen: false,
+      attentionSelection: { type: 'link', id: 'base_link', subType: 'collision', objectIndex: 0 },
+      focusTarget: null,
+    });
+
+    const robot = createRobotWithCollision();
+
+    await act(async () => {
+      root.render(
+        <div style={{ containIntrinsicSize: '320px', contentVisibility: 'auto' }}>
+          <TreeNode
+            linkId="base_link"
+            robot={robot}
+            showGeometryDetailsByDefault
+            onSelect={() => {}}
+            onAddChild={() => {}}
+            onAddCollisionBody={() => {}}
+            onDelete={() => {}}
+            onUpdate={() => {}}
+            mode="editor"
+            t={translations.en}
+          />
+        </div>,
+      );
+    });
+
+    assert.match(scrollTargets.at(-1) ?? '', /^base_link/);
+    assert.equal(
+      dom.window.document.querySelector(`[title="${translations.en.visualGeometry}"]`),
+      null,
+      'geometry attention should relocate to the link without expanding the visual row',
+    );
+    assert.equal(
+      dom.window.document.querySelector(`[title="${translations.en.collision}"]`),
+      null,
+      'geometry attention should relocate to the link without expanding the collision row',
+    );
+  } finally {
+    dom.window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    dom.window.requestAnimationFrame = originalRequestAnimationFrame;
+    (globalThis as { requestAnimationFrame?: typeof requestAnimationFrame }).requestAnimationFrame =
+      dom.window.requestAnimationFrame.bind(dom.window);
     await destroyComponentRoot(dom, root);
   }
 });

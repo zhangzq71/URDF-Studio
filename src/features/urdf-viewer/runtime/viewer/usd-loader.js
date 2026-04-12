@@ -432,7 +432,8 @@ export async function loadUsdStage(args) {
                 return null;
             return new Uint8Array(binary);
         }
-        catch {
+        catch (error) {
+            console.error("[usd-loader] Failed to warm up runtime bridge during " + phaseLabel + ".", error);
             return null;
         }
     };
@@ -1053,18 +1054,25 @@ export async function loadUsdStage(args) {
     const startRobotMetadataWarmup = (activeRenderInterface, options = {}) => {
         if (!activeRenderInterface || typeof activeRenderInterface.startRobotMetadataWarmupForStage !== "function")
             return null;
+        const warmupPhaseLabel = options.force === true
+            ? "forced robot metadata warmup"
+            : "robot metadata warmup";
         try {
             const maybePromise = activeRenderInterface.startRobotMetadataWarmupForStage(buildRobotMetadataWarmupOptions(options.force === true));
             const normalizedPromise = (maybePromise && typeof maybePromise.then === "function")
                 ? maybePromise
                 : Promise.resolve(maybePromise ?? null);
             primedRobotMetadataWarmupPromise = normalizedPromise;
-            primedRobotMetadataWarmupPromise.catch(() => { });
+            primedRobotMetadataWarmupPromise.catch((error) => {
+                console.error(`[usd-loader] ${warmupPhaseLabel} rejected for ${normalizedPath}.`, error);
+            });
             return normalizedPromise;
         }
         catch (error) {
             const rejectedPromise = Promise.reject(error);
-            rejectedPromise.catch(() => { });
+            rejectedPromise.catch((caughtError) => {
+                console.error(`[usd-loader] Failed to start ${warmupPhaseLabel} for ${normalizedPath}.`, caughtError);
+            });
             primedRobotMetadataWarmupPromise = rejectedPromise;
             return rejectedPromise;
         }

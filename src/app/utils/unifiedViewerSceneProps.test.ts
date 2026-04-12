@@ -1,23 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import type {
-  URDFViewerController,
-  URDFViewerProps,
-  ViewerResourceScope,
-} from '@/features/urdf-viewer';
-import type { RobotState } from '@/types';
-import {
-  buildUnifiedViewerSceneProps,
-  EMPTY_VIEWER_SELECTION,
-} from './unifiedViewerSceneProps';
+import type { ViewerController, ViewerProps, ViewerResourceScope } from '@/features/editor';
+import type { AssemblyState, RobotState } from '@/types';
+import { buildUnifiedViewerSceneProps, EMPTY_VIEWER_SELECTION } from './unifiedViewerSceneProps';
 
-function createControllerStub(overrides: Partial<URDFViewerController> = {}): URDFViewerController {
+function createControllerStub(overrides: Partial<ViewerController> = {}): ViewerController {
   return {
     groundPlaneOffset: 2,
     toolMode: 'measure',
+    handleHoverWrapper: () => {},
     ...overrides,
-  } as URDFViewerController;
+  } as ViewerController;
 }
 
 function createRobotStub(): RobotState {
@@ -38,12 +32,30 @@ function createScopeStub(): ViewerResourceScope {
   };
 }
 
+function createAssemblyStateStub(): AssemblyState {
+  return {
+    name: 'workspace',
+    transform: {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { r: 0, p: 0, y: 0 },
+    },
+    components: {},
+    bridges: {},
+  };
+}
+
 test('buildUnifiedViewerSceneProps preserves live interaction wiring without preview', () => {
   const controller = createControllerStub();
-  const selection: NonNullable<URDFViewerProps['selection']> = { type: 'link', id: 'base_link' };
-  const hoveredSelection: NonNullable<URDFViewerProps['hoveredSelection']> = { type: 'joint', id: 'hip_joint' };
+  const selection: NonNullable<ViewerProps['selection']> = { type: 'link', id: 'base_link' };
+  const hoveredSelection: NonNullable<ViewerProps['hoveredSelection']> = {
+    type: 'joint',
+    id: 'hip_joint',
+  };
   const onHover = () => {};
   const onMeshSelect = () => {};
+  const onAssemblyTransform = () => {};
+  const onComponentTransform = () => {};
+  const onBridgeTransform = () => {};
 
   const sceneProps = buildUnifiedViewerSceneProps({
     controller,
@@ -57,6 +69,11 @@ test('buildUnifiedViewerSceneProps preserves live interaction wiring without pre
     selection,
     onHover,
     onMeshSelect,
+    assemblyState: createAssemblyStateStub(),
+    assemblySelection: { type: 'component', id: 'comp_alpha' },
+    onAssemblyTransform,
+    onComponentTransform,
+    onBridgeTransform,
     robot: createRobotStub(),
     focusTarget: 'base_link',
     isMeshPreview: true,
@@ -67,13 +84,17 @@ test('buildUnifiedViewerSceneProps preserves live interaction wiring without pre
   assert.equal(sceneProps.selection, selection);
   assert.equal(sceneProps.hoveredSelection, hoveredSelection);
   assert.equal(sceneProps.hoverSelectionEnabled, true);
-  assert.equal(sceneProps.onHover, onHover);
+  assert.equal(sceneProps.onHover, controller.handleHoverWrapper);
   assert.equal(sceneProps.onMeshSelect, onMeshSelect);
   assert.equal(sceneProps.robotLinks?.base_link !== undefined, true);
   assert.equal(sceneProps.robotJoints?.hip_joint !== undefined, true);
   assert.equal(sceneProps.focusTarget, 'base_link');
   assert.equal(sceneProps.isMeshPreview, true);
   assert.equal(sceneProps.runtimeInstanceKey, 9);
+  assert.equal(sceneProps.assemblySelection?.id, 'comp_alpha');
+  assert.equal(sceneProps.onAssemblyTransform, onAssemblyTransform);
+  assert.equal(sceneProps.onComponentTransform, onComponentTransform);
+  assert.equal(sceneProps.onBridgeTransform, onBridgeTransform);
 });
 
 test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only editor scene', () => {
@@ -82,6 +103,7 @@ test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only editor
   const onMeshSelect = () => {};
   const onCollisionTransformPreview = () => {};
   const onCollisionTransform = () => {};
+  const onAssemblyTransform = () => {};
 
   const sceneProps = buildUnifiedViewerSceneProps({
     controller,
@@ -95,6 +117,9 @@ test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only editor
     selection: { type: 'joint', id: 'hip_joint' },
     onHover,
     onMeshSelect,
+    assemblyState: createAssemblyStateStub(),
+    assemblySelection: { type: 'assembly', id: 'workspace' },
+    onAssemblyTransform,
     robot: createRobotStub(),
     focusTarget: 'base_link',
     onCollisionTransformPreview,
@@ -116,12 +141,17 @@ test('buildUnifiedViewerSceneProps clamps preview sessions to a read-only editor
   assert.equal(sceneProps.onCollisionTransform, undefined);
   assert.equal(sceneProps.isMeshPreview, false);
   assert.equal(sceneProps.runtimeInstanceKey, 3);
+  assert.equal(sceneProps.assemblySelection, undefined);
+  assert.equal(sceneProps.onAssemblyTransform, undefined);
 });
 
 test('buildUnifiedViewerSceneProps disables hover interaction for inactive retained scenes without dropping selection', () => {
   const controller = createControllerStub();
-  const selection: NonNullable<URDFViewerProps['selection']> = { type: 'link', id: 'base_link' };
-  const hoveredSelection: NonNullable<URDFViewerProps['hoveredSelection']> = { type: 'joint', id: 'hip_joint' };
+  const selection: NonNullable<ViewerProps['selection']> = { type: 'link', id: 'base_link' };
+  const hoveredSelection: NonNullable<ViewerProps['hoveredSelection']> = {
+    type: 'joint',
+    id: 'hip_joint',
+  };
   const onHover = () => {};
   const onMeshSelect = () => {};
 

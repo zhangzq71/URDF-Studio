@@ -167,3 +167,58 @@ test('mesh to capsule fallback sizing preserves authored collision rotation with
 
   assert.deepEqual(converted.origin.rpy, ROTATED_ORIGIN.rpy);
 });
+
+test('mesh to box uses the tighter fitted box when the mesh fit is materially smaller than the raw bounds', () => {
+  const rotatedHalfYaw = Math.PI / 8;
+  const converted = convertGeometryType(
+    {
+      type: GeometryType.MESH,
+      origin: ROTATED_ORIGIN,
+    },
+    GeometryType.BOX,
+    {
+      bounds: {
+        x: 0.84,
+        y: 0.44,
+        z: 0.24,
+        cx: 0,
+        cy: 0,
+        cz: 0,
+      },
+      primitiveFits: {
+        box: {
+          center: { x: 0.03, y: -0.01, z: 0.02 },
+          dimensions: { x: 0.56, y: 0.19, z: 0.18 },
+          rotation: {
+            x: 0,
+            y: Math.sin(rotatedHalfYaw),
+            z: 0,
+            w: Math.cos(rotatedHalfYaw),
+          },
+          volume: 0.019152,
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(converted.dimensions, {
+    x: 0.56,
+    y: 0.19,
+    z: 0.18,
+  });
+  assert.notDeepEqual(converted.origin.rpy, ROTATED_ORIGIN.rpy);
+});
+
+test('box to cylinder keeps the cylinder radius close to the source box cross section', () => {
+  const converted = convertGeometryType(
+    {
+      type: GeometryType.BOX,
+      dimensions: { x: 0.6, y: 0.2, z: 1 },
+      origin: ROTATED_ORIGIN,
+    },
+    GeometryType.CYLINDER,
+  );
+
+  assert.ok(Math.abs(converted.dimensions.x - Math.sqrt(0.6 * 0.2) / 2) <= 1e-9);
+  assert.equal(converted.dimensions.y, 1);
+});

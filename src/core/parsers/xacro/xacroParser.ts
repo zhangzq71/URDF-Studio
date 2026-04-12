@@ -714,10 +714,21 @@ export function processXacro(
       }
     }
 
-    // Search for matching path in file map
+    // Search for matching path in file map, preferring keys from the correct package
     const fileMapKeys = Object.keys(ctx.fileMap);
+    const suffix = '/' + path;
+    const pkgSuffix = '/' + pkg + suffix;
+
+    // First pass: prefer keys that contain the correct package name
     for (const key of fileMapKeys) {
-      if (key.endsWith(path) || key.endsWith('/' + path)) {
+      if (key.endsWith(pkgSuffix)) {
+        return key;
+      }
+    }
+
+    // Second pass: fall back to any key matching the relative path
+    for (const key of fileMapKeys) {
+      if (key.endsWith(path) || key.endsWith(suffix)) {
         return key;
       }
     }

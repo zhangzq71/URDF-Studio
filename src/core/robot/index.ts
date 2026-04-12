@@ -12,9 +12,11 @@ export {
   generateLinkId,
   generateJointId,
   createLink,
+  createAttachedChildLink,
   createJoint,
   createEmptyRobot,
   addChildToRobot,
+  resolveDefaultChildJointOrigin,
   cloneLink,
   cloneJoint,
 } from './builders';
@@ -60,14 +62,27 @@ export {
   updateVisualGeometryByObjectIndex,
 } from './visualBodies';
 export {
+  BOX_FACE_MATERIAL_ORDER,
   canEditGeometryBaseTexture,
   collectGeometryTexturePaths,
   getEffectiveGeometryAuthoredMaterials,
+  getBoxFaceMaterialPalette,
   getGeometryAuthoredMaterials,
+  getPreferredSingleMaterialFromBoxFacePalette,
+  hasBoxFaceMaterialPalette,
   hasMultipleAuthoredMaterials,
   resolveVisualMaterialOverride,
+  updateVisualAuthoredMaterialByObjectIndex,
   updateVisualBaseTextureByObjectIndex,
 } from './visualMaterials';
+export type { BoxFaceMaterialEntry, BoxFaceMaterialName } from './visualMaterials';
+export {
+  applyMeshMaterialPaintEdit,
+  getGeometryMeshMaterialGroups,
+  getGeometryMeshMaterialGroupsForMesh,
+  hasGeometryMeshMaterialGroups,
+  normalizeGeometryAuthoredMaterials,
+} from './visualMeshMaterialGroups';
 
 export { resolveJointKey, resolveLinkKey } from './identity';
 
@@ -86,6 +101,10 @@ export {
 } from './kinematics';
 
 export { resolveMimicJointAngleTargets } from './mimic';
+export {
+  clampJointInteractionValue,
+  normalizeJointInteractionLimits,
+} from './jointInteractionLimits.js';
 
 export {
   createRobotClosedLoopConstraint,
@@ -118,8 +137,10 @@ export {
 } from './assemblyPlacement';
 
 export {
+  resolveDirectManipulableLinkIkDescriptor,
   resolveLinkIkHandleDescriptor,
   resolveLinkIkHandleDescriptors,
+  resolveSelectableIkHandleLinkId,
   solveLinkIkPositionTarget,
 } from './linkIk';
 export type {

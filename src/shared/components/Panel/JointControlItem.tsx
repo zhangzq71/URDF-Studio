@@ -3,6 +3,7 @@ import { resolveJointKey } from '@/core/robot';
 import { useAssemblyStore, useUIStore } from '@/store';
 import { useRobotStore } from '@/store/robotStore';
 import { JointType } from '@/types';
+import type { JointPanelActiveJointOptions } from '@/shared/utils/jointPanelStore';
 import { createJointDragStoreSync } from '@/shared/utils/jointDragStoreSync';
 import { getJointType } from '@/shared/utils/jointTypes';
 import {
@@ -26,7 +27,8 @@ export interface JointControlItemProps {
   value: number;
   angleUnit: 'rad' | 'deg';
   isActive: boolean;
-  setActiveJoint: (name: string | null) => void;
+  shouldAutoScroll?: boolean;
+  setActiveJoint: (name: string | null, options?: JointPanelActiveJointOptions) => void;
   handleJointAngleChange: (name: string, val: number) => void;
   handleJointChangeCommit: (name: string, val: number) => void;
   onSelect?: (type: 'link' | 'joint', id: string) => void;
@@ -43,6 +45,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
   value,
   angleUnit,
   isActive,
+  shouldAutoScroll = false,
   setActiveJoint,
   handleJointAngleChange,
   handleJointChangeCommit,
@@ -60,7 +63,6 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
   const continuousPreviewValueRef = useRef(value);
   const isSliderDraggingRef = useRef(false);
   const sliderDragSourceRef = useRef<SliderDragSource | null>(null);
-  const skipNextActiveAutoScrollRef = useRef(false);
   const sidebarTab = useUIStore((state) => state.sidebarTab);
   const updateComponentRobot = useAssemblyStore((state) => state.updateComponentRobot);
   const updateBridge = useAssemblyStore((state) => state.updateBridge);
@@ -200,30 +202,10 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
   );
 
   useEffect(() => {
-    if (skipNextActiveAutoScrollRef.current) {
-      skipNextActiveAutoScrollRef.current = false;
-      return;
+    if (shouldAutoScroll && itemRef.current) {
+      itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-
-    if (isActive && itemRef.current) {
-      const scrollParent = itemRef.current.closest('.overflow-y-auto');
-      if (scrollParent) {
-        const parentRect = scrollParent.getBoundingClientRect();
-        const itemRect = itemRef.current.getBoundingClientRect();
-
-        const currentScroll = scrollParent.scrollTop;
-        const itemRelativeTop = itemRect.top - parentRect.top;
-        const targetVisualTop = parentRect.height / 2 - itemRect.height / 2;
-
-        scrollParent.scrollTo({
-          top: currentScroll + (itemRelativeTop - targetVisualTop),
-          behavior: 'smooth',
-        });
-      } else {
-        itemRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    }
-  }, [isActive, resolvedDisplayName]);
+  }, [resolvedDisplayName, shouldAutoScroll]);
 
   const [continuousSliderAnchor, setContinuousSliderAnchor] = useState(value);
   const continuousSliderAnchorRef = useRef(value);
@@ -358,10 +340,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
       isSliderDraggingRef.current = true;
       sliderDragSourceRef.current = source;
       setIsSliderDragging(true);
-      if (!isActive) {
-        skipNextActiveAutoScrollRef.current = true;
-      }
-      setActiveJoint(name);
+      setActiveJoint(name, { autoScroll: false });
       onSelect?.('joint', name);
       setSliderPreviewValue(value);
       continuousPreviewValueRef.current = value;
@@ -744,10 +723,7 @@ const JointControlItemComponent: React.FC<JointControlItemProps> = ({
       ref={itemRef}
       data-panel-hovered={isPanelHovered ? 'true' : 'false'}
       onClick={() => {
-        if (!isActive) {
-          skipNextActiveAutoScrollRef.current = true;
-        }
-        setActiveJoint(name);
+        setActiveJoint(name, { autoScroll: false });
         onSelect?.('joint', name);
       }}
       onMouseEnter={() => setIsPanelHovered(true)}

@@ -775,7 +775,11 @@ export class ThreeRenderDelegateCore {
                 meshCountsByLinkPath,
             };
         }
-        catch {
+        catch (error) {
+            console.error('[ThreeRenderDelegateCore] Failed to build robot metadata snapshot from USD driver.', {
+                stageSourcePath: String(stageSourcePath || '').trim() || null,
+                error,
+            });
             return null;
         }
     }
@@ -1452,6 +1456,8 @@ export class ThreeRenderDelegateCore {
                     ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
                     : rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz);
                 const limits = normalizeStageJointLimits(jointTypeName || jointType, Number(jointRecord?.lowerLimitDeg), Number(jointRecord?.upperLimitDeg));
+                const driveDamping = toFiniteNumber(jointRecord?.driveDamping);
+                const driveMaxForce = toFiniteNumber(jointRecord?.driveMaxForce);
                 const childLinkPaths = resolveRuntimeLinkPathsFromSourcePathForMerge(body1Path);
                 for (const childLinkPath of childLinkPaths) {
                     if (!childLinkPath)
@@ -1512,6 +1518,18 @@ export class ThreeRenderDelegateCore {
                                 mutated = true;
                             }
                         }
+                        if (existingEntry.driveDamping === undefined || existingEntry.driveDamping === null) {
+                            if (driveDamping !== undefined) {
+                                existingEntry.driveDamping = driveDamping;
+                                mutated = true;
+                            }
+                        }
+                        if (existingEntry.driveMaxForce === undefined || existingEntry.driveMaxForce === null) {
+                            if (driveMaxForce !== undefined) {
+                                existingEntry.driveMaxForce = driveMaxForce;
+                                mutated = true;
+                            }
+                        }
                         continue;
                     }
                     const fallbackRootPath = getRootPathFromPrimPath(childLinkPath);
@@ -1532,6 +1550,8 @@ export class ThreeRenderDelegateCore {
                         axisLocal,
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
+                        driveDamping: driveDamping ?? null,
+                        driveMaxForce: driveMaxForce ?? null,
                         localPivotInLink: localPos1,
                         originXyz: normalizedOriginXyz,
                         originQuatWxyz: normalizedOriginQuatWxyz,
@@ -1741,6 +1761,8 @@ export class ThreeRenderDelegateCore {
                 const axisLocal = jointRecord?.axisLocal && typeof jointRecord.axisLocal.length === 'number'
                     ? normalizeVector3(jointRecord.axisLocal, rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz))
                     : rotateAxisByQuaternionWxyz(axisToken, localRot1Wxyz);
+                const driveDamping = toFiniteNumber(jointRecord?.driveDamping);
+                const driveMaxForce = toFiniteNumber(jointRecord?.driveMaxForce);
                 if (closedLoopType) {
                     const childLinkPaths = resolveRuntimeLinkPathsFromSourcePath(body1Path);
                     for (const childLinkPath of childLinkPaths) {
@@ -1793,6 +1815,8 @@ export class ThreeRenderDelegateCore {
                         axisLocal,
                         lowerLimitDeg: limits.lower,
                         upperLimitDeg: limits.upper,
+                        driveDamping: driveDamping ?? null,
+                        driveMaxForce: driveMaxForce ?? null,
                         originXyz: normalizedOriginXyz,
                         originQuatWxyz: normalizedOriginQuatWxyz,
                         localPos1,
@@ -1945,6 +1969,8 @@ export class ThreeRenderDelegateCore {
                 const originQuatWxyz = jointEntry.originQuatWxyz && typeof jointEntry.originQuatWxyz.length === 'number'
                     ? normalizeQuaternionWxyz(jointEntry.originQuatWxyz, [1, 0, 0, 0])
                     : null;
+                const driveDamping = toFiniteNumber(jointEntry.driveDamping);
+                const driveMaxForce = toFiniteNumber(jointEntry.driveMaxForce);
                 jointCatalogEntries.push({
                     linkPath,
                     jointPath: rootPath ? `${rootPath}/joints/${jointName}` : `/joints/${jointName}`,
@@ -1956,6 +1982,8 @@ export class ThreeRenderDelegateCore {
                     axisLocal: resolvedAxisLocal,
                     lowerLimitDeg: limits.lower,
                     upperLimitDeg: limits.upper,
+                    driveDamping: driveDamping ?? null,
+                    driveMaxForce: driveMaxForce ?? null,
                     localPivotInLink,
                     originXyz,
                     originQuatWxyz,

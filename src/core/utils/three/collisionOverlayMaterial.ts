@@ -1,12 +1,17 @@
 import * as THREE from 'three';
 
 import { createMatteMaterial } from '@/core/utils/materialFactory';
+import { markMaterialAsCollision, markMaterialAsShared } from './materialProtection';
 
 const COLLISION_OVERLAY_COLOR = 0xa855f7;
 const COLLISION_OVERLAY_OPACITY = 0.35;
 const COLLISION_OVERLAY_POLYGON_OFFSET_FACTOR = -1.0;
 const COLLISION_OVERLAY_POLYGON_OFFSET_UNITS = -4.0;
 
+// Keep standard collision overlays above visual meshes at equal depth so
+// enabling "Show Collision" is immediately visible without requiring an
+// explicit "Always on top" toggle.
+export const COLLISION_STANDARD_RENDER_ORDER = 1;
 export const COLLISION_OVERLAY_RENDER_ORDER = 999;
 
 export function configureCollisionOverlayMaterial<T extends THREE.Material>(material: T): T {
@@ -16,7 +21,7 @@ export function configureCollisionOverlayMaterial<T extends THREE.Material>(mate
   material.polygonOffset = true;
   material.polygonOffsetFactor = COLLISION_OVERLAY_POLYGON_OFFSET_FACTOR;
   material.polygonOffsetUnits = COLLISION_OVERLAY_POLYGON_OFFSET_UNITS;
-  material.userData.isCollisionMaterial = true;
+  markMaterialAsCollision(material);
   return material;
 }
 
@@ -47,4 +52,4 @@ export const collisionBaseMaterial = configureCollisionOverlayMaterial(
   }),
 );
 
-collisionBaseMaterial.userData.isSharedMaterial = true;
+markMaterialAsShared(collisionBaseMaterial);

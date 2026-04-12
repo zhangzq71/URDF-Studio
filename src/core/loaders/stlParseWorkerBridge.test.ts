@@ -41,8 +41,10 @@ class FakeWorker {
 
 test('STL parse worker failures reject instead of silently reparsing on the main thread', async () => {
   const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
   let fetchCount = 0;
   const fakeWorker = new FakeWorker();
+  const consoleErrors: unknown[][] = [];
 
   globalThis.fetch = (async () => {
     fetchCount += 1;
@@ -53,6 +55,9 @@ test('STL parse worker failures reject instead of silently reparsing on the main
       arrayBuffer: async () => new ArrayBuffer(32),
     } as Response;
   }) as typeof fetch;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args);
+  };
 
   try {
     const client = createStlParseWorkerPoolClient({
@@ -69,8 +74,12 @@ test('STL parse worker failures reject instead of silently reparsing on the main
     await assert.rejects(resultPromise, /stl worker exploded/i);
     await assert.rejects(client.load('/demo.stl'), /STL parse worker is unavailable/);
     assert.equal(fetchCount, 0);
+    assert.equal(consoleErrors.length, 1);
+    assert.match(String(consoleErrors[0]?.[0] || ''), /STL parse worker crashed/i);
+    assert.match(String(consoleErrors[0]?.[1] || ''), /stl worker exploded/i);
   } finally {
     globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
   }
 });
 
@@ -90,17 +99,20 @@ test('STL parse worker bridge parses inline when Worker is unavailable', async (
       ok: true,
       status: 200,
       statusText: 'OK',
-      arrayBuffer: async () => new TextEncoder().encode([
-        'solid triangle',
-        'facet normal 0 0 1',
-        'outer loop',
-        'vertex 0 0 0',
-        'vertex 1 0 0',
-        'vertex 0 1 0',
-        'endloop',
-        'endfacet',
-        'endsolid triangle',
-      ].join('\n')).buffer,
+      arrayBuffer: async () =>
+        new TextEncoder().encode(
+          [
+            'solid triangle',
+            'facet normal 0 0 1',
+            'outer loop',
+            'vertex 0 0 0',
+            'vertex 1 0 0',
+            'vertex 0 1 0',
+            'endloop',
+            'endfacet',
+            'endsolid triangle',
+          ].join('\n'),
+        ).buffer,
     } as Response;
   }) as typeof fetch;
 

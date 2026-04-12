@@ -35,6 +35,7 @@ import {
   stripTransientJointMotionFromJoint,
   stripTransientJointMotionFromRobotData,
 } from '@/shared/utils/robot/semanticSnapshot';
+import { isAssetLibraryOnlyFormat } from '@/shared/utils/robotFileSupport';
 import { getVisualGeometryEntries } from '@/core/robot';
 import { buildExportableAssemblyRobotData } from '@/core/robot/assemblyTransforms';
 
@@ -440,7 +441,7 @@ const writeTextLibraryFiles = (
   allFileContents: Record<string, string>,
 ): void => {
   availableFiles.forEach((file) => {
-    if (file.format === 'mesh') return;
+    if (isAssetLibraryOnlyFormat(file.format)) return;
     const content = file.content || allFileContents[file.name] || '';
     if (content.length === 0) {
       const normalizedName = file.name.replace(/^\/+/, '');

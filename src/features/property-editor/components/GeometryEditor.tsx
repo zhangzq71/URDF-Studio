@@ -30,10 +30,10 @@ import {
   PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
   PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS,
   PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS,
+  PropertyEditorSelect,
   ReadonlyValueField,
   PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
   PROPERTY_EDITOR_SECTION_TITLE_CLASS,
-  PROPERTY_EDITOR_SELECT_CLASS,
 } from './FormControls';
 
 import { MeshPreview } from './MeshPreview';
@@ -209,6 +209,7 @@ interface GeometryEditorProps {
   t: (typeof translations)['en'];
   lang: Language;
   isTabbed?: boolean;
+  showCollisionDeleteAction?: boolean;
 }
 
 interface DimensionInputField {
@@ -276,10 +277,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   t,
   lang,
   isTabbed = false,
+  showCollisionDeleteAction = true,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textureFileInputRef = useRef<HTMLInputElement>(null);
   const [previewMeshPath, setPreviewMeshPath] = useState<string | null>(null);
+  const [previewTexturePath, setPreviewTexturePath] = useState<string | null>(null);
   const geometryActionRowRef = useRef<HTMLDivElement>(null);
   const meshAnalysisRef = useRef<MeshAnalysis | null>(null);
   const meshAnalysisKeyRef = useRef<string | null>(null);
@@ -347,6 +350,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
           ? t.materialSourceGazebo
           : null;
   const currentGeometryType = geomData.type || GeometryType.CYLINDER;
+  const geometryNameValue = geomData.name?.trim() ?? '';
   const geometryTypeOptions =
     EDITABLE_GEOMETRY_TYPES.includes(currentGeometryType) ||
     currentGeometryType === GeometryType.NONE
@@ -458,7 +462,13 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       : null;
   const effectiveTexturePath =
     category === 'visual' ? resolvedVisualMaterial?.texture?.trim() || '' : '';
+  const displayedTexturePath = previewTexturePath || effectiveTexturePath;
+  const displayedTextureAssetUrl = displayedTexturePath ? assets[displayedTexturePath] : null;
   const isTextureReadonly = category === 'visual' && !canEditGeometryBaseTexture(geomData);
+  const effectiveColorValue =
+    category === 'visual'
+      ? resolvedVisualMaterial?.color?.trim() || geomData.color || '#ffffff'
+      : geomData.color || '#ffffff';
   const describeMeshPath = (filePath: string) => {
     const normalizedPath = filePath.replace(/\\/g, '/');
     const pathSegments = normalizedPath.split('/');
@@ -585,6 +595,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   }, [geomData, snapshotKey]);
 
   useEffect(() => {
+    setPreviewTexturePath(null);
+  }, [category, data.id, selectedVisualObjectIndex]);
+
+  useEffect(() => {
     if (geomData.type !== GeometryType.MESH || !geomData.meshPath) {
       return;
     }
@@ -706,7 +720,53 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       return;
     }
 
+    if (resolvedVisualMaterial?.source === 'legacy-link' && isPrimaryVisualSelection) {
+      const nextTexture = String(texturePath || '').trim() || undefined;
+      const nextColor = resolvedVisualMaterial.color?.trim() || undefined;
+      const nextAuthoredMaterials =
+        nextColor || nextTexture
+          ? [
+              {
+                ...(nextColor ? { color: nextColor } : {}),
+                ...(nextTexture ? { texture: nextTexture } : {}),
+              },
+            ]
+          : undefined;
+
+      if (selectedVisualGeometry) {
+        onUpdate(
+          updateVisualGeometryByObjectIndex(data, selectedVisualObjectIndex, {
+            authoredMaterials: nextAuthoredMaterials,
+          }),
+        );
+        return;
+      }
+
+      onUpdate({
+        ...data,
+        visual: {
+          ...data.visual,
+          authoredMaterials: nextAuthoredMaterials,
+        },
+      });
+      return;
+    }
+
     onUpdate(updateVisualBaseTextureByObjectIndex(data, selectedVisualObjectIndex, texturePath));
+  };
+
+  const handleApplyTexture = () => {
+    if (!previewTexturePath) {
+      return;
+    }
+
+    if (previewTexturePath === effectiveTexturePath) {
+      setPreviewTexturePath(null);
+      return;
+    }
+
+    applyVisualTexture(previewTexturePath);
+    setPreviewTexturePath(null);
   };
 
   const handleTextureFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -716,7 +776,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
     }
 
     onUploadAsset(file);
-    applyVisualTexture(file.name);
+    setPreviewTexturePath(file.name);
     e.target.value = '';
   };
 
@@ -736,7 +796,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
   };
 
   const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newType = e.target.value as GeometryType;
+    const newType = e.currentTarget.value as GeometryType;
     const currentType = geomData.type || GeometryType.CYLINDER;
     if (newType === currentType) return;
 
@@ -883,12 +943,10 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
 
       <InlineInputGroup label={t.type} labelWidthClassName="w-11">
         <div ref={geometryActionRowRef} className="flex items-center gap-1">
-          <select
+          <PropertyEditorSelect
             value={currentGeometryType}
-            onChange={handleTypeChange}
-            className={`${PROPERTY_EDITOR_SELECT_CLASS} min-w-0 flex-1`}
-          >
-            {geometryTypeOptions.map((typeOption) => {
+            aria-label={t.type}
+            options={geometryTypeOptions.map((typeOption) => {
               const label =
                 typeOption === GeometryType.BOX
                   ? t.box
@@ -910,13 +968,14 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
                                   ? t.mesh
                                   : t.none;
 
-              return (
-                <option key={typeOption} value={typeOption}>
-                  {label}
-                </option>
-              );
+              return {
+                value: typeOption,
+                label,
+              };
             })}
-          </select>
+            onChange={handleTypeChange}
+            className="min-w-0 flex-1"
+          />
           {geomData.type !== GeometryType.NONE && (
             <button
               type="button"
@@ -949,11 +1008,18 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
         </div>
       </InlineInputGroup>
 
-      {category === 'visual' && geomData.type !== GeometryType.NONE && materialSourceLabel && (
-        <InlineInputGroup label={t.materialSource} labelWidthClassName="w-16">
-          <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
-            {materialSourceLabel}
-          </ReadonlyValueField>
+      {category === 'collision' && geomData.type !== GeometryType.NONE && (
+        <InlineInputGroup label={t.name} labelWidthClassName="w-11">
+          <input
+            type="text"
+            value={geometryNameValue}
+            onChange={(e) => {
+              const nextName = e.target.value.trim();
+              update({ name: nextName || undefined });
+            }}
+            className={PROPERTY_EDITOR_INPUT_CLASS}
+            spellCheck={false}
+          />
         </InlineInputGroup>
       )}
 
@@ -1354,189 +1420,255 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       )}
 
       {category === 'visual' && geomData.type !== GeometryType.NONE && (
-        <InlineInputGroup label={t.color} labelWidthClassName="w-11">
-          {hasReadonlyAuthoredMaterialDisplay ? (
-            <div className="space-y-1.5">
-              <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
-                {authoredMaterialDisplayLabel}
-              </ReadonlyValueField>
-              <div className="flex flex-wrap gap-1">
-                {authoredMaterialColors.map((color) => (
-                  <div
-                    key={normalizeColor(color) ?? color}
-                    className="inline-flex items-center gap-1 rounded-md border border-border-black/70 bg-element-bg px-1.5 py-0.5 text-[9px] font-medium text-text-secondary"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-border-black/70"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="font-mono uppercase tracking-[0.04em] text-text-primary">
-                      {color}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={geomData.color || '#ffffff'}
-                onChange={(e) => update({ color: e.target.value })}
-                className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
-                spellCheck={false}
-              />
-              <span
-                className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-auto whitespace-nowrap`}
-              >
-                HEX
-              </span>
-              <input
-                type="color"
-                value={getColorPickerHexValue(geomData.color)}
-                onChange={(e) =>
-                  update({ color: mergeColorPickerHexValue(e.target.value, geomData.color) })
-                }
-                aria-label={t.color}
-                className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
-              />
-            </div>
-          )}
-        </InlineInputGroup>
-      )}
+        <div className="mt-3 overflow-hidden rounded-lg border border-border-black bg-panel-bg/70">
+          <div className="border-b border-border-black/60 bg-element-bg/70 px-2 py-1.5">
+            <h4 className={PROPERTY_EDITOR_SECTION_TITLE_CLASS}>{t.material}</h4>
+          </div>
 
-      {category === 'visual' && geomData.type !== GeometryType.NONE && (
-        <>
-          <InlineInputGroup label={t.texture} labelWidthClassName="w-11">
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <ReadonlyValueField className="min-w-0 flex-1 bg-element-bg text-[10px] font-medium">
-                  <span className="block truncate">{effectiveTexturePath || t.none}</span>
+          <div className="space-y-2 px-2 py-2">
+            {materialSourceLabel ? (
+              <InlineInputGroup label={t.materialSource} labelWidthClassName="w-16">
+                <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                  {materialSourceLabel}
                 </ReadonlyValueField>
-                <input
-                  type="file"
-                  ref={textureFileInputRef}
-                  className="hidden"
-                  accept=".png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP"
-                  onChange={handleTextureFileChange}
-                />
-                {!isTextureReadonly && (
-                  <button
-                    type="button"
-                    onClick={() => textureFileInputRef.current?.click()}
-                    className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
-                  >
-                    <Upload className="h-3 w-3" />
-                    <span>{t.uploadTexture}</span>
-                  </button>
-                )}
-                {!isTextureReadonly && effectiveTexturePath && (
-                  <button
-                    type="button"
-                    onClick={() => applyVisualTexture(undefined)}
-                    className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    <span>{t.clearTexture}</span>
-                  </button>
-                )}
-              </div>
-              {isTextureReadonly ? (
-                <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>
-                  {t.textureReadonlyMultiMaterialHint}
-                </div>
-              ) : null}
-            </div>
-          </InlineInputGroup>
+              </InlineInputGroup>
+            ) : null}
 
-          {!isTextureReadonly && (
-            <div className="mb-2 overflow-hidden rounded-lg border border-border-black bg-panel-bg/70">
-              <div className="flex items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg/70 px-2 py-1.5">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}>
-                    {t.textureLibrary}
-                  </span>
-                  <span className="inline-flex min-w-4 items-center justify-center rounded-full border border-border-black bg-panel-bg px-1 py-0.5 text-[8px] font-semibold leading-none text-text-tertiary">
-                    {textureFiles.length}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-1 px-1.5 py-1.5">
-                <div className="flex max-h-32 flex-col gap-0.5 overflow-y-auto custom-scrollbar pr-0.5">
-                  {textureFiles.length === 0 && (
-                    <div className="rounded-md border border-dashed border-border-black/70 bg-element-bg/70 px-2 py-3 text-center">
-                      <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}>
-                        {t.textureNotFound}
-                      </div>
-                    </div>
-                  )}
-                  {textureFiles.map((filePath) => {
-                    const isSelected = effectiveTexturePath === filePath;
-                    const { fileName, parentPath } = describeMeshPath(filePath);
-
-                    return (
-                      <button
-                        key={filePath}
-                        type="button"
-                        title={filePath}
-                        onClick={() => applyVisualTexture(filePath)}
-                        className={`
-                          grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition-colors
-                          ${
-                            isSelected
-                              ? 'border-system-blue/35 bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
-                              : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
-                          }
-                        `}
+            <InlineInputGroup label={t.color} labelWidthClassName="w-11">
+              {hasReadonlyAuthoredMaterialDisplay ? (
+                <div className="space-y-1.5">
+                  <ReadonlyValueField className="bg-element-bg text-[10px] font-medium">
+                    {authoredMaterialDisplayLabel}
+                  </ReadonlyValueField>
+                  <div className="flex flex-wrap gap-1">
+                    {authoredMaterialColors.map((color) => (
+                      <div
+                        key={normalizeColor(color) ?? color}
+                        className="inline-flex items-center gap-1 rounded-md border border-border-black/70 bg-element-bg px-1.5 py-0.5 text-[9px] font-medium text-text-secondary"
                       >
                         <span
                           aria-hidden="true"
-                          className="h-3 w-3 shrink-0 rounded border border-border-black/70 bg-cover bg-center"
-                          style={
-                            assets[filePath]
-                              ? { backgroundImage: `url("${assets[filePath]}")` }
-                              : undefined
-                          }
+                          className="h-2.5 w-2.5 shrink-0 rounded-full border border-border-black/70"
+                          style={{ backgroundColor: color }}
                         />
-                        <span className="min-w-0">
-                          <span
-                            className={`block truncate text-[10px] font-medium ${
-                              isSelected ? 'text-system-blue' : 'text-text-primary'
-                            }`}
-                          >
-                            {fileName}
-                          </span>
-                          {parentPath && (
-                            <span className="block truncate text-[9px] leading-4 text-text-tertiary">
-                              {parentPath}
-                            </span>
-                          )}
+                        <span className="font-mono uppercase tracking-[0.04em] text-text-primary">
+                          {color}
                         </span>
-                        {isSelected ? <Check className="h-3 w-3 shrink-0" /> : null}
-                      </button>
-                    );
-                  })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={effectiveColorValue}
+                    onChange={(e) => update({ color: e.target.value })}
+                    className={`${PROPERTY_EDITOR_INPUT_CLASS} flex-1 font-mono uppercase tracking-[0.04em]`}
+                    spellCheck={false}
+                  />
+                  <span
+                    className={`${PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS} w-auto whitespace-nowrap`}
+                  >
+                    HEX
+                  </span>
+                  <input
+                    type="color"
+                    value={getColorPickerHexValue(effectiveColorValue)}
+                    onChange={(e) =>
+                      update({
+                        color: mergeColorPickerHexValue(e.target.value, effectiveColorValue),
+                      })
+                    }
+                    aria-label={t.color}
+                    className="h-7 w-8 shrink-0 cursor-pointer rounded-md border border-border-strong bg-input-bg p-0.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-border-black)_28%,transparent)]"
+                  />
+                </div>
+              )}
+            </InlineInputGroup>
+
+            <InlineInputGroup label={t.texture} labelWidthClassName="w-11">
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <ReadonlyValueField className="min-w-0 flex-1 bg-element-bg text-[10px] font-medium">
+                    <span className="block truncate">{displayedTexturePath || t.none}</span>
+                  </ReadonlyValueField>
+                  <input
+                    type="file"
+                    ref={textureFileInputRef}
+                    className="hidden"
+                    accept=".png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP"
+                    onChange={handleTextureFileChange}
+                  />
+                  {!isTextureReadonly && (
+                    <button
+                      type="button"
+                      onClick={() => textureFileInputRef.current?.click()}
+                      className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
+                    >
+                      <Upload className="h-3 w-3" />
+                      <span>{t.uploadTexture}</span>
+                    </button>
+                  )}
+                  {!isTextureReadonly && effectiveTexturePath && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPreviewTexturePath(null);
+                        applyVisualTexture(undefined);
+                      }}
+                      className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} shrink-0`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      <span>{t.clearTexture}</span>
+                    </button>
+                  )}
+                </div>
+                {isTextureReadonly ? (
+                  <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>
+                    {t.textureReadonlyMultiMaterialHint}
+                  </div>
+                ) : null}
+              </div>
+            </InlineInputGroup>
+
+            {!isTextureReadonly && (
+              <div className="mb-2 overflow-hidden rounded-lg border border-border-black bg-panel-bg/70">
+                <div className="flex items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg/70 px-2 py-1.5">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}>
+                      {t.textureLibrary}
+                    </span>
+                    <span className="inline-flex min-w-4 items-center justify-center rounded-full border border-border-black bg-panel-bg px-1 py-0.5 text-[8px] font-semibold leading-none text-text-tertiary">
+                      {textureFiles.length}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1 px-1.5 py-1.5">
+                  <div className="flex max-h-32 flex-col gap-0.5 overflow-y-auto custom-scrollbar pr-0.5">
+                    {textureFiles.length === 0 && (
+                      <div className="rounded-md border border-dashed border-border-black/70 bg-element-bg/70 px-2 py-3 text-center">
+                        <div className={`${PROPERTY_EDITOR_HELPER_TEXT_CLASS} italic`}>
+                          {t.textureNotFound}
+                        </div>
+                      </div>
+                    )}
+                    {textureFiles.map((filePath) => {
+                      const isApplied = effectiveTexturePath === filePath && !previewTexturePath;
+                      const isPreviewing = previewTexturePath === filePath;
+                      const { fileName, parentPath } = describeMeshPath(filePath);
+
+                      return (
+                        <div
+                          key={filePath}
+                          title={filePath}
+                          onClick={() => setPreviewTexturePath(filePath)}
+                          onDoubleClick={() => {
+                            applyVisualTexture(filePath);
+                            setPreviewTexturePath(null);
+                          }}
+                          className={`
+                            grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition-colors
+                            ${
+                              isApplied
+                                ? 'border-system-blue/35 bg-system-blue/10 text-system-blue dark:bg-system-blue/20'
+                                : isPreviewing
+                                  ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                  : 'border-transparent bg-transparent text-text-secondary hover:border-border-black/50 hover:bg-element-hover'
+                            }
+                          `}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="h-3 w-3 shrink-0 rounded border border-border-black/70 bg-cover bg-center"
+                            style={
+                              assets[filePath]
+                                ? { backgroundImage: `url("${assets[filePath]}")` }
+                                : undefined
+                            }
+                          />
+                          <span className="min-w-0">
+                            <span
+                              className={`block truncate text-[10px] font-medium ${
+                                isApplied ? 'text-system-blue' : 'text-text-primary'
+                              }`}
+                            >
+                              {fileName}
+                            </span>
+                            {parentPath && (
+                              <span className="block truncate text-[9px] leading-4 text-text-tertiary">
+                                {parentPath}
+                              </span>
+                            )}
+                          </span>
+                          {isApplied ? (
+                            <Check className="h-3 w-3 shrink-0" />
+                          ) : isPreviewing ? (
+                            <Eye className="h-3 w-3 shrink-0" />
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
 
-      {category === 'collision' && geomData.type !== GeometryType.NONE && (
-        <div className="mt-4 border-t border-border-black pt-3">
-          <button
-            type="button"
-            onClick={handleDeleteCollision}
-            className="inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>{t.deleteCollisionGeometry}</span>
-          </button>
+            {displayedTexturePath ? (
+              <div className="flex flex-col gap-1 rounded-md border border-border-black/60 bg-element-bg/70 p-1">
+                <div className="overflow-hidden rounded-md border border-border-black/60 bg-panel-bg/80">
+                  {displayedTextureAssetUrl ? (
+                    <img
+                      src={displayedTextureAssetUrl}
+                      alt={`${t.preview}: ${displayedTexturePath}`}
+                      className="block max-h-40 w-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex min-h-28 items-center justify-center px-2 py-3 text-center">
+                      <div className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>{t.noPreviewImage}</div>
+                    </div>
+                  )}
+                </div>
+                {previewTexturePath ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={handleApplyTexture}
+                      className={`${PROPERTY_EDITOR_PRIMARY_BUTTON_CLASS} flex-1`}
+                    >
+                      <Check className="h-2.5 w-2.5" />
+                      {t.apply}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTexturePath(null)}
+                      className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} flex-1`}
+                    >
+                      {t.cancel}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
+
+      {category === 'collision' &&
+        showCollisionDeleteAction &&
+        geomData.type !== GeometryType.NONE && (
+          <div className="mt-4 border-t border-border-black pt-3">
+            <button
+              type="button"
+              onClick={handleDeleteCollision}
+              className="inline-flex h-7 w-full items-center justify-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>{t.deleteCollisionGeometry}</span>
+            </button>
+          </div>
+        )}
     </div>
   );
 };

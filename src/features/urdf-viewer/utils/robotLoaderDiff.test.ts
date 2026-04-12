@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { JointType, type UrdfJoint } from '@/types';
+import { GeometryType, JointType, type UrdfJoint, type UrdfLink } from '@/types';
 
-import { detectJointPatches, detectSingleJointPatch } from './robotLoaderDiff';
+import {
+  detectJointPatches,
+  detectSingleGeometryPatch,
+  detectSingleJointPatch,
+} from './robotLoaderDiff';
 
 const makeJoint = (overrides: Partial<UrdfJoint> = {}): UrdfJoint => ({
   id: 'joint_1',
@@ -24,6 +28,46 @@ const makeJoint = (overrides: Partial<UrdfJoint> = {}): UrdfJoint => ({
     motorId: '',
     motorDirection: 1,
   },
+  ...overrides,
+});
+
+const makeLink = (overrides: Partial<UrdfLink> = {}): UrdfLink => ({
+  id: 'base_link',
+  name: 'base_link',
+  visible: true,
+  visual: {
+    type: GeometryType.BOX,
+    dimensions: { x: 0.2, y: 0.2, z: 0.2 },
+    color: '#808080',
+    origin: {
+      xyz: { x: 0, y: 0, z: 0 },
+      rpy: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  },
+  visualBodies: [
+    {
+      type: GeometryType.BOX,
+      dimensions: { x: 0.1, y: 0.1, z: 0.1 },
+      color: '#22c55e',
+      origin: {
+        xyz: { x: 0.1, y: 0, z: 0 },
+        rpy: { r: 0, p: 0, y: 0 },
+      },
+      visible: true,
+    },
+  ],
+  collision: {
+    type: GeometryType.NONE,
+    dimensions: { x: 0, y: 0, z: 0 },
+    color: '#808080',
+    origin: {
+      xyz: { x: 0, y: 0, z: 0 },
+      rpy: { r: 0, p: 0, y: 0 },
+    },
+    visible: true,
+  },
+  collisionBodies: [],
   ...overrides,
 });
 
@@ -100,4 +144,33 @@ test('detectSingleJointPatch treats hardware interface changes as joint updates'
 
   assert.ok(patch);
   assert.equal(patch?.jointName, 'joint_1');
+});
+
+test('detectSingleGeometryPatch treats visualBodies edits as geometry updates', () => {
+  const previousLinks = {
+    base_link: makeLink(),
+  };
+  const nextLinks = {
+    base_link: makeLink({
+      visualBodies: [
+        {
+          type: GeometryType.BOX,
+          dimensions: { x: 0.1, y: 0.1, z: 0.1 },
+          color: '#12ab34',
+          origin: {
+            xyz: { x: 0.1, y: 0, z: 0 },
+            rpy: { r: 0, p: 0, y: 0 },
+          },
+          visible: true,
+        },
+      ],
+    }),
+  };
+
+  const patch = detectSingleGeometryPatch(previousLinks, nextLinks);
+
+  assert.ok(patch);
+  assert.equal(patch?.linkName, 'base_link');
+  assert.equal(patch?.visualChanged, false);
+  assert.equal(patch?.visualBodiesChanged, true);
 });

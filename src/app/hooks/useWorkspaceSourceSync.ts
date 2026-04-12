@@ -1,11 +1,11 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef } from 'react';
 import { generateMujocoXML, generateSDF, generateURDF } from '@/core/parsers';
 import { findStandaloneXacroTruthFile } from '@/core/parsers/importRobotFile';
 import {
   prefixMJCFSourceIdentifiers,
   resolveMJCFSource,
 } from '@/core/parsers/mjcf/mjcfSourceResolver';
-import { scheduleFailFastInDev } from '@/core/utils/runtimeDiagnostics';
+import { mergeAssembly } from '@/core/robot';
 import {
   DEFAULT_LINK,
   GeometryType,
@@ -24,26 +24,39 @@ import {
   getSourceCodeDocumentFlavor,
   type SourceCodeDocumentFlavor,
 } from '@/app/utils/sourceCodeDisplay';
+import { buildSourceCodeDocuments } from '@/app/utils/sourceCodeDocuments';
+import {
+  areJointSourceCompatible,
+  buildVisibleAssemblyState,
+} from './workspace-source-sync/compatibility';
+import { readGeneratedSourceFromCache } from './workspace-source-sync/sourceGenerationCache';
+import { useDeferredWorkspaceSourceSync } from './workspace-source-sync/useDeferredWorkspaceSourceSync';
+import {
+  resolveStandaloneViewerContent,
+  resolveStandaloneViewerSourceFormat,
+} from './workspace-source-sync/mjcfViewerRuntimePolicy';
+import { useMjcfViewerEditState } from './workspace-source-sync/useMjcfViewerEditState';
+import { useSelectedSourceSnapshots } from './workspace-source-sync/useSelectedSourceSnapshots';
+import { useSourceEditBaseline } from './workspace-source-sync/useSourceEditBaseline';
+import { useWorkspaceFilePreview } from './workspace-source-sync/useWorkspaceFilePreview';
+import { useWorkspaceTextFileSync } from './workspace-source-sync/useWorkspaceTextFileSync';
 import {
   buildLightweightWorkspaceViewerReloadContent,
   buildWorkspaceAssemblyViewerState,
   buildWorkspaceAssemblyViewerDisplayRobotData,
   buildWorkspaceViewerRobotData,
-  buildPreviewSceneSourceFromImportResult,
-  createPreviewRobotStateFromImportResult,
   createRobotSourceSnapshot,
-  createRobotSourceSnapshotFromUrdfContent,
   getWorkspaceAssemblyRenderFailureReason,
   getPreferredMjcfContent,
   getPreferredSdfContent,
   getPreferredUrdfContent,
   getWorkspaceAssemblyViewerRobotData,
   getSingleComponentWorkspaceMjcfViewerSource,
+  isActiveWorkspaceTransformSession,
   normalizeWorkspaceAssemblyViewerDisplayRobotDataForSource,
   shouldKeepPristineSingleComponentWorkspaceOnSourceViewer,
   shouldUseGeneratedWorkspaceViewerReloadContent,
 } from './workspaceSourceSyncUtils';
-import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
 import { useAnimatedWorkspaceViewerRobotData } from './useAnimatedWorkspaceViewerRobotData';
 import {
   resolveWorkspaceViewerFallbackRobot,
@@ -62,8 +75,8 @@ interface UseWorkspaceSourceSyncOptions {
   assemblyRevision: number;
   assemblyBridgePreview?: BridgeJoint | null;
   assemblySelection?: { type: 'assembly' | 'component' | null; id: string | null };
+  workspaceTransformPending: boolean;
   sidebarTab: string;
-  getMergedRobotData: () => RobotData | null | undefined;
   selection: RobotState['selection'];
   robotName: string;
   robotLinks: Record<string, UrdfLink>;
@@ -85,45 +98,13 @@ interface UseWorkspaceSourceSyncOptions {
   setOriginalUrdfContent: (content: string | null) => void;
 }
 
-function areJointSourceCompatible(
-  prev: Record<string, UrdfJoint>,
-  next: Record<string, UrdfJoint>,
-): boolean {
-  type ComparableJoint = UrdfJoint & { angle?: number };
-  const prevKeys = Object.keys(prev);
-  const nextKeys = Object.keys(next);
-
-  if (prevKeys.length !== nextKeys.length) return false;
-
-  for (const key of nextKeys) {
-    const prevJoint = prev[key] as ComparableJoint | undefined;
-    const nextJoint = next[key] as ComparableJoint | undefined;
-    if (!prevJoint || !nextJoint) return false;
-    if (prevJoint === nextJoint) continue;
-
-    const comparedKeys = new Set<keyof ComparableJoint>([
-      ...(Object.keys(prevJoint) as Array<keyof ComparableJoint>),
-      ...(Object.keys(nextJoint) as Array<keyof ComparableJoint>),
-    ]);
-
-    for (const comparedKey of comparedKeys) {
-      if (comparedKey === 'angle') continue;
-      if (prevJoint[comparedKey] !== nextJoint[comparedKey]) {
-        return false;
-      }
-    }
-  }
-
-  return true;
-}
-
 export function useWorkspaceSourceSync({
   assemblyState,
   assemblyRevision,
   assemblyBridgePreview = null,
   assemblySelection,
+  workspaceTransformPending,
   sidebarTab,
-  getMergedRobotData,
   selection,
   robotName,
   robotLinks,
@@ -149,53 +130,27 @@ export function useWorkspaceSourceSync({
   const hasWorkspaceComponents = Boolean(
     assemblyState && Object.keys(assemblyState.components).length > 0,
   );
-  const [filePreviewFile, setFilePreviewFile] = useState<RobotFile | null>(null);
-  const [previewRobot, setPreviewRobot] = useState<RobotState | null>(null);
-  const [filePreview, setFilePreview] = useState<
-    { urdfContent: string; fileName: string } | undefined
-  >(undefined);
-  const [selectedFilePreviewSourceSnapshot, setSelectedFilePreviewSourceSnapshot] = useState<
-    string | null
-  >(null);
-  const [selectedXacroBaselineSourceSnapshot, setSelectedXacroBaselineSourceSnapshot] = useState<
-    string | null
-  >(null);
   const sourceJointsRef = useRef<Record<string, UrdfJoint>>({});
-  const sourceBaselineRef = useRef<{ fileName: string | null; snapshot: string | null }>({
-    fileName: null,
-    snapshot: null,
+  const {
+    filePreview,
+    previewRobot,
+    previewFileName,
+    handlePreviewFile,
+    handleClosePreview,
+    activePreviewFile,
+  } = useWorkspaceFilePreview({
+    availableFiles,
+    assets,
+    allFileContents,
+    getUsdPreparedExportCache,
   });
-  const mjcfViewerBaselineKeyRef = useRef<string | null>(null);
-  const mjcfViewerBaselineContentRef = useRef<string | null>(null);
-  const selectedFilePreviewRequestRef = useRef(0);
-  const selectedXacroBaselineRequestRef = useRef(0);
-  const filePreviewRequestRef = useRef(0);
   const activeSourceFile = useMemo(
-    () => filePreviewFile ?? selectedFile,
-    [filePreviewFile, selectedFile],
+    () => activePreviewFile ?? selectedFile,
+    [activePreviewFile, selectedFile],
   );
   const readCachedGeneratedSource = useCallback(
     (cacheKey: string, buildSource: () => string): string => {
-      const cache = generatedSourceCacheRef.current;
-      const cachedSource = cache.get(cacheKey);
-      if (cachedSource !== undefined) {
-        cache.delete(cacheKey);
-        cache.set(cacheKey, cachedSource);
-        return cachedSource;
-      }
-
-      const nextSource = buildSource();
-      cache.set(cacheKey, nextSource);
-
-      while (cache.size > 64) {
-        const oldestKey = cache.keys().next().value;
-        if (oldestKey === undefined) {
-          break;
-        }
-        cache.delete(oldestKey);
-      }
-
-      return nextSource;
+      return readGeneratedSourceFromCache(generatedSourceCacheRef.current, cacheKey, buildSource);
     },
     [],
   );
@@ -270,51 +225,78 @@ export function useWorkspaceSourceSync({
 
     return visibleComponents[0]?.id ?? null;
   }, [assemblyState, shouldReuseSelectedFileViewerForWorkspace]);
-  const hasActiveWorkspaceTransformTarget =
-    isWorkspaceAssembly &&
-    Boolean(assemblySelection?.type) &&
-    !shouldReuseSelectedFileViewerForWorkspace;
   // Keep the current robot rendered while the workspace is empty or still a
   // pristine single-component seed so switching to workspace does not trigger
   // a redundant viewer reload before the assembly actually diverges.
   const shouldRenderAssembly =
     isWorkspaceAssembly && hasWorkspaceComponents && !shouldReuseSelectedFileViewerForWorkspace;
+  const hasActiveWorkspaceTransformTarget = useMemo(
+    () =>
+      isActiveWorkspaceTransformSession({
+        shouldRenderAssembly,
+        shouldReuseSelectedFileViewerForWorkspace,
+        workspaceTransformPending,
+      }),
+    [shouldRenderAssembly, shouldReuseSelectedFileViewerForWorkspace, workspaceTransformPending],
+  );
   const previousShouldRenderAssemblyRef = useRef(shouldRenderAssembly);
   const lastStableViewerRobotRef = useRef<RobotState | null>(null);
-
+  const deferredAssemblyState = useDeferredValue(assemblyState);
+  const isPreviewingAssemblyBridge = shouldRenderAssembly && Boolean(assemblyBridgePreview);
+  const assemblyStateForViewerDisplay = isPreviewingAssemblyBridge
+    ? assemblyState
+    : deferredAssemblyState;
+  const visibleAssemblyStateForViewerDisplay = useMemo(
+    () => (shouldRenderAssembly ? buildVisibleAssemblyState(assemblyStateForViewerDisplay) : null),
+    [assemblyStateForViewerDisplay, shouldRenderAssembly],
+  );
   const mergedRobotData = useMemo(() => {
-    if (!shouldRenderAssembly) return null;
-    return getMergedRobotData() ?? null;
-  }, [assemblyState, getMergedRobotData, shouldRenderAssembly]);
+    if (!shouldRenderAssembly || !visibleAssemblyStateForViewerDisplay) {
+      return null;
+    }
+
+    return mergeAssembly(visibleAssemblyStateForViewerDisplay);
+  }, [shouldRenderAssembly, visibleAssemblyStateForViewerDisplay]);
   const viewerAssemblyState = useMemo(() => {
-    if (!shouldRenderAssembly) {
+    if (!shouldRenderAssembly || !visibleAssemblyStateForViewerDisplay) {
       return null;
     }
 
     return buildWorkspaceAssemblyViewerState({
-      assemblyState,
+      assemblyState: visibleAssemblyStateForViewerDisplay,
       bridgePreview: assemblyBridgePreview,
     });
-  }, [assemblyBridgePreview, assemblyState, shouldRenderAssembly]);
+  }, [assemblyBridgePreview, shouldRenderAssembly, visibleAssemblyStateForViewerDisplay]);
   const viewerMergedRobotData = useMemo(() => {
-    if (!shouldRenderAssembly) {
+    if (!shouldRenderAssembly || !visibleAssemblyStateForViewerDisplay) {
       return null;
     }
 
     return getWorkspaceAssemblyViewerRobotData({
-      assemblyState,
+      assemblyState: visibleAssemblyStateForViewerDisplay,
       fallbackMergedRobotData: mergedRobotData,
       bridgePreview: assemblyBridgePreview,
     });
-  }, [assemblyBridgePreview, assemblyState, mergedRobotData, shouldRenderAssembly]);
+  }, [
+    assemblyBridgePreview,
+    mergedRobotData,
+    shouldRenderAssembly,
+    visibleAssemblyStateForViewerDisplay,
+  ]);
   const workspaceAssemblyRenderFailureReason = useMemo(
     () =>
       getWorkspaceAssemblyRenderFailureReason({
         shouldRenderAssembly,
+        hasDisplayAssemblyState: Boolean(visibleAssemblyStateForViewerDisplay),
         mergedRobotData,
         viewerMergedRobotData,
       }),
-    [mergedRobotData, shouldRenderAssembly, viewerMergedRobotData],
+    [
+      mergedRobotData,
+      shouldRenderAssembly,
+      viewerMergedRobotData,
+      visibleAssemblyStateForViewerDisplay,
+    ],
   );
   const deferredShouldRenderAssembly = useDeferredValue(shouldRenderAssembly);
   const deferredViewerAssemblyState = useDeferredValue(viewerAssemblyState);
@@ -322,9 +304,6 @@ export function useWorkspaceSourceSync({
   const deferredWorkspaceAssemblyRenderFailureReason = useDeferredValue(
     workspaceAssemblyRenderFailureReason,
   );
-  const isPreviewingAssemblyBridge = shouldRenderAssembly && Boolean(assemblyBridgePreview);
-  // Bridge-creation steppers emit small, high-frequency origin updates. Running those
-  // preview frames through deferred values makes the child component feel sticky.
   const workspaceViewerAssemblyStateForDisplay = isPreviewingAssemblyBridge
     ? viewerAssemblyState
     : deferredViewerAssemblyState;
@@ -548,220 +527,32 @@ export function useWorkspaceSourceSync({
     () => selectedXacroTruthFile?.name ?? selectedFile?.name ?? null,
     [selectedFile?.name, selectedXacroTruthFile],
   );
-
-  useEffect(() => {
-    if (shouldRenderAssembly || !selectedFile || selectedFile.format === 'xacro') {
-      setSelectedFilePreviewSourceSnapshot(null);
-      return;
-    }
-
-    const requestId = ++selectedFilePreviewRequestRef.current;
-
-    void resolveRobotFileDataWithWorker(selectedFile, {
-      availableFiles,
-      assets,
-      allFileContents,
-      usdRobotData: getUsdPreparedExportCache(selectedFile.name)?.robotData ?? null,
-    })
-      .then((result) => {
-        if (requestId !== selectedFilePreviewRequestRef.current) {
-          return;
-        }
-
-        const previewRobotState = createPreviewRobotStateFromImportResult(selectedFile, result);
-        setSelectedFilePreviewSourceSnapshot(
-          previewRobotState ? createRobotSourceSnapshot(previewRobotState) : null,
-        );
-      })
-      .catch((error) => {
-        if (requestId !== selectedFilePreviewRequestRef.current) {
-          return;
-        }
-
-        setSelectedFilePreviewSourceSnapshot(null);
-        scheduleFailFastInDev(
-          'useWorkspaceSourceSync:selectedFilePreviewSourceSnapshot',
-          new Error(`Failed to build preview snapshot for "${selectedFile.name}".`, {
-            cause: error,
-          }),
-        );
-      });
-  }, [
-    allFileContents,
-    assets,
-    availableFiles,
-    getUsdPreparedExportCache,
-    selectedFile,
-    shouldRenderAssembly,
-  ]);
-
-  useEffect(() => {
-    if (shouldRenderAssembly || selectedFile?.format !== 'xacro' || !originalUrdfContent) {
-      setSelectedXacroBaselineSourceSnapshot(null);
-      return;
-    }
-
-    const requestId = ++selectedXacroBaselineRequestRef.current;
-    const sourcePath = selectedXacroResolvedSourceFilePath ?? selectedFile.name;
-
-    void createRobotSourceSnapshotFromUrdfContent(originalUrdfContent, {
-      sourcePath,
-    })
-      .then((snapshot) => {
-        if (requestId !== selectedXacroBaselineRequestRef.current) {
-          return;
-        }
-
-        setSelectedXacroBaselineSourceSnapshot(snapshot);
-      })
-      .catch((error) => {
-        if (requestId !== selectedXacroBaselineRequestRef.current) {
-          return;
-        }
-
-        setSelectedXacroBaselineSourceSnapshot(null);
-        scheduleFailFastInDev(
-          'useWorkspaceSourceSync:selectedXacroBaselineSourceSnapshot',
-          new Error(`Failed to build Xacro baseline snapshot for "${selectedFile.name}".`, {
-            cause: error,
-          }),
-        );
-      });
-  }, [
-    originalUrdfContent,
-    selectedFile,
-    selectedXacroResolvedSourceFilePath,
-    shouldRenderAssembly,
-  ]);
-
-  const isSelectedUrdfSource = selectedFile?.format === 'urdf';
-  const isSelectedXacroSource = selectedFile?.format === 'xacro';
-  const isSelectedSdfSource = selectedFile?.format === 'sdf';
-
-  useEffect(() => {
-    if (
-      shouldRenderAssembly ||
-      !selectedFile ||
-      (!isSelectedUrdfSource && !isSelectedXacroSource && !isSelectedSdfSource)
-    ) {
-      sourceBaselineRef.current = { fileName: null, snapshot: null };
-      return;
-    }
-  }, [
-    isSelectedSdfSource,
-    isSelectedUrdfSource,
-    isSelectedXacroSource,
-    selectedFile,
-    shouldRenderAssembly,
-  ]);
-
-  useEffect(() => {
-    if (shouldRenderAssembly || !selectedFile || !isSelectedUrdfSource) {
-      return;
-    }
-
-    if (selectedFilePreviewSourceSnapshot !== currentRobotSourceSnapshot) {
-      return;
-    }
-
-    if (
-      sourceBaselineRef.current.fileName === selectedFile.name &&
-      sourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
-    ) {
-      return;
-    }
-
-    sourceBaselineRef.current = {
-      fileName: selectedFile.name,
-      snapshot: currentRobotSourceSnapshot,
-    };
-  }, [
-    currentRobotSourceSnapshot,
-    isSelectedUrdfSource,
-    selectedFile,
+  const {
     selectedFilePreviewSourceSnapshot,
-    shouldRenderAssembly,
-  ]);
-
-  useEffect(() => {
-    if (shouldRenderAssembly || !selectedFile || !isSelectedXacroSource) {
-      return;
-    }
-
-    if (selectedXacroBaselineSourceSnapshot !== currentRobotSourceSnapshot) {
-      return;
-    }
-
-    if (
-      sourceBaselineRef.current.fileName === selectedFile.name &&
-      sourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
-    ) {
-      return;
-    }
-
-    sourceBaselineRef.current = {
-      fileName: selectedFile.name,
-      snapshot: currentRobotSourceSnapshot,
-    };
-  }, [
-    currentRobotSourceSnapshot,
-    isSelectedXacroSource,
-    selectedFile,
+    selectedFilePreviewSourceSnapshotStatus,
     selectedXacroBaselineSourceSnapshot,
-    shouldRenderAssembly,
-  ]);
-
-  useEffect(() => {
-    if (shouldRenderAssembly || !selectedFile || !isSelectedSdfSource) {
-      return;
-    }
-
-    if (selectedFilePreviewSourceSnapshot !== currentRobotSourceSnapshot) {
-      return;
-    }
-
-    if (
-      sourceBaselineRef.current.fileName === selectedFile.name &&
-      sourceBaselineRef.current.snapshot === currentRobotSourceSnapshot
-    ) {
-      return;
-    }
-
-    sourceBaselineRef.current = {
-      fileName: selectedFile.name,
-      snapshot: currentRobotSourceSnapshot,
-    };
-  }, [
-    currentRobotSourceSnapshot,
-    isSelectedSdfSource,
+    selectedXacroBaselineSourceSnapshotStatus,
+  } = useSelectedSourceSnapshots({
     selectedFile,
-    selectedFilePreviewSourceSnapshot,
+    availableFiles,
+    assets,
+    allFileContents,
     shouldRenderAssembly,
-  ]);
+    originalUrdfContent,
+    selectedXacroResolvedSourceFilePath,
+    getUsdPreparedExportCache,
+  });
 
-  const hasSourceStoreEdits = useMemo(() => {
-    if (
-      shouldRenderAssembly ||
-      !selectedFile ||
-      (!isSelectedUrdfSource && !isSelectedXacroSource && !isSelectedSdfSource)
-    ) {
-      return false;
-    }
-
-    const baseline = sourceBaselineRef.current;
-    if (!baseline.fileName || baseline.fileName !== selectedFile.name) {
-      return false;
-    }
-
-    return baseline.snapshot !== currentRobotSourceSnapshot;
-  }, [
-    currentRobotSourceSnapshot,
-    isSelectedSdfSource,
-    isSelectedUrdfSource,
-    isSelectedXacroSource,
-    selectedFile,
-    shouldRenderAssembly,
-  ]);
+  const { hasSourceStoreEdits, isSelectedUrdfSource, isSelectedXacroSource, isSelectedSdfSource } =
+    useSourceEditBaseline({
+      shouldRenderAssembly,
+      selectedFile,
+      currentRobotSourceSnapshot,
+      selectedFilePreviewSourceSnapshot,
+      selectedXacroBaselineSourceSnapshot,
+      selectedFilePreviewSourceSnapshotStatus,
+      selectedXacroBaselineSourceSnapshotStatus,
+    });
 
   const generatedUrdfContent = useMemo(() => {
     if (shouldRenderAssembly || isSelectedUsdHydrating || selectedFile?.format === 'mjcf') {
@@ -877,57 +668,13 @@ export function useWorkspaceSourceSync({
     return resolveMJCFSource(selectedFile, availableFiles);
   }, [availableFiles, selectedFile]);
 
-  const mjcfViewerBaselineKey = useMemo(
-    () =>
-      selectedFile?.format === 'mjcf'
-        ? `${selectedFile.name}\u0000${resolvedMjcfSource?.content ?? selectedFile.content}`
-        : null,
-    [resolvedMjcfSource?.content, selectedFile],
-  );
-
-  useEffect(() => {
-    if (!mjcfViewerBaselineKey) {
-      mjcfViewerBaselineKeyRef.current = null;
-      mjcfViewerBaselineContentRef.current = null;
-      return;
-    }
-
-    if (mjcfViewerBaselineKeyRef.current !== mjcfViewerBaselineKey) {
-      mjcfViewerBaselineKeyRef.current = mjcfViewerBaselineKey;
-      mjcfViewerBaselineContentRef.current = null;
-    }
-
-    if (
-      !generatedMjcfContent ||
-      selectedFilePreviewSourceSnapshot !== currentRobotSourceSnapshot ||
-      mjcfViewerBaselineContentRef.current !== null
-    ) {
-      return;
-    }
-
-    mjcfViewerBaselineContentRef.current = generatedMjcfContent;
-  }, [
-    currentRobotSourceSnapshot,
+  const hasMjcfViewerEdits = useMjcfViewerEditState({
+    selectedFile,
+    resolvedMjcfContent: resolvedMjcfSource?.content ?? null,
     generatedMjcfContent,
-    mjcfViewerBaselineKey,
     selectedFilePreviewSourceSnapshot,
-  ]);
-
-  const hasMjcfViewerEdits = useMemo(() => {
-    if (!mjcfViewerBaselineKey || !generatedMjcfContent) {
-      return false;
-    }
-
-    if (mjcfViewerBaselineKeyRef.current !== mjcfViewerBaselineKey) {
-      return false;
-    }
-
-    if (mjcfViewerBaselineContentRef.current === null) {
-      return false;
-    }
-
-    return mjcfViewerBaselineContentRef.current !== generatedMjcfContent;
-  }, [generatedMjcfContent, mjcfViewerBaselineKey]);
+    currentRobotSourceSnapshot,
+  });
 
   const workspaceViewerNeedsGeneratedUrdfContent = useMemo(() => {
     if (!shouldRenderAssembly || !workspaceViewerRobotData) {
@@ -1086,87 +833,34 @@ export function useWorkspaceSourceSync({
       return workspaceViewerMjcfContent ? 'mjcf' : 'urdf';
     }
 
-    if (selectedFile?.format === 'mjcf' && hasMjcfViewerEdits) {
-      return 'urdf';
-    }
+    return resolveStandaloneViewerSourceFormat(selectedFile?.format);
+  }, [selectedFile?.format, shouldRenderAssembly, workspaceViewerMjcfContent]);
 
-    switch (selectedFile?.format) {
-      case 'urdf':
-      case 'mjcf':
-      case 'sdf':
-      case 'xacro':
-        return selectedFile.format;
-      default:
-        return 'auto';
-    }
-  }, [hasMjcfViewerEdits, selectedFile?.format, shouldRenderAssembly, workspaceViewerMjcfContent]);
-
-  const syncTextFileContent = useCallback(
-    (fileName: string, content: string, options: { syncOriginalContent?: boolean } = {}) => {
-      const { syncOriginalContent = false } = options;
-
-      if (selectedFile?.name === fileName && selectedFile.content !== content) {
-        setSelectedFile({
-          ...selectedFile,
-          content,
-        });
-      }
-
-      const needsAvailableFileSync = availableFiles.some(
-        (file) => file.name === fileName && file.content !== content,
-      );
-
-      if (needsAvailableFileSync) {
-        setAvailableFiles(
-          availableFiles.map((file) => (file.name === fileName ? { ...file, content } : file)),
-        );
-      }
-
-      if (allFileContents[fileName] !== content) {
-        setAllFileContents({
-          ...allFileContents,
-          [fileName]: content,
-        });
-      }
-
-      if (syncOriginalContent && originalUrdfContent !== content) {
-        setOriginalUrdfContent(content);
-      }
-    },
-    [
-      allFileContents,
-      availableFiles,
-      originalUrdfContent,
-      selectedFile,
-      setAllFileContents,
-      setAvailableFiles,
-      setOriginalUrdfContent,
-      setSelectedFile,
-    ],
-  );
+  const syncTextFileContent = useWorkspaceTextFileSync({
+    selectedFile,
+    availableFiles,
+    allFileContents,
+    originalUrdfContent,
+    setSelectedFile,
+    setAvailableFiles,
+    setAllFileContents,
+    setOriginalUrdfContent,
+  });
 
   const urdfContentForViewer = useMemo(() => {
     if (shouldRenderAssembly) {
       return workspaceViewerReloadContent ?? '';
     }
 
-    if (selectedFile?.format === 'usd' && isSelectedUsdHydrating) {
-      return selectedFile.content ?? '';
-    }
-
-    if (selectedFile?.format === 'mjcf') {
-      const sourceMjcfContent = resolvedMjcfSource?.content ?? selectedFile.content;
-
-      if (!hasMjcfViewerEdits) {
-        return sourceMjcfContent;
-      }
-
-      return viewerGeneratedUrdfContent ?? sourceMjcfContent;
-    }
-
-    return viewerUrdfContent ?? viewerGeneratedUrdfContent;
+    return resolveStandaloneViewerContent({
+      selectedFileFormat: selectedFile?.format,
+      selectedFileContent: selectedFile?.content,
+      resolvedMjcfSourceContent: resolvedMjcfSource?.content,
+      viewerUrdfContent,
+      viewerGeneratedUrdfContent,
+      isSelectedUsdHydrating,
+    });
   }, [
-    hasMjcfViewerEdits,
     isSelectedUsdHydrating,
     resolvedMjcfSource,
     selectedFile,
@@ -1215,163 +909,43 @@ export function useWorkspaceSourceSync({
     syncTextFileContent(selectedFile.name, generatedUrdfContent);
   }, [generatedUrdfContent, hasSourceStoreEdits, selectedFile, syncTextFileContent]);
 
-  useEffect(() => {
-    if (!shouldRenderAssembly || !assemblyState) {
-      return;
-    }
-
-    const generatedComponentSources = new Map<string, string>();
-
-    Object.values(assemblyState.components).forEach((component) => {
-      const sourceFile = availableFiles.find((file) => file.name === component.sourceFile);
-      if (!sourceFile) return;
-
-      const sourceRobotState: RobotState = {
-        ...component.robot,
-        selection: { type: null, id: null },
-      };
-
-      if (sourceFile.format === 'urdf') {
-        const componentSnapshot = createRobotSourceSnapshot(sourceRobotState);
-        generatedComponentSources.set(
-          sourceFile.name,
-          readCachedGeneratedSource(`component-urdf:${sourceFile.name}:${componentSnapshot}`, () =>
-            generateURDF(sourceRobotState, { includeHardware: 'auto' }),
-          ),
-        );
-      }
-    });
-
-    if (generatedComponentSources.size === 0) {
-      return;
-    }
-
-    let nextAvailableFiles: RobotFile[] | null = null;
-    let nextAllFileContents: Record<string, string> | null = null;
-    let nextSelectedFile: RobotFile | null = null;
-
-    for (const [fileName, content] of generatedComponentSources) {
-      if (selectedFile?.name === fileName && selectedFile.content !== content) {
-        nextSelectedFile = {
-          ...selectedFile,
-          content,
-        };
-      }
-
-      if (availableFiles.some((file) => file.name === fileName && file.content !== content)) {
-        const baseFiles = nextAvailableFiles ?? availableFiles;
-        nextAvailableFiles = baseFiles.map((file) =>
-          file.name === fileName ? { ...file, content } : file,
-        );
-      }
-
-      if (allFileContents[fileName] !== content) {
-        nextAllFileContents = {
-          ...(nextAllFileContents ?? allFileContents),
-          [fileName]: content,
-        };
-      }
-    }
-
-    if (nextSelectedFile) {
-      setSelectedFile(nextSelectedFile);
-    }
-
-    if (nextAvailableFiles) {
-      setAvailableFiles(nextAvailableFiles);
-    }
-
-    if (nextAllFileContents) {
-      setAllFileContents(nextAllFileContents);
-    }
-  }, [
-    allFileContents,
-    assemblyState,
-    availableFiles,
-    readCachedGeneratedSource,
+  useDeferredWorkspaceSourceSync({
     shouldRenderAssembly,
+    assemblyState,
+    isCodeViewerOpen,
     selectedFile,
-    setAllFileContents,
-    setAvailableFiles,
+    availableFiles,
+    allFileContents,
+    readCachedGeneratedSource,
+    syncTextFileContent,
     setSelectedFile,
-  ]);
-
-  useEffect(() => {
-    if (!filePreviewFile) {
-      filePreviewRequestRef.current += 1;
-      setPreviewRobot(null);
-      setFilePreview(undefined);
-      return;
-    }
-
-    const requestId = ++filePreviewRequestRef.current;
-
-    // Keep the current preview scene mounted until the replacement preview payload is ready.
-    // Clearing it immediately causes a visible blank-frame handoff when switching mesh/model
-    // previews, even if the shared canvas itself no longer remounts.
-    void resolveRobotFileDataWithWorker(filePreviewFile, {
-      availableFiles,
-      assets,
-      allFileContents,
-      usdRobotData: getUsdPreparedExportCache(filePreviewFile.name)?.robotData ?? null,
-    })
-      .then((result) => {
-        if (requestId !== filePreviewRequestRef.current) {
-          return;
-        }
-
-        const nextPreviewRobot = createPreviewRobotStateFromImportResult(filePreviewFile, result);
-        const previewUrdf = buildPreviewSceneSourceFromImportResult(filePreviewFile, {
-          availableFiles,
-          previewRobot: nextPreviewRobot,
-          importResult: result,
-        });
-
-        const shouldActivatePreview =
-          previewUrdf != null &&
-          (filePreviewFile.format === 'usd' || previewUrdf.trim().length > 0);
-
-        if (!shouldActivatePreview) {
-          return;
-        }
-
-        setPreviewRobot(nextPreviewRobot);
-        setFilePreview({ urdfContent: previewUrdf, fileName: filePreviewFile.name });
-      })
-      .catch((error) => {
-        if (requestId !== filePreviewRequestRef.current) {
-          return;
-        }
-
-        scheduleFailFastInDev(
-          'useWorkspaceSourceSync:filePreview',
-          new Error(`Failed to resolve file preview for "${filePreviewFile.name}".`, {
-            cause: error,
-          }),
-        );
-      });
-  }, [allFileContents, assets, availableFiles, filePreviewFile, getUsdPreparedExportCache]);
+    setAvailableFiles,
+    setAllFileContents,
+  });
 
   const sourceCodeContent =
-    filePreviewFile?.content ??
+    activePreviewFile?.content ??
     syncedSourceContent ??
     (selectedFile ? selectedFile.content : urdfContentForViewer);
-
-  const handlePreviewFile = useCallback((file: RobotFile) => {
-    setFilePreviewFile(file);
-  }, []);
-
-  const handleClosePreview = useCallback(() => {
-    setFilePreviewFile(null);
-  }, []);
-
-  useEffect(() => {
-    if (!filePreviewFile) return;
-    const exists = availableFiles.some((file) => file.name === filePreviewFile.name);
-    if (!exists) {
-      setFilePreviewFile(null);
-    }
-  }, [availableFiles, filePreviewFile]);
+  const sourceCodeDocuments = useMemo(
+    () =>
+      buildSourceCodeDocuments({
+        activeSourceFile,
+        sourceCodeContent,
+        sourceCodeDocumentFlavor,
+        availableFiles,
+        allFileContents,
+        forceReadOnly: Boolean(activePreviewFile),
+      }),
+    [
+      activePreviewFile,
+      activeSourceFile,
+      allFileContents,
+      availableFiles,
+      sourceCodeContent,
+      sourceCodeDocumentFlavor,
+    ],
+  );
 
   return {
     isWorkspaceAssembly,
@@ -1391,7 +965,8 @@ export function useWorkspaceSourceSync({
     workspaceViewerMjcfSourceFile,
     filePreview,
     previewRobot,
-    previewFileName: filePreviewFile?.name,
+    previewFileName,
+    sourceCodeDocuments,
     sourceCodeFileName: activeSourceFile?.name,
     sourceCodeContent,
     sourceCodeDocumentFlavor,

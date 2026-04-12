@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { isUsdMeshObject } from './usdMaterialNormalization.ts';
 import {
   extractUsdMeshGeometryData,
+  getUsdNumericAttributeSource,
   getUsdDisplayColor,
   type UsdMeshGeometryData,
   type UsdSerializationContext,
@@ -39,56 +40,59 @@ export type UsdSceneSerializationProgress = {
 type UsdSceneProgressTracker = UsdProgressTracker<'scene'>;
 
 const USD_SCENE_SERIALIZATION_YIELD_INTERVAL = 4;
+const USD_SCENE_FACE_VERTEX_CHUNK_SIZE = 2048;
+const USD_SCENE_POINT_CHUNK_SIZE = 512;
+const USD_SCENE_TEXCOORD_CHUNK_SIZE = 512;
 
-const serializeTransformOps = (
-  lines: string[],
-  depth: number,
-  object: THREE.Object3D,
-): void => {
+const serializeTransformOps = (lines: string[], depth: number, object: THREE.Object3D): void => {
   const indent = makeUsdIndent(depth);
   const opOrder: string[] = [];
 
   const hasTranslate = object.position.lengthSq() > 1e-12;
   if (hasTranslate) {
-    lines.push(`${indent}double3 xformOp:translate = ${formatUsdTuple([
-      object.position.x,
-      object.position.y,
-      object.position.z,
-    ])}`);
+    lines.push(
+      `${indent}double3 xformOp:translate = ${formatUsdTuple([
+        object.position.x,
+        object.position.y,
+        object.position.z,
+      ])}`,
+    );
     opOrder.push('xformOp:translate');
   }
 
-  const hasOrient = Math.abs(object.quaternion.x) > 1e-9
-    || Math.abs(object.quaternion.y) > 1e-9
-    || Math.abs(object.quaternion.z) > 1e-9
-    || Math.abs(object.quaternion.w - 1) > 1e-9;
+  const hasOrient =
+    Math.abs(object.quaternion.x) > 1e-9 ||
+    Math.abs(object.quaternion.y) > 1e-9 ||
+    Math.abs(object.quaternion.z) > 1e-9 ||
+    Math.abs(object.quaternion.w - 1) > 1e-9;
   if (hasOrient) {
     lines.push(`${indent}quatf xformOp:orient = ${quaternionToUsdTuple(object.quaternion)}`);
     opOrder.push('xformOp:orient');
   }
 
-  const hasScale = Math.abs(object.scale.x - 1) > 1e-9
-    || Math.abs(object.scale.y - 1) > 1e-9
-    || Math.abs(object.scale.z - 1) > 1e-9;
+  const hasScale =
+    Math.abs(object.scale.x - 1) > 1e-9 ||
+    Math.abs(object.scale.y - 1) > 1e-9 ||
+    Math.abs(object.scale.z - 1) > 1e-9;
   if (hasScale) {
-    lines.push(`${indent}double3 xformOp:scale = ${formatUsdTuple([
-      object.scale.x,
-      object.scale.y,
-      object.scale.z,
-    ])}`);
+    lines.push(
+      `${indent}double3 xformOp:scale = ${formatUsdTuple([
+        object.scale.x,
+        object.scale.y,
+        object.scale.z,
+      ])}`,
+    );
     opOrder.push('xformOp:scale');
   }
 
   if (opOrder.length > 0) {
-    lines.push(`${indent}uniform token[] xformOpOrder = [${opOrder.map((entry) => `"${entry}"`).join(', ')}]`);
+    lines.push(
+      `${indent}uniform token[] xformOpOrder = [${opOrder.map((entry) => `"${entry}"`).join(', ')}]`,
+    );
   }
 };
 
-const serializeDisplayColor = (
-  lines: string[],
-  depth: number,
-  object: THREE.Object3D,
-): void => {
+const serializeDisplayColor = (lines: string[], depth: number, object: THREE.Object3D): void => {
   const color = getUsdDisplayColor(object);
   if (!color) {
     return;
@@ -145,9 +149,9 @@ const serializeMeshGeometryData = async (
     lines.push(`${indent}${prefix} = [`);
     for (let start = 0; start < length; start += chunkSize) {
       const end = Math.min(length, start + chunkSize);
-      const chunk: string[] = [];
+      const chunk = new Array<string>(end - start);
       for (let index = start; index < end; index += 1) {
-        chunk.push(formatter(index));
+        chunk[index - start] = formatter(index);
       }
 
       const suffix = end < length ? ',' : '';
@@ -157,38 +161,92 @@ const serializeMeshGeometryData = async (
     lines.push(`${indent}]`);
   };
 
-  await serializeChunkedArray('int[] faceVertexCounts', data.triangleCount, () => '3');
+  const serializePoints = async () => {
+    const source = getUsdNumericAttributeSource(data.positions);
+
+    lines.push(`${indent}point3f[] points = [`);
+    for (let start = 0; start < data.positions.count; start += USD_SCENE_POINT_CHUNK_SIZE) {
+      const end = Math.min(data.positions.count, start + USD_SCENE_POINT_CHUNK_SIZE);
+      const chunk = new Array<string>(end - start);
+      for (let index = start; index < end; index += 1) {
+        const chunkIndex = index - start;
+        if (source && data.positions.itemSize >= 3) {
+          const base = index * source.stride + source.offset;
+          chunk[chunkIndex] = formatUsdTuple3(
+            Number(source.array[base] ?? 0),
+            Number(source.array[base + 1] ?? 0),
+            Number(source.array[base + 2] ?? 0),
+          );
+        } else {
+          chunk[chunkIndex] = formatUsdTuple3(
+            data.positions.getX(index),
+            data.positions.getY(index),
+            data.positions.getZ(index),
+          );
+        }
+      }
+
+      const suffix = end < data.positions.count ? ',' : '';
+      lines.push(`${makeUsdIndent(depth + 1)}${chunk.join(', ')}${suffix}`);
+      await yieldPeriodically(end, USD_SCENE_POINT_CHUNK_SIZE);
+    }
+    lines.push(`${indent}]`);
+  };
+
+  const serializeFaceVaryingUvs = async () => {
+    if (!data.uvAttribute || data.faceVertexIndices.length === 0) {
+      return;
+    }
+
+    const source = getUsdNumericAttributeSource(data.uvAttribute);
+
+    lines.push(`${indent}texCoord2f[] primvars:st = [`);
+    for (
+      let start = 0;
+      start < data.faceVertexIndices.length;
+      start += USD_SCENE_TEXCOORD_CHUNK_SIZE
+    ) {
+      const end = Math.min(data.faceVertexIndices.length, start + USD_SCENE_TEXCOORD_CHUNK_SIZE);
+      const chunk = new Array<string>(end - start);
+      for (let index = start; index < end; index += 1) {
+        const faceVertexIndex = data.faceVertexIndices[index];
+        const chunkIndex = index - start;
+        if (source && data.uvAttribute.itemSize >= 2) {
+          const base = faceVertexIndex * source.stride + source.offset;
+          chunk[chunkIndex] = formatUsdTuple2(
+            Number(source.array[base] ?? 0),
+            Number(source.array[base + 1] ?? 0),
+          );
+        } else {
+          chunk[chunkIndex] = formatUsdTuple2(
+            data.uvAttribute.getX(faceVertexIndex),
+            data.uvAttribute.getY(faceVertexIndex),
+          );
+        }
+      }
+
+      const suffix = end < data.faceVertexIndices.length ? ',' : '';
+      lines.push(`${makeUsdIndent(depth + 1)}${chunk.join(', ')}${suffix}`);
+      await yieldPeriodically(end, USD_SCENE_TEXCOORD_CHUNK_SIZE);
+    }
+    lines.push(`${indent}]`);
+    lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
+  };
+
+  await serializeChunkedArray(
+    'int[] faceVertexCounts',
+    data.triangleCount,
+    () => '3',
+    USD_SCENE_FACE_VERTEX_CHUNK_SIZE,
+  );
   await serializeChunkedArray(
     'int[] faceVertexIndices',
     data.faceVertexIndices.length,
     (index) => String(data.faceVertexIndices[index]),
+    USD_SCENE_FACE_VERTEX_CHUNK_SIZE,
   );
-  await serializeChunkedArray(
-    'point3f[] points',
-    data.positions.count,
-    (index) => formatUsdTuple3(
-      data.positions.getX(index),
-      data.positions.getY(index),
-      data.positions.getZ(index),
-    ),
-    128,
-  );
-
-  if (data.uvAttribute && data.faceVertexIndices.length > 0) {
-    await serializeChunkedArray(
-      'texCoord2f[] primvars:st',
-      data.faceVertexIndices.length,
-      (index) => {
-        const faceVertexIndex = data.faceVertexIndices[index];
-        return formatUsdTuple2(
-          data.uvAttribute!.getX(faceVertexIndex),
-          data.uvAttribute!.getY(faceVertexIndex),
-        );
-      },
-      128,
-    );
-    lines.push(`${indent}uniform token primvars:st:interpolation = "faceVarying"`);
-  }
+  await serializePoints();
+  await serializeFaceVaryingUvs();
 
   lines.push(`${indent}uniform token subdivisionScheme = "none"`);
 };
@@ -212,11 +270,7 @@ export const applyUsdMaterialMetadata = (
   });
 };
 
-const serializeCustomMetadata = (
-  lines: string[],
-  depth: number,
-  object: THREE.Object3D,
-): void => {
+const serializeCustomMetadata = (lines: string[], depth: number, object: THREE.Object3D): void => {
   const indent = makeUsdIndent(depth);
   const linkMetadata = object.userData.usdLink as { id: string; name: string } | undefined;
   if (linkMetadata) {
@@ -226,10 +280,14 @@ const serializeCustomMetadata = (
 
   const materialMetadata = object.userData.usdMaterial as UsdMaterialMetadata | undefined;
   if (materialMetadata?.color) {
-    lines.push(`${indent}custom string urdf:materialColor = "${escapeUsdString(materialMetadata.color)}"`);
+    lines.push(
+      `${indent}custom string urdf:materialColor = "${escapeUsdString(materialMetadata.color)}"`,
+    );
   }
   if (materialMetadata?.texture) {
-    lines.push(`${indent}custom string urdf:materialTexture = "${escapeUsdString(materialMetadata.texture)}"`);
+    lines.push(
+      `${indent}custom string urdf:materialTexture = "${escapeUsdString(materialMetadata.texture)}"`,
+    );
   }
 };
 
@@ -254,7 +312,9 @@ const serializeUsdPreviewMaterials = async (
     const record = context.materialRecords[index];
     lines.push(`${childIndent}def Material "${record.name}"`);
     lines.push(`${childIndent}{`);
-    lines.push(`${grandchildIndent}token outputs:surface.connect = <${record.path}/PreviewSurface.outputs:surface>`);
+    lines.push(
+      `${grandchildIndent}token outputs:surface.connect = <${record.path}/PreviewSurface.outputs:surface>`,
+    );
     lines.push(`${grandchildIndent}def Shader "PreviewSurface"`);
     lines.push(`${grandchildIndent}{`);
     lines.push(`${makeUsdIndent(depth + 3)}uniform token info:id = "UsdPreviewSurface"`);
@@ -273,7 +333,9 @@ const serializeUsdPreviewMaterials = async (
     }
     lines.push(`${makeUsdIndent(depth + 3)}float inputs:metallic = 0`);
     lines.push(`${makeUsdIndent(depth + 3)}float inputs:roughness = 1`);
-    lines.push(`${makeUsdIndent(depth + 3)}float inputs:opacity = ${formatUsdFloat(record.appearance.opacity)}`);
+    lines.push(
+      `${makeUsdIndent(depth + 3)}float inputs:opacity = ${formatUsdFloat(record.appearance.opacity)}`,
+    );
     lines.push(`${makeUsdIndent(depth + 3)}token outputs:surface`);
     lines.push(`${grandchildIndent}}`);
 
@@ -288,7 +350,9 @@ const serializeUsdPreviewMaterials = async (
       lines.push(`${grandchildIndent}def Shader "DiffuseTexture"`);
       lines.push(`${grandchildIndent}{`);
       lines.push(`${makeUsdIndent(depth + 3)}uniform token info:id = "UsdUVTexture"`);
-      lines.push(`${makeUsdIndent(depth + 3)}asset inputs:file = @../assets/${record.appearance.texture.exportPath}@`);
+      lines.push(
+        `${makeUsdIndent(depth + 3)}asset inputs:file = @../assets/${record.appearance.texture.exportPath}@`,
+      );
       lines.push(
         `${makeUsdIndent(depth + 3)}float2 inputs:st.connect = <${record.path}/PrimvarReader_st.outputs:result>`,
       );
@@ -380,12 +444,7 @@ const serializeSceneNode = async (
     primMetadata.push(`prepend references = <${geometryRecord.path}>`);
   }
 
-  serializeUsdPrimSpecWithMetadata(
-    lines,
-    depth,
-    `def ${typeName} "${name}"`,
-    primMetadata,
-  );
+  serializeUsdPrimSpecWithMetadata(lines, depth, `def ${typeName} "${name}"`, primMetadata);
   lines.push(`${indent}{`);
 
   const childDepth = depth + 1;
@@ -467,7 +526,9 @@ export const buildUsdBaseLayerContent = async (
 
   const progressTracker = createUsdProgressTracker(
     'scene',
-    sceneNodeCount + serializationContext.geometryRecords.length + serializationContext.materialRecords.length,
+    sceneNodeCount +
+      serializationContext.geometryRecords.length +
+      serializationContext.materialRecords.length,
     onProgress as ((progress: UsdProgressEvent<'scene'>) => void) | undefined,
   );
 

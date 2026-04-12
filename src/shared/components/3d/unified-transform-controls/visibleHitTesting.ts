@@ -48,6 +48,9 @@ type VisibleAxisCacheEntry = {
   y: number;
 };
 
+const shouldUseVisibleHitFallback = (controls: any) =>
+  controls?.userData?.urdfUseVisibleHitFallback === true;
+
 const getCachedVisibleAxisHit = (
   controls: any,
   pointer: { x: number; y: number } | null | undefined,
@@ -480,6 +483,10 @@ export const patchVisibleHoverHitFallback = (controls: any) => {
   controls.pointerHover = (pointer: { x: number; y: number; button?: number } | null) => {
     originalPointerHover(pointer);
 
+    if (!shouldUseVisibleHitFallback(controls)) {
+      return;
+    }
+
     if (controls.object === undefined || controls.dragging === true) return;
     if (!pointer) return;
     if (controls.mode !== 'translate' && controls.mode !== 'rotate') return;
@@ -505,6 +512,11 @@ export const patchVisiblePointerDownFallback = (controls: any) => {
   if (!originalPointerDown) return;
 
   controls.pointerDown = (pointer: { x: number; y: number; button?: number } | null) => {
+    if (!shouldUseVisibleHitFallback(controls)) {
+      originalPointerDown(pointer);
+      return;
+    }
+
     if (
       controls.object !== undefined &&
       controls.dragging !== true &&

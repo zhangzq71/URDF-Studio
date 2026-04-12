@@ -195,7 +195,7 @@ test('USD export shows compression presets immediately without an extra toggle',
   }
 });
 
-test('SDF export explains that property-panel texture overrides are ignored', async () => {
+test('SDF export explains that per-face box textures are flattened during export', async () => {
   const { dom, container, root } = createComponentRoot();
 
   try {
@@ -203,7 +203,10 @@ test('SDF export explains that property-panel texture overrides are ignored', as
 
     await click(getButtonByText(container, 'SDF'));
 
-    assert.match(container.textContent ?? '', /属性面板里的贴图覆盖当前不会导出到 SDF/);
+    assert.match(
+      container.textContent ?? '',
+      /SDF 导出只会保留每个 visual 的单材质\/单贴图；box 六面不同贴图会在导出时自动合并为一张贴图/,
+    );
   } finally {
     await destroyComponentRoot(dom, root);
   }

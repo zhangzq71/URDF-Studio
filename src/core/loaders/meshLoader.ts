@@ -10,7 +10,11 @@
 
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { buildMeshLookupCandidates, resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
+import {
+  buildMeshLookupCandidates,
+  getSourceFileDirectory,
+  resolveImportedAssetPath,
+} from '@/core/parsers/meshPathUtils';
 import { buildExplicitlyScaledMeshPathHints, hasExplicitMeshScaleHint } from './meshScaleHints';
 import { mitigateCoplanarMaterialZFighting } from './coplanarMaterialOffset';
 import { type ColladaRootNormalizationHints } from './colladaRootNormalization';
@@ -24,10 +28,7 @@ import {
 import { MATERIAL_CONFIG } from '@/core/utils/materialFactory';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
 import { createGeometryFromSerializedMshData, parseMshGeometryData } from './mshGeometryData';
-import {
-  createObjectFromSerializedObjData,
-  loadSerializedObjModelData,
-} from './objParseWorkerBridge';
+import { cloneObjSceneWithOwnedResources, loadObjScene } from './objMaterialUtils';
 import { createGeometryFromSerializedStlData } from './stlGeometryData';
 import { loadSerializedStlGeometryData } from './stlParseWorkerBridge';
 
@@ -862,6 +863,10 @@ export const resolveManagedAssetUrl = (
   }
 
   if (options.preferPlaceholderTextures && isTextureUrl) {
+    console.warn('[MeshLoader] Using transparent placeholder texture for managed asset URL.', {
+      url,
+      urdfDir: urdfDir || '.',
+    });
     return TRANSPARENT_TEXTURE_DATA_URL;
   }
 
@@ -877,6 +882,13 @@ export const resolveManagedAssetUrl = (
 
   console.error('[MeshLoader] Asset not found:', url);
   if (isTextureUrl) {
+    console.warn(
+      '[MeshLoader] Falling back to transparent placeholder texture because the texture asset could not be resolved.',
+      {
+        url,
+        urdfDir: urdfDir || '.',
+      },
+    );
     return TRANSPARENT_TEXTURE_DATA_URL;
   }
 
@@ -1115,12 +1127,17 @@ export const createMeshLoader = (
       }
 
       if (ext === 'obj') {
-        const serializedObject = await loadSerializedObjModelData(assetUrl);
-        const object = createObjectFromSerializedObjData(serializedObject);
+        const sourcePath = assetUrlToPath.get(assetUrl) ?? '';
+        const objManager = new THREE.LoadingManager();
+        objManager.setURLModifier(
+          (url: string) =>
+            resolveManagedAssetUrl(url, assetIndex, getSourceFileDirectory(sourcePath)) || url,
+        );
+        const object = await loadObjScene(assetUrl, objManager, sourcePath);
         await yieldIfNeeded();
 
         return {
-          createInstance: () => cloneObject3DForReuse(object),
+          createInstance: () => cloneObjSceneWithOwnedResources(object),
           maxDimension: null,
           supportsAutoUnitScale: false,
         };

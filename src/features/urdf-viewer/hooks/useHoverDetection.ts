@@ -2,12 +2,13 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useSelectionStore } from '@/store';
-import type { InteractionSelection } from '@/types';
+import type { InteractionSelection, UrdfJoint, UrdfLink } from '@/types';
 import { setRegressionProjectedInteractionTargetsProvider } from '@/shared/debug/regressionBridge';
 import { highlightFaceMaterial } from '../utils/materials';
 import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
 import {
   collectPickTargets,
+  collectSelectableHelperTargets,
   findPickIntersections,
   isCollisionPickObject,
   type PickTargetMode,
@@ -22,6 +23,9 @@ import {
   resolveTopLayerInteractionSubTypeFromHits,
 } from '../utils/interactionMode';
 import { collectRegressionProjectedInteractionTargets } from '../utils/regressionProjectionTargets';
+import { resolveHelperSelectionPlan } from '../utils/helperSelectionPlan';
+import { resolveDirectHelperInteraction } from '../utils/directHelperInteraction';
+import { resolveHelperSelectionIdentity } from '../utils/helperSelectionIdentity';
 import {
   collectProjectedHelperInteractionTargets,
   resolveScreenSpaceHelperInteraction,
@@ -29,7 +33,7 @@ import {
 } from '../utils/screenSpaceHelperInteraction';
 import type {
   ToolMode,
-  URDFViewerProps,
+  ViewerProps,
   ViewerHelperKind,
   ViewerInteractiveLayer,
   ViewerSceneMode,
@@ -45,7 +49,7 @@ export interface UseHoverDetectionOptions {
   showVisual: boolean;
   showCollisionAlwaysOnTop: boolean;
   interactionLayerPriority?: ViewerInteractiveLayer[];
-  selection?: URDFViewerProps['selection'];
+  selection?: ViewerProps['selection'];
   onHover?: (
     type: InteractionSelection['type'],
     id: string | null,
@@ -55,6 +59,8 @@ export interface UseHoverDetectionOptions {
     highlightObjectId?: number,
   ) => void;
   linkMeshMapRef: React.RefObject<Map<string, THREE.Mesh[]>>;
+  robotLinks?: Record<string, UrdfLink>;
+  robotJoints?: Record<string, UrdfJoint>;
   mouseRef: React.RefObject<THREE.Vector2>;
   raycasterRef: React.RefObject<THREE.Raycaster>;
   hoveredLinkRef: React.RefObject<string | null>;
@@ -93,6 +99,8 @@ export function useHoverDetection({
   selection,
   onHover,
   linkMeshMapRef,
+  robotLinks,
+  robotJoints,
   mouseRef,
   raycasterRef,
   hoveredLinkRef,
@@ -132,6 +140,11 @@ export function useHoverDetection({
   const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
   const gizmoTargetsCacheKeyRef = useRef('');
   const gizmoTargetsUpdatedAtRef = useRef(0);
+  const helperTargetCacheRef = useRef<PickTargetCacheEntry>({
+    key: '',
+    updatedAt: 0,
+    targets: [],
+  });
   const projectedHelperCacheRef = useRef<ProjectedHelperCacheEntry>({
     key: '',
     targets: [],
@@ -158,6 +171,9 @@ export function useHoverDetection({
     gizmoTargetsRef.current = [];
     gizmoTargetsCacheKeyRef.current = '';
     gizmoTargetsUpdatedAtRef.current = 0;
+    helperTargetCacheRef.current.key = '';
+    helperTargetCacheRef.current.updatedAt = 0;
+    helperTargetCacheRef.current.targets = [];
     projectedHelperCacheRef.current.key = '';
     projectedHelperCacheRef.current.targets = [];
 
@@ -190,6 +206,28 @@ export function useHoverDetection({
     return gizmoTargetsRef.current;
   };
 
+  const getHelperTargets = () => {
+    if (!robot) {
+      helperTargetCacheRef.current.key = '';
+      helperTargetCacheRef.current.updatedAt = 0;
+      helperTargetCacheRef.current.targets = [];
+      return helperTargetCacheRef.current.targets;
+    }
+
+    const nextCacheKey = `${robotVersion}:${mode ?? 'editor'}`;
+    const now = performance.now();
+    if (
+      helperTargetCacheRef.current.key !== nextCacheKey ||
+      now - helperTargetCacheRef.current.updatedAt > 120
+    ) {
+      helperTargetCacheRef.current.targets = collectSelectableHelperTargets(robot);
+      helperTargetCacheRef.current.key = nextCacheKey;
+      helperTargetCacheRef.current.updatedAt = now;
+    }
+
+    return helperTargetCacheRef.current.targets;
+  };
+
   const getProjectedHelperTargets = (forceRefresh = false) => {
     if (!robot) {
       projectedHelperCacheRef.current.key = '';
@@ -200,6 +238,7 @@ export function useHoverDetection({
     const canvasRect = gl.domElement.getBoundingClientRect();
     const nextCacheKey = [
       robotVersion,
+      mode ?? 'editor',
       interactionLayerPriority.join(','),
       canvasRect.x,
       canvasRect.y,
@@ -593,6 +632,7 @@ export function useHoverDetection({
       'rotate',
       'universal',
       'measure',
+      'paint',
     ].includes(toolMode || 'select');
     const fallbackInteractionSubType = resolveTopLayerInteractionSubType({
       showVisual,
@@ -602,24 +642,46 @@ export function useHoverDetection({
     const canvasRect = gl.domElement.getBoundingClientRect();
     const pointerClientX = canvasRect.x + (mouseRef.current.x + 1) * 0.5 * canvasRect.width;
     const pointerClientY = canvasRect.y + (1 - mouseRef.current.y) * 0.5 * canvasRect.height;
-    let projectedHelperInteraction: ResolvedHoverInteractionCandidate | null | undefined;
-    const getProjectedHelperInteraction = () => {
-      if (projectedHelperInteraction !== undefined) {
-        return projectedHelperInteraction;
+    let helperInteraction: ResolvedHoverInteractionCandidate | null | undefined;
+    const getHelperInteraction = () => {
+      if (helperInteraction !== undefined) {
+        return helperInteraction;
       }
 
-      projectedHelperInteraction = resolveScreenSpaceHelperInteraction({
+      helperInteraction = resolveDirectHelperInteraction({
+        robot,
+        raycaster: raycasterRef.current,
+        helperTargets: getHelperTargets(),
+        interactionLayerPriority,
+      });
+      if (helperInteraction) {
+        return helperInteraction;
+      }
+
+      helperInteraction = resolveScreenSpaceHelperInteraction({
         pointerClientX,
         pointerClientY,
         projectedHelpers: getProjectedHelperTargets(cameraMoved || cameraRotated),
         interactionLayerPriority,
       });
-      return projectedHelperInteraction;
+      return helperInteraction;
     };
     const applyHelperHoverInteraction = (helperInteraction: ResolvedHoverInteractionCandidate) => {
       if (helperInteraction.type === 'tendon') {
         return;
       }
+
+      const helperSelectionPlan = resolveHelperSelectionPlan({
+        fallbackType: helperInteraction.type,
+        fallbackId: helperInteraction.id,
+        helperKind: helperInteraction.helperKind,
+        linkObject: helperInteraction.linkObject,
+      });
+      const helperSelectionIdentity = resolveHelperSelectionIdentity(
+        helperSelectionPlan.selectTarget,
+        robotLinks,
+        robotJoints,
+      );
 
       if (hoveredLinkRef.current) {
         clearHoverHighlight();
@@ -630,8 +692,8 @@ export function useHoverDetection({
       (hoveredLinkRef as any).currentObjectIndex = null;
       (hoveredLinkRef as any).currentSubType = null;
       emitHoverSelection(
-        helperInteraction.type,
-        helperInteraction.id,
+        helperSelectionIdentity.type,
+        helperSelectionIdentity.id,
         undefined,
         undefined,
         helperInteraction.helperKind,
@@ -672,8 +734,8 @@ export function useHoverDetection({
         return;
       }
 
-      // PERFORMANCE: Two-phase detection - check bounding box first
-      if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current)) {
+      // Keep hover broad-phase in sync with click picking after runtime transforms.
+      if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
         if (highlightedFace) setHighlightedFace(null);
         resetHoverState();
         return;
@@ -746,9 +808,9 @@ export function useHoverDetection({
       return;
     }
 
-    // PERFORMANCE: Two-phase detection - check bounding box first
-    if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current)) {
-      const helperInteraction = getProjectedHelperInteraction();
+    // Keep hover broad-phase in sync with click picking after runtime transforms.
+    if (pickTargets.length > 0 && !rayIntersectsBoundingBox(raycasterRef.current, true)) {
+      const helperInteraction = getHelperInteraction();
       if (helperInteraction) {
         applyHelperHoverInteraction(helperInteraction);
         return;
@@ -780,9 +842,9 @@ export function useHoverDetection({
 
       return candidates;
     })();
-    const helperInteraction = getProjectedHelperInteraction();
+    const nextHelperInteraction = getHelperInteraction();
     const { primaryInteraction: resolvedInteraction } = resolveHoverInteractionResolution(
-      helperInteraction ? resolvedCandidates.concat(helperInteraction) : resolvedCandidates,
+      nextHelperInteraction ? resolvedCandidates.concat(nextHelperInteraction) : resolvedCandidates,
       interactionLayerPriority,
     );
 

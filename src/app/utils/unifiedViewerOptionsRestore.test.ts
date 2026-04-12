@@ -6,15 +6,13 @@ import {
   shouldRestoreUnifiedViewerOptionsPanel,
 } from './unifiedViewerOptionsRestore';
 
-test('captureUnifiedViewerOptionsVisibility snapshots both panel visibilities', () => {
+test('captureUnifiedViewerOptionsVisibility snapshots the shared options panel visibility', () => {
   assert.deepEqual(
     captureUnifiedViewerOptionsVisibility({
       showViewerOptions: true,
-      showVisualizerOptions: false,
     }),
     {
       viewer: true,
-      visualizer: false,
     },
   );
 });

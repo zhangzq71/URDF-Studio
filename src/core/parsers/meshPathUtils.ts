@@ -26,6 +26,56 @@ const normalizeRelativePath = (path: string): string => {
   return stack.join('/');
 };
 
+const MESH_EXPORT_ROOT_SEGMENTS = new Set([
+  'assets',
+  'dae',
+  'obj',
+  'stl',
+  'gltf',
+  'glb',
+  'mesh',
+  'meshes',
+  'texture',
+  'textures',
+  'material',
+  'materials',
+]);
+
+const TEXTURE_EXPORT_ROOT_SEGMENTS = new Set([
+  'assets',
+  'texture',
+  'textures',
+  'material',
+  'materials',
+  'image',
+  'images',
+]);
+
+function slicePathFromKnownRoot(
+  normalizedPath: string,
+  rootSegments: ReadonlySet<string>,
+  dropRootSegments: ReadonlySet<string> = new Set(),
+): string | null {
+  const segments = normalizedPath.split('/');
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]?.toLowerCase();
+    if (!segment || !rootSegments.has(segment)) {
+      continue;
+    }
+
+    const sliced = dropRootSegments.has(segment)
+      ? segments.slice(index + 1)
+      : segments.slice(index);
+    const result = normalizeRelativePath(sliced.join('/'));
+    if (result) {
+      return result;
+    }
+  }
+
+  return null;
+}
+
 const stripPackagePrefix = (path: string): string => {
   const scheme = path.startsWith('package://')
     ? 'package://'
@@ -125,6 +175,179 @@ export const resolveImportedAssetPath = (
 
 type RobotWithLinks = RobotData | RobotState;
 
+const SOURCE_LAYOUT_DIRECTORIES = new Set([
+  'urdf',
+  'xacro',
+  'sdf',
+  'mjcf',
+  'usd',
+  'xml',
+  'robots',
+  'models',
+]);
+
+const IMPORTED_ASSET_DIRECTORY_HINTS = new Set([
+  'materials',
+  'meshes',
+  'textures',
+  'media',
+  'scripts',
+  'dae',
+  'obj',
+  'stl',
+]);
+
+function inferSourcePackageSegment(sourceFilePath?: string | null): string {
+  const normalizedSourcePath = normalizeRelativePath(
+    String(sourceFilePath || '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, ''),
+  );
+  if (!normalizedSourcePath) {
+    return '';
+  }
+
+  const directorySegments = normalizedSourcePath.split('/').slice(0, -1);
+  if (directorySegments.length === 0) {
+    return '';
+  }
+
+  for (let index = directorySegments.length - 1; index >= 0; index -= 1) {
+    const segment = directorySegments[index];
+    if (!SOURCE_LAYOUT_DIRECTORIES.has(segment.toLowerCase())) {
+      return segment;
+    }
+  }
+
+  return directorySegments[directorySegments.length - 1] || '';
+}
+
+function isExplicitRelativeAssetPath(path: string): boolean {
+  return /^(?:\.\.?(?:[\\/]|$)|[\\/])/.test(path);
+}
+
+function normalizeAssetPathForComparison(path: string): string {
+  return normalizeRelativePath(
+    stripExternalPrefix(path.replace(/\\/g, '/'))
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, '')
+      .replace(/^\.\//, ''),
+  );
+}
+
+function isLikelyCanonicalImportedAssetPath(
+  assetPath: string,
+  sourceFilePath?: string | null,
+): boolean {
+  if (!sourceFilePath) {
+    return false;
+  }
+
+  const normalizedAssetPath = normalizeAssetPathForComparison(assetPath);
+  if (!normalizedAssetPath) {
+    return false;
+  }
+
+  const sourceDirectory = getSourceFileDirectory(sourceFilePath);
+  if (sourceDirectory && normalizedAssetPath.startsWith(sourceDirectory)) {
+    return true;
+  }
+
+  const firstAssetSegment = normalizedAssetPath.split('/')[0] || '';
+  if (!firstAssetSegment) {
+    return false;
+  }
+
+  const assetSegments = normalizedAssetPath.split('/');
+  const secondAssetSegment = assetSegments[1]?.toLowerCase() || '';
+
+  const normalizedSourcePath = normalizeRelativePath(
+    String(sourceFilePath || '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^[A-Za-z]:\//, '')
+      .replace(/^\/+/, ''),
+  );
+  const firstSourceSegment = normalizedSourcePath.split('/')[0] || '';
+  if (firstSourceSegment && firstAssetSegment === firstSourceSegment) {
+    return true;
+  }
+
+  const sourcePackageSegment = inferSourcePackageSegment(sourceFilePath);
+  if (sourcePackageSegment && firstAssetSegment === sourcePackageSegment) {
+    return true;
+  }
+
+  if (
+    normalizedSourcePath.toLowerCase().endsWith('.sdf') &&
+    assetSegments.length >= 2 &&
+    !IMPORTED_ASSET_DIRECTORY_HINTS.has(firstAssetSegment.toLowerCase()) &&
+    IMPORTED_ASSET_DIRECTORY_HINTS.has(secondAssetSegment)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function rewriteTexturePathForSource(texturePath: string, sourceFilePath?: string | null): string {
+  const rawTexturePath = String(texturePath || '').trim();
+  if (!rawTexturePath) {
+    return texturePath;
+  }
+
+  if (
+    !isExplicitRelativeAssetPath(rawTexturePath) &&
+    isLikelyCanonicalImportedAssetPath(rawTexturePath, sourceFilePath)
+  ) {
+    // SDF/gazebo script materials may already resolve textures to package-rooted paths.
+    return normalizeAssetPathForComparison(rawTexturePath) || texturePath;
+  }
+
+  const resolvedPath = resolveImportedAssetPath(texturePath, sourceFilePath);
+  return resolvedPath || texturePath;
+}
+
+function rewriteGeometryTextureRefsForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
+  geometry: T,
+  sourceFilePath?: string | null,
+): T {
+  const authoredMaterials = geometry?.authoredMaterials;
+  if (!geometry || !Array.isArray(authoredMaterials) || authoredMaterials.length === 0) {
+    return geometry;
+  }
+
+  let materialsChanged = false;
+  const nextAuthoredMaterials = authoredMaterials.map((material) => {
+    const texturePath = material.texture?.trim();
+    if (!texturePath) {
+      return material;
+    }
+
+    const resolvedTexturePath = rewriteTexturePathForSource(texturePath, sourceFilePath);
+    if (resolvedTexturePath === texturePath) {
+      return material;
+    }
+
+    materialsChanged = true;
+    return {
+      ...material,
+      texture: resolvedTexturePath,
+    };
+  });
+
+  if (!materialsChanged) {
+    return geometry;
+  }
+
+  return {
+    ...geometry,
+    authoredMaterials: nextAuthoredMaterials,
+  };
+}
+
 function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
   geometry: T,
   sourceFilePath?: string | null,
@@ -144,8 +367,17 @@ function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['c
   };
 }
 
+function rewriteGeometryAssetPathsForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
+  geometry: T,
+  sourceFilePath?: string | null,
+): T {
+  const nextGeometry = rewriteMeshGeometryForSource(geometry, sourceFilePath);
+  return rewriteGeometryTextureRefsForSource(nextGeometry, sourceFilePath);
+}
+
 /**
- * Rewrite mesh paths in parsed robot data to stable library-relative paths.
+ * Rewrite imported mesh and texture asset paths in parsed robot data to stable
+ * library-relative paths.
  */
 export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
   robot: T,
@@ -154,17 +386,18 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
   if (!sourceFilePath) return robot;
 
   let linksChanged = false;
+  let materialsChanged = false;
   const nextLinks: Record<string, UrdfLink> = {};
 
   Object.entries(robot.links).forEach(([linkId, link]) => {
-    const nextVisual = rewriteMeshGeometryForSource(link.visual, sourceFilePath);
+    const nextVisual = rewriteGeometryAssetPathsForSource(link.visual, sourceFilePath);
     let nextVisualBodies = link.visualBodies;
-    const nextCollision = rewriteMeshGeometryForSource(link.collision, sourceFilePath);
+    const nextCollision = rewriteGeometryAssetPathsForSource(link.collision, sourceFilePath);
     let nextCollisionBodies = link.collisionBodies;
 
     if (link.visualBodies?.length) {
       const rewrittenBodies = link.visualBodies.map((body) =>
-        rewriteMeshGeometryForSource(body, sourceFilePath),
+        rewriteGeometryAssetPathsForSource(body, sourceFilePath),
       );
 
       const bodiesChanged = rewrittenBodies.some(
@@ -177,7 +410,7 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
 
     if (link.collisionBodies?.length) {
       const rewrittenBodies = link.collisionBodies.map((body) =>
-        rewriteMeshGeometryForSource(body, sourceFilePath),
+        rewriteGeometryAssetPathsForSource(body, sourceFilePath),
       );
 
       const bodiesChanged = rewrittenBodies.some(
@@ -209,11 +442,37 @@ export const rewriteRobotMeshPathsForSource = <T extends RobotWithLinks>(
     nextLinks[linkId] = link;
   });
 
-  if (!linksChanged) return robot;
+  const nextMaterials = robot.materials
+    ? Object.fromEntries(
+        Object.entries(robot.materials).map(([key, material]) => {
+          const texturePath = material.texture?.trim();
+          if (!texturePath) {
+            return [key, material];
+          }
+
+          const resolvedTexturePath = rewriteTexturePathForSource(texturePath, sourceFilePath);
+          if (resolvedTexturePath !== texturePath) {
+            materialsChanged = true;
+            return [
+              key,
+              {
+                ...material,
+                texture: resolvedTexturePath,
+              },
+            ];
+          }
+
+          return [key, material];
+        }),
+      )
+    : robot.materials;
+
+  if (!linksChanged && !materialsChanged) return robot;
 
   return {
     ...robot,
     links: nextLinks,
+    materials: nextMaterials,
   };
 };
 
@@ -244,24 +503,34 @@ export const normalizeMeshPathForExport = (meshPath: string): string => {
   } else if (lower.startsWith('mesh/')) {
     normalized = normalized.slice('mesh/'.length);
   } else {
-    const segments = normalized.split('/');
-    const packageAssetRoots = new Set([
-      'dae',
-      'obj',
-      'stl',
-      'gltf',
-      'glb',
-      'texture',
-      'textures',
-      'material',
-      'materials',
-    ]);
+    const assetRootSlice = slicePathFromKnownRoot(
+      normalized,
+      MESH_EXPORT_ROOT_SEGMENTS,
+      new Set(['mesh', 'meshes']),
+    );
+    if (assetRootSlice) {
+      normalized = assetRootSlice;
+    } else {
+      const segments = normalized.split('/');
+      const packageAssetRoots = new Set([
+        'assets',
+        'dae',
+        'obj',
+        'stl',
+        'gltf',
+        'glb',
+        'texture',
+        'textures',
+        'material',
+        'materials',
+      ]);
 
-    // Imported ROS packages are often rewritten to "pkg_name/dae/part.dae".
-    // Strip the package root here because the URDF export already prepends
-    // "package://<export-name>/meshes/" on top of the stored mesh path.
-    if (segments.length >= 3 && packageAssetRoots.has(segments[1].toLowerCase())) {
-      normalized = segments.slice(1).join('/');
+      // Imported ROS packages are often rewritten to "pkg_name/dae/part.dae".
+      // Strip the package root here because the URDF export already prepends
+      // "package://<export-name>/meshes/" on top of the stored mesh path.
+      if (segments.length >= 3 && packageAssetRoots.has(segments[1].toLowerCase())) {
+        normalized = segments.slice(1).join('/');
+      }
     }
   }
 
@@ -306,6 +575,15 @@ export const normalizeTexturePathForExport = (texturePath: string): string => {
 
   if (lower.startsWith('texture/')) {
     return normalized.slice('texture/'.length);
+  }
+
+  const textureRootSlice = slicePathFromKnownRoot(
+    normalized,
+    TEXTURE_EXPORT_ROOT_SEGMENTS,
+    new Set(['texture', 'textures']),
+  );
+  if (textureRootSlice) {
+    return textureRootSlice;
   }
 
   const segments = normalized.split('/');

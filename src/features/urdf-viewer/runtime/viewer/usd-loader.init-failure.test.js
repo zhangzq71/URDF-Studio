@@ -38,3 +38,20 @@ test("usd-loader blocks ready state when robot metadata warmup fails or resolves
         /maybePromise\.catch\(\(\) => null\)/m,
     );
 });
+
+test("usd-loader logs runtime bridge warmup failures instead of silently discarding them", async () => {
+    const source = await readFile(loaderPath, "utf8");
+
+    assert.match(
+        source,
+        /console\.error\("\[usd-loader\] Failed to warm up runtime bridge during " \+ phaseLabel \+ "\.", error\);/m,
+    );
+    assert.match(
+        source,
+        /console\.error\(`\[usd-loader\] \$\{warmupPhaseLabel\} rejected for \$\{normalizedPath\}\.`, error\);/m,
+    );
+    assert.match(
+        source,
+        /console\.error\(`\[usd-loader\] Failed to start \$\{warmupPhaseLabel\} for \$\{normalizedPath\}\.`, caughtError\);/m,
+    );
+});

@@ -1,6 +1,6 @@
 /**
  * Shared UI Components for Options Panels
- * Extracted common patterns from Visualizer.tsx and URDFViewer.tsx
+ * Extracted common panel patterns used across the unified editor viewers.
  */
 
 import React, { useRef, useState, useCallback, useEffect, ReactNode } from 'react';
@@ -254,6 +254,7 @@ interface CollapsibleSectionProps {
   iconClassName?: string;
   contentClassName?: string;
   contentInnerClassName?: string;
+  expandedMaxHeightClassName?: string;
 }
 
 export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
@@ -270,6 +271,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   iconClassName = '',
   contentClassName = '',
   contentInnerClassName = '',
+  expandedMaxHeightClassName = 'max-h-[300px]',
 }) => {
   const isControlled = isCollapsed !== undefined;
   const [internalCollapsed, setInternalCollapsed] = useState(() => {
@@ -314,7 +316,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
       </button>
       <div
         className={`overflow-hidden transition-all duration-200 ${
-          collapsed ? 'max-h-0 opacity-0' : 'max-h-[300px] opacity-100'
+          collapsed ? 'max-h-0 opacity-0' : `${expandedMaxHeightClassName} opacity-100`
         } ${contentClassName}`}
       >
         <div className={`px-1 py-1.5 space-y-1.5 ${contentInnerClassName}`}>{children}</div>
@@ -397,6 +399,7 @@ interface OptionsPanelHeaderProps {
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   showCollapseButton?: boolean;
+  showDragGrip?: boolean;
   onClose?: () => void;
   onMouseDown?: (e: React.MouseEvent) => void;
   expandText?: string;
@@ -410,6 +413,7 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
   isCollapsed,
   onToggleCollapse,
   showCollapseButton = true,
+  showDragGrip = false,
   onClose,
   onMouseDown,
   expandText = 'Expand',
@@ -419,13 +423,15 @@ export const OptionsPanelHeader: React.FC<OptionsPanelHeaderProps> = ({
 }) => {
   return (
     <div
-      className="group flex min-w-0 shrink-0 select-none touch-none items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg px-2.5 py-2 text-[10px] transition-colors cursor-grab active:cursor-grabbing hover:bg-element-hover"
+      className="group flex min-w-0 shrink-0 select-none touch-none items-center justify-between gap-2 border-b border-border-black/60 bg-element-bg px-2.5 py-2 text-[10px] transition-colors hover:bg-element-hover"
       onMouseDown={onMouseDown}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-black/60 bg-panel-bg text-text-tertiary shadow-sm transition-colors group-hover:border-system-blue/20 group-hover:text-system-blue">
-          <DragGripIcon className="w-3.5 h-3.5" />
-        </span>
+        {showDragGrip ? (
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-black/60 bg-panel-bg text-text-tertiary shadow-sm transition-colors group-hover:border-system-blue/20 group-hover:text-system-blue">
+            <DragGripIcon className="w-3.5 h-3.5" />
+          </span>
+        ) : null}
         <span className="truncate whitespace-nowrap font-semibold leading-none text-text-secondary group-hover:text-text-primary">
           {title}
         </span>
@@ -797,6 +803,7 @@ interface OptionsPanelProps {
   title: string;
   show: boolean;
   onClose?: () => void;
+  showDragGrip?: boolean;
   position?: { x: number; y: number } | null;
   defaultPosition?: {
     top?: string;
@@ -826,6 +833,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
   title,
   show,
   onClose,
+  showDragGrip = false,
   position,
   defaultPosition = { top: '16px', right: '16px' },
   isCollapsed,
@@ -882,6 +890,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
           isCollapsed={isCollapsed}
           onToggleCollapse={onToggleCollapse}
           onClose={onClose}
+          showDragGrip={showDragGrip}
           onMouseDown={onMouseDown}
           additionalControls={additionalControls}
         />

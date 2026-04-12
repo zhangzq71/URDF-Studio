@@ -6,7 +6,11 @@ import type { LineSegments, Material, Mesh } from 'three';
 
 import { ignoreRaycast } from '@/shared/utils/three/ignoreRaycast';
 import { narrowLineRaycast } from '@/shared/utils/three/narrowLineRaycast';
-import { createInertiaBox, createOriginAxes } from './visualizationFactories.ts';
+import {
+  createInertiaBox,
+  createLinkIkHandle,
+  createOriginAxes,
+} from './visualizationFactories.ts';
 
 function collectMeshMaterials(originAxes: ReturnType<typeof createOriginAxes>) {
   const materials: Material[] = [];
@@ -51,4 +55,17 @@ test('createInertiaBox keeps fill visual-only and uses the outline for narrow pi
   assert.ok(outline, 'inertia box should include an outline');
   assert.equal(fillMesh?.raycast, ignoreRaycast);
   assert.equal(outline?.raycast, narrowLineRaycast);
+});
+
+test('createLinkIkHandle keeps IK helpers hidden while preserving a pick target', () => {
+  const ikHandle = createLinkIkHandle(0.03);
+  const pickTarget = ikHandle.children.find((child) => (child as Mesh).isMesh) as Mesh | undefined;
+  const outline = ikHandle.children.find((child) => (child as LineSegments).isLineSegments);
+
+  assert.ok(pickTarget, 'ik handle should keep an invisible pick target');
+  assert.equal(outline, undefined);
+  assert.equal(pickTarget?.name, '__ik_handle_pick_target__');
+  assert.equal(pickTarget?.userData.viewerHelperKind, 'ik-handle');
+  assert.equal((pickTarget?.material as Material).opacity, 0);
+  assert.equal((pickTarget?.material as Material & { colorWrite?: boolean }).colorWrite, false);
 });

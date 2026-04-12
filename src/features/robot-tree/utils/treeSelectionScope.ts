@@ -1,3 +1,4 @@
+import { resolveJointKey, resolveLinkKey } from '@/core/robot';
 import type { Selection } from '@/store/selectionStore';
 import type { RobotState } from '@/types';
 
@@ -14,6 +15,37 @@ export interface TreeNodeSelectionScope {
   linkHoveredSelection: Selection;
   linkSelection: Selection;
   selectionInBranch: boolean;
+}
+
+export function resolveTreeSelectionIdentity(
+  selection: Selection,
+  robot: Pick<RobotState, 'links' | 'joints'>,
+): Selection {
+  if (!selection.type || !selection.id) {
+    return selection;
+  }
+
+  if (selection.type === 'link') {
+    const resolvedLinkId = resolveLinkKey(robot.links, selection.id);
+    return resolvedLinkId && resolvedLinkId !== selection.id
+      ? {
+          ...selection,
+          id: resolvedLinkId,
+        }
+      : selection;
+  }
+
+  if (selection.type === 'joint') {
+    const resolvedJointId = resolveJointKey(robot.joints, selection.id);
+    return resolvedJointId && resolvedJointId !== selection.id
+      ? {
+          ...selection,
+          id: resolvedJointId,
+        }
+      : selection;
+  }
+
+  return selection;
 }
 
 interface TreeNodeSelectionScopeInput {
@@ -42,9 +74,7 @@ export function buildChildJointsByParent(
   return grouped;
 }
 
-export function buildParentLinkByChild(
-  joints: Record<string, TreeJoint>,
-): Record<string, string> {
+export function buildParentLinkByChild(joints: Record<string, TreeJoint>): Record<string, string> {
   const parentLinkByChild: Record<string, string> = {};
 
   Object.values(joints).forEach((joint) => {
@@ -78,9 +108,7 @@ function scopeDirectChildJointSelection(selection: Selection, childJoints: TreeJ
     return EMPTY_TREE_SELECTION;
   }
 
-  return childJoints.some((joint) => joint.id === selection.id)
-    ? selection
-    : EMPTY_TREE_SELECTION;
+  return childJoints.some((joint) => joint.id === selection.id) ? selection : EMPTY_TREE_SELECTION;
 }
 
 export function getTreeNodeSelectionScope({
@@ -107,8 +135,12 @@ export function getTreeNodeSelectionScope({
       ? EMPTY_TREE_SELECTION
       : scopeDirectChildJointSelection(hoveredSelection, childJoints),
     jointSelection: scopeDirectChildJointSelection(selection, childJoints),
-    linkAttentionSelection: readOnly ? EMPTY_TREE_SELECTION : scopeLinkSelection(attentionSelection, linkId),
-    linkHoveredSelection: readOnly ? EMPTY_TREE_SELECTION : scopeLinkSelection(hoveredSelection, linkId),
+    linkAttentionSelection: readOnly
+      ? EMPTY_TREE_SELECTION
+      : scopeLinkSelection(attentionSelection, linkId),
+    linkHoveredSelection: readOnly
+      ? EMPTY_TREE_SELECTION
+      : scopeLinkSelection(hoveredSelection, linkId),
     linkSelection,
     selectionInBranch: parentLinkByChild
       ? isLinkInSelectionBranch(linkId, selection, jointsById, parentLinkByChild)

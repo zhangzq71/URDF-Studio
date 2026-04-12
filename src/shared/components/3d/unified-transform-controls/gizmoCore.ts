@@ -14,7 +14,10 @@ export type UnifiedTransformDisplayStyle = 'stock' | 'thick-primary';
 export const VISUALIZER_UNIFIED_GIZMO_SIZE = 0.96;
 export const DEFAULT_DISPLAY_THICKNESS_SCALE = 1;
 
-export interface UnifiedTransformControlsProps extends Omit<DreiTransformControlsProps, 'mode' | 'object'> {
+export interface UnifiedTransformControlsProps extends Omit<
+  DreiTransformControlsProps,
+  'mode' | 'object'
+> {
   mode: UnifiedTransformMode;
   object?: DreiTransformControlsProps['object'];
   translateObject?: TransformControlObjectTarget;
@@ -61,8 +64,14 @@ export const TRANSLATE_GAP_BRIDGE_RADIUS = 0.026;
 export const TRANSLATE_GAP_BRIDGE_OPACITY = 0.9;
 export const TRANSLATE_AUXILIARY_NAMES = new Set(['XY', 'YZ', 'XZ', 'XYZ']);
 export const ROTATE_AUXILIARY_NAMES = new Set(['E', 'XYZE']);
+export const HELPER_RENDER_ORDER = 999;
+export const INERTIA_BOX_RENDER_ORDER = 9999;
 export const GIZMO_BASE_RENDER_ORDER = 10000;
+export const COM_VISUAL_RENDER_ORDER = 10001;
+export const MJCF_SITE_FILL_RENDER_ORDER = 10002;
+export const MJCF_SITE_WIREFRAME_RENDER_ORDER = 10003;
 export const GIZMO_ARC_RENDER_ORDER = 10005;
+export const IK_HANDLE_RENDER_ORDER = 10030;
 export const DISPLAY_BEHAVIOR_PATCH_VERSION = 'thick-primary-v20';
 const GIZMO_TAG_VERSION = 'interactive-only-v2';
 export const AXIS_GEOMETRY_RADIAL_SEGMENTS = 16;
@@ -85,7 +94,7 @@ export const hasEnabledFlag = (controls: unknown): controls is ControlsWithEnabl
   typeof (controls as { enabled?: unknown }).enabled === 'boolean';
 
 export const resolveTransformControlObject = (
-  target: TransformControlObjectTarget | null | undefined
+  target: TransformControlObjectTarget | null | undefined,
 ): THREE.Object3D | null => {
   if (!target) return null;
   if (target instanceof THREE.Object3D) {
@@ -98,7 +107,7 @@ export const resolveTransformControlObject = (
 
 export const resolveAttachedTransformControlObject = (
   scene: THREE.Object3D | null | undefined,
-  target: TransformControlObjectTarget | null | undefined
+  target: TransformControlObjectTarget | null | undefined,
 ) => {
   if (!scene) return null;
 
@@ -125,15 +134,17 @@ export const getGizmoRoot = (controls: any) => {
 
   if (typeof controls.getHelper === 'function') {
     const helperRoot = controls.getHelper();
-    const gizmoChild = helperRoot?.children?.find?.((child: THREE.Object3D & { isTransformControlsGizmo?: boolean }) =>
-      Boolean(child?.isTransformControlsGizmo)
+    const gizmoChild = helperRoot?.children?.find?.(
+      (child: THREE.Object3D & { isTransformControlsGizmo?: boolean }) =>
+        Boolean(child?.isTransformControlsGizmo),
     );
     if (gizmoChild) return gizmoChild;
   }
 
   if (controls._root?.children?.length) {
-    const gizmoChild = controls._root.children.find((child: THREE.Object3D & { isTransformControlsGizmo?: boolean }) =>
-      Boolean(child?.isTransformControlsGizmo)
+    const gizmoChild = controls._root.children.find(
+      (child: THREE.Object3D & { isTransformControlsGizmo?: boolean }) =>
+        Boolean(child?.isTransformControlsGizmo),
     );
     if (gizmoChild) return gizmoChild;
   }
@@ -147,16 +158,16 @@ export const getHandleMaterials = (handle: any) => {
   return Array.isArray(material) ? material : [material];
 };
 
-export const getPositiveScale = (scale: THREE.Vector3) => new THREE.Vector3(
-  Math.abs(scale.x),
-  Math.abs(scale.y),
-  Math.abs(scale.z),
-);
+export const getPositiveScale = (scale: THREE.Vector3) =>
+  new THREE.Vector3(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z));
 
 const tagGizmoBranch = (branch: unknown) => {
   if (!branch) return;
 
-  if (branch instanceof THREE.Object3D || typeof (branch as { traverse?: unknown }).traverse === 'function') {
+  if (
+    branch instanceof THREE.Object3D ||
+    typeof (branch as { traverse?: unknown }).traverse === 'function'
+  ) {
     (branch as THREE.Object3D).traverse((node: THREE.Object3D) => {
       node.userData = {
         ...node.userData,

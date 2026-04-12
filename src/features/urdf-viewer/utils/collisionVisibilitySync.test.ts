@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 
 import { URDFLink } from '@/core/parsers/urdf/loader/URDFClasses';
+import { DEFAULT_LINK } from '@/types';
 
 import {
   COLLISION_OVERLAY_RENDER_ORDER,
@@ -66,6 +67,37 @@ test('syncCollisionGroupVisibility restores collision overlay state when collisi
   assert.equal(mesh.material, collisionBaseMaterial);
   assert.equal(mesh.renderOrder, COLLISION_OVERLAY_RENDER_ORDER);
   assert.equal(mesh.raycast, THREE.Mesh.prototype.raycast);
+});
+
+test('syncCollisionGroupVisibility can ignore semantic link visibility for MJCF collision overlays', () => {
+  const link = new URDFLink();
+  link.name = 'base_link';
+
+  const collider = new THREE.Group();
+  (collider as any).isURDFCollider = true;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshBasicMaterial({ color: 0xffffff }),
+  );
+  collider.add(mesh);
+  link.add(collider);
+
+  const changed = syncCollisionGroupVisibility({
+    collider,
+    linkData: {
+      ...DEFAULT_LINK,
+      id: 'base_link',
+      name: 'base_link',
+      visible: false,
+    },
+    showCollision: true,
+    respectLinkVisibility: false,
+  });
+
+  assert.equal(changed, true);
+  assert.equal(collider.visible, true);
+  assert.equal(mesh.visible, true);
+  assert.equal(mesh.userData.isCollisionMesh, true);
 });
 
 test('syncCollisionGroupVisibility preserves highlighted collision materials', () => {
@@ -186,7 +218,9 @@ test('syncCollisionGroupVisibility disposes replaced collider materials without 
   };
 
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), previousMaterial);
-  const meshWithOriginalMaterial = mesh as THREE.Mesh & { __origMaterial?: THREE.Material | THREE.Material[] };
+  const meshWithOriginalMaterial = mesh as THREE.Mesh & {
+    __origMaterial?: THREE.Material | THREE.Material[];
+  };
   meshWithOriginalMaterial.__origMaterial = previousMaterial;
   collider.add(mesh);
   link.add(collider);

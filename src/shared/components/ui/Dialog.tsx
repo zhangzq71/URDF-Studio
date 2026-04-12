@@ -10,6 +10,7 @@ interface DialogProps {
   footer?: React.ReactNode;
   className?: string;
   width?: string;
+  zIndexClassName?: string;
 }
 
 export const Dialog: React.FC<DialogProps> = ({
@@ -20,11 +21,17 @@ export const Dialog: React.FC<DialogProps> = ({
   footer,
   className = '',
   width = 'w-[400px]',
+  zIndexClassName = 'z-[100]',
 }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center">
+    <div
+      className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
       {/* Overlay - No blur, just dim */}
       <div
         className="absolute inset-0 bg-black/40 transition-opacity"

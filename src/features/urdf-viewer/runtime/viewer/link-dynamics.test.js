@@ -74,30 +74,42 @@ test('LinkDynamicsController exposes build failures as catalog errors', async ()
     controller.buildLinkDynamicsCatalog = async function () {
         throw new Error('catalog-build-failed');
     };
-
-    const renderInterface = {
-        meshes: {
-            '/Robot/base_link/visuals.proto_mesh_id0': {},
-        },
-        getStage() {
-            return {
-                GetRootLayer() {
-                    return {
-                        identifier: '/robots/test.usd',
-                    };
-                },
-            };
-        },
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    console.error = (...args) => {
+        loggedErrors.push(args);
     };
 
-    await assert.rejects(
-        controller.startLinkDynamicsCatalogBuildIfNeeded(renderInterface),
-        /catalog-build-failed/,
-    );
+    try {
+        const renderInterface = {
+            meshes: {
+                '/Robot/base_link/visuals.proto_mesh_id0': {},
+            },
+            getStage() {
+                return {
+                    GetRootLayer() {
+                        return {
+                            identifier: '/robots/test.usd',
+                        };
+                    },
+                };
+            },
+        };
+
+        await assert.rejects(
+            controller.startLinkDynamicsCatalogBuildIfNeeded(renderInterface),
+            /catalog-build-failed/,
+        );
+    }
+    finally {
+        console.error = originalConsoleError;
+    }
 
     assert.equal(controller.catalogStatus, 'error');
     assert.equal(controller.catalogError, 'catalog-build-failed');
     assert.equal(controller.linkDynamicsBuildPromise, null);
+    assert.equal(loggedErrors.length, 1);
+    assert.match(String(loggedErrors[0]?.[0] || ''), /Link dynamics catalog build failed/);
 });
 
 test('LinkDynamicsController logs root layer export failures instead of silently swallowing them', () => {
@@ -160,31 +172,45 @@ test('LinkDynamicsController logs referenced stage open failures instead of sile
 
 test('LinkDynamicsController surfaces cached metadata getter failures as catalog errors', async () => {
     const controller = new LinkDynamicsController();
-    const renderInterface = {
-        meshes: {
-            '/Robot/base_link/visuals.proto_mesh_id0': {},
-        },
-        getCachedRobotMetadataSnapshot() {
-            throw new Error('cached-metadata-crashed');
-        },
-        getStage() {
-            return {
-                GetRootLayer() {
-                    return {
-                        identifier: '/robots/test.usd',
-                    };
-                },
-            };
-        },
+    const originalConsoleError = console.error;
+    const loggedErrors = [];
+    console.error = (...args) => {
+        loggedErrors.push(args);
     };
 
-    await assert.rejects(
-        controller.startLinkDynamicsCatalogBuildIfNeeded(renderInterface),
-        /Failed to read cached render robot metadata snapshot/,
-    );
+    try {
+        const renderInterface = {
+            meshes: {
+                '/Robot/base_link/visuals.proto_mesh_id0': {},
+            },
+            getCachedRobotMetadataSnapshot() {
+                throw new Error('cached-metadata-crashed');
+            },
+            getStage() {
+                return {
+                    GetRootLayer() {
+                        return {
+                            identifier: '/robots/test.usd',
+                        };
+                    },
+                };
+            },
+        };
+
+        await assert.rejects(
+            controller.startLinkDynamicsCatalogBuildIfNeeded(renderInterface),
+            /Failed to read cached render robot metadata snapshot/,
+        );
+    }
+    finally {
+        console.error = originalConsoleError;
+    }
 
     assert.equal(controller.catalogStatus, 'error');
     assert.match(String(controller.catalogError || ''), /Failed to read cached render robot metadata snapshot/);
+    assert.equal(loggedErrors.length, 2);
+    assert.match(String(loggedErrors[0]?.[0] || ''), /Failed to read cached render robot metadata snapshot/);
+    assert.match(String(loggedErrors[1]?.[0] || ''), /Failed to read cached render robot metadata snapshot before link dynamics catalog build/);
 });
 
 test('LinkDynamicsController logs driver lookup failures during transform prefetch', () => {

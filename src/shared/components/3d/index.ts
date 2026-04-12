@@ -1,6 +1,6 @@
 /**
  * Shared 3D Components
- * Components for 3D rendering shared between Visualizer and URDFViewer
+ * Components for 3D rendering shared by the unified editor viewer pipeline.
  */
 
 // Mesh Renderers

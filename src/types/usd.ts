@@ -27,6 +27,11 @@ export interface UsdSceneMeshDescriptor {
   materialId?: string | null;
   geometry?: {
     materialId?: string | null;
+    geomSubsetSections?: Array<{
+      start?: number | null;
+      length?: number | null;
+      materialId?: string | null;
+    }> | null;
   } | null;
   ranges?: UsdMeshDescriptorRanges | null;
 }
@@ -106,6 +111,8 @@ export interface UsdJointCatalogEntry {
   axisLocal?: ArrayLike<number> | null;
   lowerLimitDeg?: number | null;
   upperLimitDeg?: number | null;
+  driveDamping?: number | null;
+  driveMaxForce?: number | null;
   localPivotInLink?: ArrayLike<number> | null;
   originXyz?: ArrayLike<number> | null;
   originQuatWxyz?: ArrayLike<number> | null;

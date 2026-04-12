@@ -9,6 +9,7 @@ import { GeometryType } from '@/types';
 import {
   computeAxisAlignmentScore,
   canonicalizeAxis,
+  type BoxFit,
   type Point3,
   type PrimitiveFit,
 } from './geometry-conversion/primitiveFit';
@@ -1279,6 +1280,29 @@ function offsetOriginByLocalVector(
   };
 }
 
+function applyLocalRotationToOrigin(
+  origin: ConversionResult['origin'],
+  rotation: BoxFit['rotation'],
+): ConversionResult['origin'] {
+  _tempEuler.set(origin.rpy.r, origin.rpy.p, origin.rpy.y);
+  _tempQuat.setFromEuler(_tempEuler);
+  _tempQuat.multiply(_tempQuatB.set(rotation.x, rotation.y, rotation.z, rotation.w).normalize());
+  _tempEulerB.setFromQuaternion(_tempQuat, 'ZYX');
+
+  return {
+    xyz: {
+      x: origin.xyz.x,
+      y: origin.xyz.y,
+      z: origin.xyz.z,
+    },
+    rpy: {
+      r: _tempEulerB.x,
+      p: _tempEulerB.y,
+      y: _tempEulerB.z,
+    },
+  };
+}
+
 function getPrimaryAxis(bounds: { x: number; y: number; z: number }): MeshPrimaryAxis {
   if (bounds.x >= bounds.y && bounds.x >= bounds.z) return 'x';
   if (bounds.y >= bounds.x && bounds.y >= bounds.z) return 'y';
@@ -1372,6 +1396,14 @@ function getCrossSectionDimensions(
     return { length: bounds.y, crossA: bounds.x, crossB: bounds.z };
   }
   return { length: bounds.z, crossA: bounds.x, crossB: bounds.y };
+}
+
+function computeApproximateCrossSectionRadius(crossA: number, crossB: number): number {
+  if (!Number.isFinite(crossA) || !Number.isFinite(crossB) || crossA <= 0 || crossB <= 0) {
+    return 0;
+  }
+
+  return Math.sqrt(crossA * crossB) / 2;
 }
 
 function computeBoxVolume(bounds: { x: number; y: number; z: number }): number {
@@ -1610,23 +1642,39 @@ export function convertGeometryType(
     const targetVolume = computeBoxVolume(meshAnalysis.bounds);
 
     if (newType === GeometryType.BOX) {
+      const fittedBox = meshAnalysis.primitiveFits?.box;
+      const fittedBoxVolumeThreshold = 0.98;
+      const baseBoxDimensions = {
+        x: toPositive(bx, DEFAULT_DIMENSIONS.x),
+        y: toPositive(by, DEFAULT_DIMENSIONS.y),
+        z: toPositive(bz, DEFAULT_DIMENSIONS.z),
+      };
+      const fittedBoxDims =
+        fittedBox && fittedBox.volume <= targetVolume * fittedBoxVolumeThreshold
+          ? {
+              dimensions: {
+                x: toPositive(fittedBox.dimensions.x, baseBoxDimensions.x),
+                y: toPositive(fittedBox.dimensions.y, baseBoxDimensions.y),
+                z: toPositive(fittedBox.dimensions.z, baseBoxDimensions.z),
+              },
+              origin: applyLocalRotationToOrigin(
+                offsetOriginByLocalVector(origin, fittedBox.center),
+                fittedBox.rotation,
+              ),
+            }
+          : {
+              dimensions: baseBoxDimensions,
+              origin: centeredOrigin,
+            };
       const siblingAdjustedOrigin = context?.siblingGeometries?.length
         ? applySiblingBoxClearance(
-            {
-              x: toPositive(bx, DEFAULT_DIMENSIONS.x),
-              y: toPositive(by, DEFAULT_DIMENSIONS.y),
-              z: toPositive(bz, DEFAULT_DIMENSIONS.z),
-            },
-            centeredOrigin,
+            fittedBoxDims.dimensions,
+            fittedBoxDims.origin,
             context.siblingGeometries,
           )
-        : centeredOrigin;
+        : fittedBoxDims.origin;
       const meshAdjustedBox = applyMeshPointBoxClearance(
-        {
-          x: toPositive(bx, DEFAULT_DIMENSIONS.x),
-          y: toPositive(by, DEFAULT_DIMENSIONS.y),
-          z: toPositive(bz, DEFAULT_DIMENSIONS.z),
-        },
+        fittedBoxDims.dimensions,
         siblingAdjustedOrigin,
         context?.meshClearanceObstacles,
       );
@@ -1661,8 +1709,8 @@ export function convertGeometryType(
 
     if (newType === GeometryType.CYLINDER) {
       const localAxis = preservedLocalAxis;
-      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
-      const rawRadius = computeEquivalentCylinderRadius(length, targetVolume);
+      const { length, crossA, crossB } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
+      const rawRadius = computeApproximateCrossSectionRadius(crossA, crossB);
       const radius = toPositive(rawRadius, 0.05);
       const safeLength = toPositive(length, 0.5);
       const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
@@ -1714,9 +1762,12 @@ export function convertGeometryType(
 
     if (newType === GeometryType.CAPSULE) {
       const localAxis = preservedLocalAxis;
-      const { length } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
+      const { length, crossA, crossB } = getCrossSectionDimensions(meshAnalysis.bounds, 'z');
       const safeLength = toPositive(length, 0.5);
-      const rawRadius = computeEquivalentCapsuleRadius(safeLength, targetVolume);
+      const rawRadius = Math.min(
+        computeEquivalentCapsuleRadius(safeLength, targetVolume),
+        computeApproximateCrossSectionRadius(crossA, crossB),
+      );
       const radius = toPositive(rawRadius, 0.05);
       const axisInLinkSpace = rotateLocalVectorByOrigin(origin, localAxis);
       const clearanceAdjustedSize = applySiblingCollisionClearance(
@@ -1781,7 +1832,10 @@ export function convertGeometryType(
       primaryAxis = getPrimaryAxis(currentDims);
       localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
       const crossSection = getCrossSectionDimensions(currentDims, primaryAxis);
-      radius = toPositive(Math.max(crossSection.crossA, crossSection.crossB) / 2, 0.05);
+      radius = toPositive(
+        computeApproximateCrossSectionRadius(crossSection.crossA, crossSection.crossB),
+        0.05,
+      );
       length = toPositive(crossSection.length, 0.5);
     } else if (currentType === GeometryType.ELLIPSOID) {
       const ellipsoidDiameters = {
@@ -1792,7 +1846,10 @@ export function convertGeometryType(
       primaryAxis = getPrimaryAxis(ellipsoidDiameters);
       localAxis = getAxisVectorForPrimaryAxis(primaryAxis);
       const crossSection = getCrossSectionDimensions(ellipsoidDiameters, primaryAxis);
-      radius = toPositive(Math.max(crossSection.crossA, crossSection.crossB) / 2, 0.05);
+      radius = toPositive(
+        computeApproximateCrossSectionRadius(crossSection.crossA, crossSection.crossB),
+        0.05,
+      );
       length = toPositive(crossSection.length, 0.5);
     } else if (currentType === GeometryType.SPHERE) {
       radius = toPositive(currentDims.x, 0.05);

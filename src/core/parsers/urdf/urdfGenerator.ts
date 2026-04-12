@@ -30,6 +30,23 @@ const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'plana
 const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
 const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set(['continuous']);
 const DYNAMICS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic']);
+const SUPPORTED_URDF_JOINT_TYPES = new Set([
+  'fixed',
+  'revolute',
+  'continuous',
+  'prismatic',
+  'floating',
+  'planar',
+]);
+// Geometry types with dedicated URDF export handling.
+// Types NOT in this set are downgraded to a thin bounding box.
+const EXACT_URDF_GEOMETRY_TYPES = new Set([
+  GeometryType.BOX,
+  GeometryType.CYLINDER,
+  GeometryType.SPHERE,
+  GeometryType.CAPSULE,
+  GeometryType.MESH,
+]);
 
 const hasExportableInertial = (link: UrdfLink): boolean => Boolean(link.inertial);
 
@@ -222,6 +239,78 @@ const generateOriginTag = (
   return `${indent}<origin ${attributes.join(' ')} />\n`;
 };
 
+function generateCapsuleCompatibilityGeometryXml(
+  dimensions: { x: number; y: number; z: number },
+  formatShape: (n: number) => string,
+): string {
+  // Standard URDF / urdfdom do not support <capsule>, so emit the closest
+  // compatible primitive while preserving the capsule's end-to-end extent.
+  const radius = Math.max(dimensions.x || 0, 0);
+  const bodyLength = Math.max(dimensions.y || 0, 0);
+  return `        <cylinder radius="${formatShape(radius)}" length="${formatShape(bodyLength + radius * 2)}" />\n`;
+}
+
+function generateUrdfGeometryXml(
+  geometry: UrdfLink['visual'] | UrdfLink['collision'],
+  formatters: {
+    vecStr: (v: { x: number; y: number; z: number }) => string;
+    formatShape: (n: number) => string;
+  },
+  exportContext: {
+    robotName: string;
+    useRelativePaths: boolean;
+    preserveMeshPaths: boolean;
+    fallbackFileName: string;
+    ownerName: string;
+    kind: 'visual' | 'collision';
+  },
+): string {
+  if (geometry.type === GeometryType.NONE) {
+    return '';
+  }
+
+  if (geometry.type === GeometryType.PLANE) {
+    // URDF has no <plane> element; emit a thin box preserving width/depth.
+    const w = Math.max(geometry.dimensions.x || 0, 0);
+    const d = Math.max(geometry.dimensions.y || 0, 0);
+    return `        <box size="${formatters.formatShape(w)} ${formatters.formatShape(d)} 0.001" />\n`;
+  }
+  if (geometry.type === GeometryType.BOX) {
+    return `        <box size="${formatters.vecStr(geometry.dimensions)}" />\n`;
+  }
+  if (geometry.type === GeometryType.CYLINDER) {
+    return `        <cylinder radius="${formatters.formatShape(geometry.dimensions.x)}" length="${formatters.formatShape(geometry.dimensions.y)}" />\n`;
+  }
+  if (geometry.type === GeometryType.SPHERE) {
+    return `        <sphere radius="${formatters.formatShape(geometry.dimensions.x)}" />\n`;
+  }
+  if (geometry.type === GeometryType.CAPSULE) {
+    return generateCapsuleCompatibilityGeometryXml(geometry.dimensions, formatters.formatShape);
+  }
+
+  if (geometry.type === GeometryType.MESH) {
+    const meshPath = geometry.meshPath
+      ? exportContext.preserveMeshPaths
+        ? geometry.meshPath.replace(/\\/g, '/')
+        : normalizeMeshPathForExport(geometry.meshPath)
+      : exportContext.fallbackFileName;
+    const filename = exportContext.preserveMeshPaths
+      ? meshPath || exportContext.fallbackFileName
+      : exportContext.useRelativePaths
+        ? `meshes/${meshPath || exportContext.fallbackFileName}`
+        : `package://${exportContext.robotName}/meshes/${meshPath || exportContext.fallbackFileName}`;
+    const scaleAttribute = formatUrdfMeshScaleAttribute(
+      geometry.dimensions,
+      formatters.formatShape,
+    );
+    return `        <mesh filename="${filename}"${scaleAttribute} />\n`;
+  }
+
+  // Remaining types (ELLIPSOID, HFIELD, SDF, etc.) have no URDF equivalent.
+  // Downgrade to a bounding box using available dimensions.
+  return `        <box size="${formatters.vecStr(geometry.dimensions)}" />\n`;
+}
+
 const generateCollisionElement = (
   collision: UrdfLink['collision'],
   vecStr: (v: { x: number; y: number; z: number }) => string,
@@ -240,28 +329,18 @@ const generateCollisionElement = (
     xml += generateOriginTag(collision.origin, '      ', vecStr, rotStr, formatQuaternionScalar);
   }
   xml += `      <geometry>\n`;
-  if (collision.type === GeometryType.BOX) {
-    xml += `        <box size="${vecStr(collision.dimensions)}" />\n`;
-  } else if (collision.type === GeometryType.CYLINDER) {
-    xml += `        <cylinder radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
-  } else if (collision.type === GeometryType.SPHERE) {
-    xml += `        <sphere radius="${formatShape(collision.dimensions.x)}" />\n`;
-  } else if (collision.type === GeometryType.CAPSULE) {
-    xml += `        <capsule radius="${formatShape(collision.dimensions.x)}" length="${formatShape(collision.dimensions.y)}" />\n`;
-  } else if (collision.type === GeometryType.MESH) {
-    const meshPath = collision.meshPath
-      ? preserveMeshPaths
-        ? collision.meshPath.replace(/\\/g, '/')
-        : normalizeMeshPathForExport(collision.meshPath)
-      : 'part_collision.stl';
-    const filename = preserveMeshPaths
-      ? meshPath || 'part_collision.stl'
-      : useRelativePaths
-        ? `meshes/${meshPath || 'part_collision.stl'}`
-        : `package://${exportRobotName}/meshes/${meshPath || 'part_collision.stl'}`;
-    const scaleAttribute = formatUrdfMeshScaleAttribute(collision.dimensions, formatShape);
-    xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
-  }
+  xml += generateUrdfGeometryXml(
+    collision,
+    { vecStr, formatShape },
+    {
+      robotName: exportRobotName,
+      useRelativePaths,
+      preserveMeshPaths,
+      fallbackFileName: 'part_collision.stl',
+      ownerName: collision.name || exportRobotName,
+      kind: 'collision',
+    },
+  );
   xml += `      </geometry>\n`;
   if (collision.verbose) {
     xml += `      <verbose value="${collision.verbose}" />\n`;
@@ -376,28 +455,18 @@ export const generateURDF = (
       }
 
       xml += `      <geometry>\n`;
-      if (visual.type === GeometryType.BOX) {
-        xml += `        <box size="${vecStr(visual.dimensions)}" />\n`;
-      } else if (visual.type === GeometryType.CYLINDER) {
-        xml += `        <cylinder radius="${formatShape(visual.dimensions.x)}" length="${formatShape(visual.dimensions.y)}" />\n`;
-      } else if (visual.type === GeometryType.SPHERE) {
-        xml += `        <sphere radius="${formatShape(visual.dimensions.x)}" />\n`;
-      } else if (visual.type === GeometryType.CAPSULE) {
-        xml += `        <capsule radius="${formatShape(visual.dimensions.x)}" length="${formatShape(visual.dimensions.y)}" />\n`;
-      } else if (visual.type === GeometryType.MESH) {
-        const meshPath = visual.meshPath
-          ? preserveMeshPaths
-            ? visual.meshPath.replace(/\\/g, '/')
-            : normalizeMeshPathForExport(visual.meshPath)
-          : 'part.stl';
-        const filename = preserveMeshPaths
-          ? meshPath || 'part.stl'
-          : useRelativePaths
-            ? `meshes/${meshPath || 'part.stl'}`
-            : `package://${exportRobotName}/meshes/${meshPath || 'part.stl'}`;
-        const scaleAttribute = formatUrdfMeshScaleAttribute(visual.dimensions, formatShape);
-        xml += `        <mesh filename="${filename}"${scaleAttribute} />\n`;
-      }
+      xml += generateUrdfGeometryXml(
+        visual,
+        { vecStr, formatShape },
+        {
+          robotName: exportRobotName,
+          useRelativePaths,
+          preserveMeshPaths,
+          fallbackFileName: 'part.stl',
+          ownerName: visual.name || link.name,
+          kind: 'visual',
+        },
+      );
       xml += `      </geometry>\n`;
       const shouldEmitVisualColor = !(
         visual.type === GeometryType.MESH && shouldOmitMeshMaterial(visual.meshPath)
@@ -477,6 +546,9 @@ export const generateURDF = (
     const child = links[joint.childLinkId];
     if (!parent || !child) return;
     const jointType = String(joint.type).toLowerCase();
+    if (!SUPPORTED_URDF_JOINT_TYPES.has(jointType)) {
+      throw new Error(`[URDF export] Joint "${joint.name}" uses unsupported ${joint.type} type.`);
+    }
 
     xml += `  <joint name="${joint.name}" type="${joint.type}">\n`;
     xml += `    <parent link="${parent.name}" />\n`;

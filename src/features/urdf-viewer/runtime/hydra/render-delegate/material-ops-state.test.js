@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { MeshPhysicalMaterial } from 'three';
 
 import { ThreeRenderDelegateMaterialOps } from './ThreeRenderDelegateMaterialOps.js';
@@ -19,6 +22,11 @@ const {
     warmupRobotSceneSnapshotFromDriver,
     getLastRobotSceneWarmupSummary,
 } = ThreeRenderDelegateInterface.prototype;
+
+const materialOpsPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    './ThreeRenderDelegateMaterialOps.js',
+);
 
 function createMaterialOpsContext({
     materials = {},
@@ -68,6 +76,13 @@ test('applySnapshotMaterialsToMeshes records subset and inherit failures instead
     assert.equal(summary.inheritFailureCount, 1);
     assert.deepEqual(summary.subsetFailureMeshIds, [meshId]);
     assert.deepEqual(summary.inheritFailureMeshIds, [meshId]);
+});
+
+test('applySnapshotMaterialsToMeshes logs subset and inherit failures to console', async () => {
+    const source = await readFile(materialOpsPath, 'utf8');
+
+    assert.match(source, /Failed to apply pending geometry subset materials/);
+    assert.match(source, /Failed to inherit visual material from link/);
 });
 
 test('applySnapshotTextureInput records explicit texture apply failures', async () => {

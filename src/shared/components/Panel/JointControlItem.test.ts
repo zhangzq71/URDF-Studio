@@ -583,7 +583,7 @@ test('slider drag activation does not auto-scroll the joint panel item into view
         value: 0,
         angleUnit: 'rad',
         isActive: activeJoint === 'R_thigh_joint',
-        setActiveJoint,
+        setActiveJoint: (jointName) => setActiveJoint(jointName),
         handleJointAngleChange: () => {},
         handleJointChangeCommit: () => {},
         onUpdate: () => {},

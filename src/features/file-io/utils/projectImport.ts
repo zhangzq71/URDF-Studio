@@ -12,6 +12,7 @@ import {
   UrdfJoint,
 } from '@/types';
 import { translations, type Language } from '@/shared/i18n';
+import { isAssetLibraryOnlyFormat } from '@/shared/utils/robotFileSupport';
 import {
   buildLibraryArchivePath,
   PROJECT_ALL_FILE_CONTENTS_FILE,
@@ -281,7 +282,7 @@ const loadLibraryFiles = async (
   for (const fileInfo of manifest.assets.availableFiles ?? []) {
     let content = '';
 
-    if (fileInfo.format !== 'mesh') {
+    if (!isAssetLibraryOnlyFormat(fileInfo.format as RobotFile['format'])) {
       const archivePath = buildLibraryArchivePath(fileInfo.name);
       content =
         fileInfo.format === 'usd'

@@ -4,6 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { computeVisibleMeshBounds } from '@/shared/utils/threeBounds';
 import type { SnapshotDofMode } from './snapshotConfig';
+import { resolveSnapshotRenderTargetSamples } from './snapshotResolution';
 
 export interface SnapshotDofSettings {
   focus: number;
@@ -27,11 +28,7 @@ const SNAPSHOT_DOF_SETTINGS: Record<
   },
 };
 
-function buildCanvasFromPixelBuffer(
-  pixelBuffer: Uint8Array,
-  width: number,
-  height: number,
-) {
+function buildCanvasFromPixelBuffer(pixelBuffer: Uint8Array, width: number, height: number) {
   const captureCanvas = document.createElement('canvas');
   captureCanvas.width = width;
   captureCanvas.height = height;
@@ -76,7 +73,7 @@ export function resolveSnapshotDofSettings(
   const preset = SNAPSHOT_DOF_SETTINGS[dofMode];
   const focus = Math.max(
     camera.near + 0.1,
-    camera.position.distanceTo(sphere.center) - (sphere.radius * preset.focusOffset),
+    camera.position.distanceTo(sphere.center) - sphere.radius * preset.focusOffset,
   );
 
   return {
@@ -109,7 +106,12 @@ export function renderSceneWithDofToCanvas({
     stencilBuffer: false,
   });
   renderTarget.texture.colorSpace = THREE.SRGBColorSpace;
-  renderTarget.samples = Math.max(0, Math.round(samples ?? 0));
+  renderTarget.samples = resolveSnapshotRenderTargetSamples({
+    width,
+    height,
+    requestedSamples: samples ?? 0,
+    maxSupportedSamples: gl.capabilities.maxSamples,
+  });
 
   const composer = new EffectComposer(gl, renderTarget);
   composer.renderToScreen = false;

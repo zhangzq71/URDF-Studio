@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 
 type UIStoreModule = typeof import('./uiStore.ts');
-const UI_STORE_PERSIST_VERSION = 13;
+const UI_STORE_PERSIST_VERSION = 16;
 
 function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', {
@@ -91,6 +91,16 @@ test('view options restore persisted world-origin axes and usage-guide preferenc
   dom.window.close();
 });
 
+test('MJCF world visibility defaults to visible for fresh sessions', async () => {
+  const { dom, useUIStore } = await loadUIStore();
+
+  const state = useUIStore.getState();
+  assert.equal(state.viewOptions.showMjcfWorldLink, true);
+  assert.equal(state.viewOptions.showIkHandles, false);
+
+  dom.window.close();
+});
+
 test('setViewOption persists world-origin axes and usage-guide preferences', async () => {
   const { dom, useUIStore } = await loadUIStore();
 
@@ -122,14 +132,14 @@ test('setViewOption persists world-origin axes and usage-guide preferences', asy
   dom.window.close();
 });
 
-test('migration upgrades legacy hidden MJCF world-link preference to the truth-preserving default', async () => {
+test('migration resets legacy MJCF world-link visibility to visible default', async () => {
   const { dom, useUIStore } = await loadUIStore(
     {
       viewOptions: {
         showGrid: true,
         showAxes: true,
         showUsageGuide: true,
-        showMjcfWorldLink: false,
+        showMjcfWorldLink: true,
         showJointAxes: false,
         showInertia: false,
         showCenterOfMass: false,
@@ -137,7 +147,7 @@ test('migration upgrades legacy hidden MJCF world-link preference to the truth-p
         modelOpacity: 1,
       },
     },
-    12,
+    13,
   );
 
   const state = useUIStore.getState();
@@ -156,6 +166,45 @@ test('migration upgrades legacy hidden MJCF world-link preference to the truth-p
 
   assert.equal(persisted.version, UI_STORE_PERSIST_VERSION);
   assert.equal(persisted.state?.viewOptions?.showMjcfWorldLink, true);
+
+  dom.window.close();
+});
+
+test('migration resets legacy IK handle visibility to the hidden default', async () => {
+  const { dom, useUIStore } = await loadUIStore(
+    {
+      viewOptions: {
+        showGrid: true,
+        showAxes: true,
+        showUsageGuide: true,
+        showMjcfWorldLink: false,
+        showIkHandles: true,
+        showJointAxes: false,
+        showInertia: false,
+        showCenterOfMass: false,
+        showCollision: false,
+        modelOpacity: 1,
+      },
+    },
+    14,
+  );
+
+  const state = useUIStore.getState();
+  assert.equal(state.viewOptions.showIkHandles, false);
+
+  const raw = dom.window.localStorage.getItem('urdf-studio-ui');
+  assert.ok(raw, 'persisted ui store payload should be written');
+  const persisted = JSON.parse(raw) as {
+    state?: {
+      viewOptions?: {
+        showIkHandles?: boolean;
+      };
+    };
+    version?: number;
+  };
+
+  assert.equal(persisted.version, UI_STORE_PERSIST_VERSION);
+  assert.equal(persisted.state?.viewOptions?.showIkHandles, false);
 
   dom.window.close();
 });

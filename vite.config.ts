@@ -118,10 +118,10 @@ function isCodeEditorRuntimeChunkModule(normalizedId: string): boolean {
 const INITIAL_HTML_MODULE_PRELOAD_BLOCKLIST = [
   'feature-file-io-',
   'export-vendor-',
-  'feature-visualizer-runtime-',
+  'feature-editor-runtime-',
   'feature-urdf-viewer-runtime-',
   'ViewerSceneConnector-',
-  'URDFViewerJointsPanel-',
+  'ViewerJointsPanel-',
 ];
 
 function shouldSkipInitialHtmlModulePreload(dependency: string): boolean {
@@ -139,6 +139,47 @@ const GENERATED_ARTIFACT_WATCH_IGNORE_ROOTS = [
 ].map((entryPath) => entryPath.replace(/\\/g, '/'));
 
 const GENERATED_ARTIFACT_WATCH_IGNORE_SEGMENTS = ['/.git/', '/.svn/', '/.hg/'];
+const ISOLATED_DOCUMENT_HEADERS = {
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-site',
+} as const;
+
+// Vite crawls HTML entrypoints to discover dependency optimizer inputs.
+// This repository intentionally keeps many fixture/example HTML files under
+// tmp/, .tmp/, and test/, so constrain discovery to the actual app entry.
+const OPTIMIZE_DEPS_ENTRY_FILES = ['index.html', 'handoff.html'];
+
+const OPTIMIZE_DEPS_INCLUDE = [
+  'three',
+  '@react-three/fiber',
+  '@react-three/drei',
+  'zustand/react/shallow',
+  'lucide-react',
+  'zustand',
+  '@monaco-editor/react',
+  'jszip',
+  'zustand/middleware/immer',
+  'zustand/middleware',
+  'immer',
+  'three/examples/jsm/loaders/GLTFLoader.js',
+  'three/examples/jsm/utils/SkeletonUtils.js',
+  'three/examples/jsm/loaders/VTKLoader.js',
+  'three/examples/jsm/loaders/STLLoader.js',
+  'three/examples/jsm/geometries/ConvexGeometry.js',
+  'three/examples/jsm/loaders/ColladaLoader.js',
+  'three/examples/jsm/loaders/OBJLoader.js',
+  'three/addons/exporters/OBJExporter.js',
+  'three/examples/jsm/environments/RoomEnvironment.js',
+  'three-stdlib',
+  'linkedom',
+  'html2canvas',
+  'jspdf',
+  'three/examples/jsm/postprocessing/EffectComposer.js',
+  'three/examples/jsm/postprocessing/RenderPass.js',
+  'three/examples/jsm/postprocessing/BokehPass.js',
+  'three/addons/loaders/GLTFLoader.js',
+];
 
 function shouldIgnoreWatchPath(watchPath: string): boolean {
   const normalizedPath = watchPath.replace(/\\/g, '/');
@@ -149,6 +190,40 @@ function shouldIgnoreWatchPath(watchPath: string): boolean {
     ) ||
     GENERATED_ARTIFACT_WATCH_IGNORE_SEGMENTS.some((segment) => normalizedPath.includes(segment))
   );
+}
+
+function shouldApplyIsolatedDocumentHeaders(requestUrl: string): boolean {
+  const pathname = new URL(requestUrl, 'http://localhost').pathname;
+  return pathname !== '/handoff.html';
+}
+
+function applyIsolatedDocumentHeaders(response: import('node:http').ServerResponse): void {
+  Object.entries(ISOLATED_DOCUMENT_HEADERS).forEach(([headerName, headerValue]) => {
+    response.setHeader(headerName, headerValue);
+  });
+}
+
+function createConditionalIsolationHeadersPlugin() {
+  const installHeaderMiddleware = (middlewareStack: {
+    use: (handler: (req: any, res: any, next: () => void) => void) => void;
+  }): void => {
+    middlewareStack.use((request, response, next) => {
+      if (shouldApplyIsolatedDocumentHeaders(String(request.url || '/'))) {
+        applyIsolatedDocumentHeaders(response);
+      }
+      next();
+    });
+  };
+
+  return {
+    name: 'conditional-isolation-headers',
+    configureServer(server: import('vite').ViteDevServer) {
+      installHeaderMiddleware(server.middlewares);
+    },
+    configurePreviewServer(server: import('vite').PreviewServer) {
+      installHeaderMiddleware(server.middlewares);
+    },
+  };
 }
 
 export default defineConfig(({ mode }) => {
@@ -166,18 +241,6 @@ export default defineConfig(({ mode }) => {
       watch: {
         ignored: shouldIgnoreWatchPath,
       },
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Resource-Policy': 'same-site',
-      },
-    },
-    preview: {
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Resource-Policy': 'same-site',
-      },
     },
     build: {
       chunkSizeWarningLimit: 800,
@@ -191,6 +254,7 @@ export default defineConfig(({ mode }) => {
         },
       },
       rollupOptions: {
+        input: [path.resolve(__dirname, 'index.html'), path.resolve(__dirname, 'handoff.html')],
         output: {
           manualChunks(id) {
             const normalizedId = id.replace(/\\/g, '/');
@@ -294,7 +358,12 @@ export default defineConfig(({ mode }) => {
     worker: {
       format: 'es',
     },
-    plugins: [react(), tailwindcss(), createUsdConfigurationProxyPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      createUsdConfigurationProxyPlugin(),
+      createConditionalIsolationHeadersPlugin(),
+    ],
     define: {
       __APP_VERSION__: JSON.stringify(appPackageVersion),
       'process.env.API_KEY': JSON.stringify(env.OPENAI_API_KEY || env.GEMINI_API_KEY),
@@ -304,10 +373,11 @@ export default defineConfig(({ mode }) => {
       'process.env.OPENAI_MODEL': JSON.stringify(env.OPENAI_MODEL),
     },
     optimizeDeps: {
+      entries: OPTIMIZE_DEPS_ENTRY_FILES,
       // Keep the dependency optimizer on the same Three.js entry that the
       // application source and R3F use, otherwise optimized deps can pull in
       // a second copy from a different workspace path.
-      include: ['three', '@react-three/fiber', '@react-three/drei'],
+      include: OPTIMIZE_DEPS_INCLUDE,
     },
     resolve: {
       dedupe: ['three', '@react-three/fiber', '@react-three/drei'],

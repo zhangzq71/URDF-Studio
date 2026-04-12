@@ -1,9 +1,28 @@
-import { Briefcase, ChevronDown, Code, Download, Eye, FileText, Folder, Pencil, Redo, Undo, Upload } from 'lucide-react';
+import {
+  Briefcase,
+  ChevronDown,
+  Code,
+  Download,
+  Eye,
+  FileText,
+  Folder,
+  Pencil,
+  Redo,
+  Undo,
+  Upload,
+} from 'lucide-react';
 import { ToolboxMenu } from './ToolboxMenu';
 import { HeaderButton } from './HeaderButton';
 import { ViewMenuItem } from './ViewMenuItem';
-import { toggleOptionsPanels, toggleViewPanel } from './viewMenuState.js';
-import type { HeaderMenuKey, HeaderSetViewConfig, HeaderTranslations, HeaderViewConfig } from './types';
+import { toggleOptionsPanel, toggleViewPanel } from './viewMenuState.js';
+import type {
+  HeaderMenuKey,
+  HeaderSetViewConfig,
+  HeaderTranslations,
+  HeaderViewAvailability,
+  HeaderViewConfig,
+  ToolboxItem,
+} from './types';
 
 interface HeaderMenusProps {
   activeMenu: HeaderMenuKey;
@@ -14,14 +33,13 @@ interface HeaderMenusProps {
   showUndoRedoInline: boolean;
   t: HeaderTranslations;
   viewConfig: HeaderViewConfig;
+  viewAvailability: HeaderViewAvailability;
   setViewConfig: HeaderSetViewConfig;
   onImportFile: () => void;
   onImportFolder: () => void;
   onOpenExport: () => void;
   onExportProject: () => void;
-  onOpenAI: () => void;
-  onOpenMeasureTool: () => void;
-  onOpenCollisionOptimizer: () => void;
+  toolboxItems: ToolboxItem[];
   onOpenCodeViewer: () => void;
   onPrefetchCodeViewer: () => void;
   undo: () => void;
@@ -43,14 +61,13 @@ export function HeaderMenus({
   showUndoRedoInline,
   t,
   viewConfig,
+  viewAvailability,
   setViewConfig,
   onImportFile,
   onImportFolder,
   onOpenExport,
   onExportProject,
-  onOpenAI,
-  onOpenMeasureTool,
-  onOpenCollisionOptimizer,
+  toolboxItems,
   onOpenCodeViewer,
   onPrefetchCodeViewer,
   undo,
@@ -58,6 +75,8 @@ export function HeaderMenus({
   canUndo,
   canRedo,
 }: HeaderMenusProps) {
+  const jointPanelVisible = viewConfig.showJointPanel && viewAvailability.jointPanel;
+
   const toggleMenu = (menu: Exclude<HeaderMenuKey, null>) => {
     setActiveMenu(activeMenu === menu ? null : menu);
   };
@@ -67,8 +86,8 @@ export function HeaderMenus({
     setActiveMenu(null);
   };
 
-  const handleToggleOptionsPanels = () => {
-    setViewConfig((prev) => toggleOptionsPanels(prev));
+  const handleToggleOptionsPanel = () => {
+    setViewConfig((prev) => toggleOptionsPanel(prev));
     setActiveMenu(null);
   };
 
@@ -85,7 +104,11 @@ export function HeaderMenus({
         >
           <FileText className="w-3.5 h-3.5" />
           {showMenuLabels && <span>{t.file}</span>}
-          {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`} />}
+          {showMenuLabels && (
+            <ChevronDown
+              className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'file' ? 'rotate-180' : ''}`}
+            />
+          )}
         </HeaderButton>
 
         {activeMenu === 'file' && (
@@ -98,7 +121,10 @@ export function HeaderMenus({
             >
               <button
                 type="button"
-                onClick={() => { setActiveMenu(null); setTimeout(onImportFolder, 0); }}
+                onClick={() => {
+                  setActiveMenu(null);
+                  setTimeout(onImportFolder, 0);
+                }}
                 className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
               >
                 <Folder className="w-4 h-4 text-slate-400" />
@@ -106,7 +132,10 @@ export function HeaderMenus({
               </button>
               <button
                 type="button"
-                onClick={() => { setActiveMenu(null); setTimeout(onImportFile, 0); }}
+                onClick={() => {
+                  setActiveMenu(null);
+                  setTimeout(onImportFile, 0);
+                }}
                 className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
               >
                 <Download className="w-4 h-4 text-slate-400" />
@@ -115,7 +144,10 @@ export function HeaderMenus({
               <div className="h-px bg-element-bg dark:bg-border-black my-1" />
               <button
                 type="button"
-                onClick={() => { setActiveMenu(null); onOpenExport(); }}
+                onClick={() => {
+                  setActiveMenu(null);
+                  onOpenExport();
+                }}
                 className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
               >
                 <Upload className="w-4 h-4 text-slate-400" />
@@ -123,7 +155,10 @@ export function HeaderMenus({
               </button>
               <button
                 type="button"
-                onClick={() => { setActiveMenu(null); onExportProject(); }}
+                onClick={() => {
+                  setActiveMenu(null);
+                  onExportProject();
+                }}
                 className="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-slate-50 dark:hover:bg-element-bg text-slate-700 dark:text-slate-200 flex items-center gap-2.5"
               >
                 <Briefcase className="w-4 h-4 text-slate-400" />
@@ -145,7 +180,11 @@ export function HeaderMenus({
         >
           <Pencil className="w-3.5 h-3.5" />
           {showMenuLabels && <span>{t.edit}</span>}
-          {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'edit' ? 'rotate-180' : ''}`} />}
+          {showMenuLabels && (
+            <ChevronDown
+              className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'edit' ? 'rotate-180' : ''}`}
+            />
+          )}
         </HeaderButton>
 
         {activeMenu === 'edit' && (
@@ -202,17 +241,15 @@ export function HeaderMenus({
         >
           <Briefcase className="w-3.5 h-3.5" />
           {showMenuLabels && <span>{t.toolbox}</span>}
-          {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`} />}
+          {showMenuLabels && (
+            <ChevronDown
+              className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'toolbox' ? 'rotate-180' : ''}`}
+            />
+          )}
         </HeaderButton>
 
         {activeMenu === 'toolbox' && (
-          <ToolboxMenu
-            t={t}
-            onClose={() => setActiveMenu(null)}
-            onOpenAI={onOpenAI}
-            onOpenMeasureTool={onOpenMeasureTool}
-            onOpenCollisionOptimizer={onOpenCollisionOptimizer}
-          />
+          <ToolboxMenu t={t} onClose={() => setActiveMenu(null)} items={toolboxItems} />
         )}
       </div>
 
@@ -227,7 +264,11 @@ export function HeaderMenus({
         >
           <Eye className="w-3.5 h-3.5" />
           {showMenuLabels && <span>{t.view}</span>}
-          {showMenuLabels && <ChevronDown className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`} />}
+          {showMenuLabels && (
+            <ChevronDown
+              className={`w-3 h-3 opacity-60 transition-transform ${activeMenu === 'view' ? 'rotate-180' : ''}`}
+            />
+          )}
         </HeaderButton>
 
         {activeMenu === 'view' && (
@@ -244,14 +285,15 @@ export function HeaderMenus({
                 onClick={() => handleToggleViewPanel('showToolbar')}
               />
               <ViewMenuItem
-                checked={viewConfig.showJointPanel}
+                checked={jointPanelVisible}
                 label={t.jointsPanel}
+                disabled={!viewAvailability.jointPanel}
                 onClick={() => handleToggleViewPanel('showJointPanel')}
               />
               <ViewMenuItem
-                checked={viewConfig.showOptionsPanel || viewConfig.showVisualizerOptionsPanel}
+                checked={viewConfig.showOptionsPanel}
                 label={t.viewOptions}
-                onClick={handleToggleOptionsPanels}
+                onClick={handleToggleOptionsPanel}
               />
             </div>
           </>

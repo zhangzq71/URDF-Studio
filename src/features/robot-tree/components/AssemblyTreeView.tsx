@@ -33,6 +33,8 @@ export interface AssemblyTreeViewProps {
     linkId: string,
     subType: 'visual' | 'collision',
     objectIndex?: number,
+    suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
   ) => void;
   onFocus?: (id: string) => void;
   onAddChild: (parentId: string) => void;

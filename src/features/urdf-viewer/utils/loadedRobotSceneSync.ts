@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isProtectedMaterial } from '@/core/utils/three/materialProtection';
 import { GeometryType, type UrdfLink } from '@/types';
 
 import {
@@ -10,6 +11,7 @@ import {
 import { disposeReplacedMaterials } from './robotLoaderPatchUtils';
 import { applyURDFMaterials, type URDFMaterialInfo } from './urdfMaterials';
 import { applyVisualMeshShadowPolicy } from '@/core/utils/visualMeshShadowPolicy';
+import { getGeometryObjectIndexUserDataKey } from './runtimeGeometrySelection';
 
 export interface SyncLoadedRobotSceneOptions {
   robot: THREE.Object3D;
@@ -27,13 +29,36 @@ export interface SyncLoadedRobotSceneResult {
   linkMeshMap: Map<string, THREE.Mesh[]>;
 }
 
+function assignSemanticGeometryMetadata(
+  target: THREE.Object3D,
+  semanticLinkName: string,
+  runtimeLinkName: string,
+  subType: 'visual' | 'collision',
+  objectIndex: number,
+): boolean {
+  const objectIndexKey = getGeometryObjectIndexUserDataKey(subType);
+  let changed = false;
+
+  if (
+    target.userData?.parentLinkName !== semanticLinkName ||
+    target.userData?.runtimeParentLinkName !== runtimeLinkName ||
+    target.userData?.[objectIndexKey] !== objectIndex
+  ) {
+    changed = true;
+  }
+
+  target.userData.parentLinkName = semanticLinkName;
+  target.userData.runtimeParentLinkName = runtimeLinkName;
+  target.userData[objectIndexKey] = objectIndex;
+  return changed;
+}
+
 function meshNeedsMaterialUpgrade(mesh: THREE.Mesh): boolean {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
 
   return materials.some((material) => {
     if (!material) return false;
-    if ((material as any).userData?.isCollisionMaterial) return false;
-    if ((material as any).userData?.isSharedMaterial) return false;
+    if (isProtectedMaterial(material)) return false;
     if (!(material instanceof THREE.MeshStandardMaterial)) return true;
 
     const materialWithPbrState = material as THREE.MeshStandardMaterial & {
@@ -48,9 +73,18 @@ function meshNeedsMaterialUpgrade(mesh: THREE.Mesh): boolean {
     const originalRoughness = Number(material.userData?.originalRoughness);
     const originalMetalness = Number(material.userData?.originalMetalness);
     const originalEnvMapIntensity = Number(material.userData?.originalEnvMapIntensity);
+    const originalEmissive = material.userData?.originalEmissive;
+    const originalEmissiveIntensity = Number(material.userData?.originalEmissiveIntensity);
     const currentEnvMapIntensity = Number.isFinite(materialWithPbrState.envMapIntensity)
       ? Number(materialWithPbrState.envMapIntensity)
       : 1;
+    const currentEmissiveIntensity = Number.isFinite(materialWithPbrState.emissiveIntensity)
+      ? Number(materialWithPbrState.emissiveIntensity)
+      : 0;
+    const currentEmissiveHex = material.emissive?.isColor ? material.emissive.getHex() : 0x000000;
+    const expectedEmissiveHex = (originalEmissive as THREE.Color | undefined)?.isColor
+      ? (originalEmissive as THREE.Color).getHex()
+      : 0x000000;
 
     if (
       !Number.isFinite(originalRoughness) ||
@@ -83,7 +117,15 @@ function meshNeedsMaterialUpgrade(mesh: THREE.Mesh): boolean {
       return true;
     }
 
-    if (material.emissive?.getHex() !== 0x000000) {
+    if (currentEmissiveHex !== expectedEmissiveHex) {
+      return true;
+    }
+
+    if (
+      (Number.isFinite(originalEmissiveIntensity) &&
+        Math.abs(currentEmissiveIntensity - originalEmissiveIntensity) > 1e-6) ||
+      (!Number.isFinite(originalEmissiveIntensity) && currentEmissiveIntensity > 1e-6)
+    ) {
       return true;
     }
 
@@ -245,12 +287,88 @@ function findDirectChildUnderParent(
   return current?.parent === parent ? current : null;
 }
 
+function getClaimedMjcfVisualOwnerIndexes(
+  claimedIndexesByRuntimeLink: Map<string, Set<number>>,
+  runtimeLinkName: string,
+): Set<number> {
+  const existing = claimedIndexesByRuntimeLink.get(runtimeLinkName);
+  if (existing) {
+    return existing;
+  }
+
+  const created = new Set<number>();
+  claimedIndexesByRuntimeLink.set(runtimeLinkName, created);
+  return created;
+}
+
+function buildMjcfVisualRankByGeometryRoot(
+  runtimeLinks: Record<string, THREE.Object3D> | undefined,
+): WeakMap<THREE.Object3D, number> {
+  const visualRankByGeometryRoot = new WeakMap<THREE.Object3D, number>();
+  if (!runtimeLinks) {
+    return visualRankByGeometryRoot;
+  }
+
+  Object.values(runtimeLinks).forEach((link) => {
+    const rankedVisualRoots = link.children
+      .map((child, childIndex) => {
+        const visualOrderValue = child.userData?.visualOrder;
+        const visualOrder =
+          typeof visualOrderValue === 'number' ? visualOrderValue : Number(visualOrderValue);
+        return {
+          root: child,
+          childIndex,
+          visualOrder,
+        };
+      })
+      .filter(
+        (
+          candidate,
+        ): candidate is { root: THREE.Object3D; childIndex: number; visualOrder: number } =>
+          Number.isInteger(candidate.visualOrder) && candidate.visualOrder >= 0,
+      )
+      .sort(
+        (left, right) => left.visualOrder - right.visualOrder || left.childIndex - right.childIndex,
+      );
+
+    rankedVisualRoots.forEach(({ root }, rank) => {
+      visualRankByGeometryRoot.set(root, rank);
+    });
+  });
+
+  return visualRankByGeometryRoot;
+}
+
+function buildMjcfRankedVisualRootCountByRuntimeLink(
+  runtimeLinks: Record<string, THREE.Object3D> | undefined,
+): Map<string, number> {
+  const rankedVisualRootCountByRuntimeLink = new Map<string, number>();
+  if (!runtimeLinks) {
+    return rankedVisualRootCountByRuntimeLink;
+  }
+
+  Object.entries(runtimeLinks).forEach(([runtimeLinkName, link]) => {
+    const rankedVisualRootCount = link.children.reduce((count, child) => {
+      const visualOrderValue = child.userData?.visualOrder;
+      const visualOrder =
+        typeof visualOrderValue === 'number' ? visualOrderValue : Number(visualOrderValue);
+      return Number.isInteger(visualOrder) && visualOrder >= 0 ? count + 1 : count;
+    }, 0);
+
+    if (rankedVisualRootCount > 0) {
+      rankedVisualRootCountByRuntimeLink.set(runtimeLinkName, rankedVisualRootCount);
+    }
+  });
+
+  return rankedVisualRootCountByRuntimeLink;
+}
+
 export function syncLoadedRobotScene({
   robot,
   sourceFormat,
   showCollision,
   showVisual,
-  showMjcfWorldLink = true,
+  showMjcfWorldLink = false,
   showCollisionAlwaysOnTop = true,
   urdfMaterials,
   robotLinks: robotLinkData,
@@ -263,16 +381,20 @@ export function syncLoadedRobotScene({
     sourceFormat === 'mjcf'
       ? buildMjcfVisualOwnershipByRuntimeLink(robotLinkData)
       : new Map<string, string[]>();
+  const mjcfVisualRankByGeometryRoot =
+    sourceFormat === 'mjcf' ? buildMjcfVisualRankByGeometryRoot(robotLinks) : new WeakMap();
+  const mjcfRankedVisualRootCountByRuntimeLink =
+    sourceFormat === 'mjcf'
+      ? buildMjcfRankedVisualRootCountByRuntimeLink(robotLinks)
+      : new Map<string, number>();
   const visualBodyIndexByRuntimeLink = new Map<string, number>();
+  const claimedMjcfVisualOwnerIndexesByRuntimeLink = new Map<string, Set<number>>();
   const visualOwnerByGeometryRoot = new WeakMap<THREE.Object3D, string>();
-  const previousCollisionDepthTest = collisionBaseMaterial.depthTest;
-  const previousCollisionDepthWrite = collisionBaseMaterial.depthWrite;
-
-  syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop);
-  if (
-    previousCollisionDepthTest !== collisionBaseMaterial.depthTest ||
-    previousCollisionDepthWrite !== collisionBaseMaterial.depthWrite
-  ) {
+  const visualObjectIndexByGeometryRoot = new WeakMap<THREE.Object3D, number>();
+  const collisionObjectIndexByGeometryRoot = new WeakMap<THREE.Object3D, number>();
+  const nextVisualObjectIndexBySemanticLink = new Map<string, number>();
+  const nextCollisionObjectIndexBySemanticLink = new Map<string, number>();
+  if (syncCollisionBaseMaterialPriority(showCollisionAlwaysOnTop, showVisual)) {
     changed = true;
   }
 
@@ -308,15 +430,36 @@ export function syncLoadedRobotScene({
         robotLinkData,
         parentLink.name,
       );
+      const geometryRoot = findDirectChildUnderParent(mesh, parentLink) ?? mesh;
+      let collisionObjectIndex = collisionObjectIndexByGeometryRoot.get(geometryRoot);
+      if (collisionObjectIndex === undefined) {
+        collisionObjectIndex = nextCollisionObjectIndexBySemanticLink.get(semanticLinkName) ?? 0;
+        collisionObjectIndexByGeometryRoot.set(geometryRoot, collisionObjectIndex);
+        nextCollisionObjectIndexBySemanticLink.set(semanticLinkName, collisionObjectIndex + 1);
+      }
 
       if (
-        mesh.userData?.parentLinkName !== semanticLinkName ||
-        mesh.userData?.runtimeParentLinkName !== parentLink.name
+        assignSemanticGeometryMetadata(
+          geometryRoot,
+          semanticLinkName,
+          parentLink.name,
+          'collision',
+          collisionObjectIndex,
+        )
       ) {
         changed = true;
       }
-      mesh.userData.parentLinkName = semanticLinkName;
-      mesh.userData.runtimeParentLinkName = parentLink.name;
+      if (
+        assignSemanticGeometryMetadata(
+          mesh,
+          semanticLinkName,
+          parentLink.name,
+          'collision',
+          collisionObjectIndex,
+        )
+      ) {
+        changed = true;
+      }
       pushMesh(linkMeshMap, `${semanticLinkName}:collision`, mesh);
     }
   };
@@ -327,14 +470,60 @@ export function syncLoadedRobotScene({
     let semanticLinkName = visualOwnerByGeometryRoot.get(geometryRoot);
 
     if (!semanticLinkName) {
-      const visualBodyIndex = visualBodyIndexByRuntimeLink.get(parentLink.name) ?? 0;
-      visualBodyIndexByRuntimeLink.set(parentLink.name, visualBodyIndex + 1);
       const visualOwners = mjcfVisualOwnershipByRuntimeLink.get(parentLink.name);
+      let visualOwnerIndex: number | null = null;
+
+      if (sourceFormat === 'mjcf' && visualOwners?.length) {
+        const claimedIndexes = getClaimedMjcfVisualOwnerIndexes(
+          claimedMjcfVisualOwnerIndexesByRuntimeLink,
+          parentLink.name,
+        );
+        const preferredVisualOrder = mjcfVisualRankByGeometryRoot.get(geometryRoot) ?? null;
+        const hasRankedVisualRoots =
+          (mjcfRankedVisualRootCountByRuntimeLink.get(parentLink.name) ?? 0) > 0;
+
+        if (
+          preferredVisualOrder !== null &&
+          preferredVisualOrder < visualOwners.length &&
+          !claimedIndexes.has(preferredVisualOrder)
+        ) {
+          visualOwnerIndex = preferredVisualOrder;
+        } else if (preferredVisualOrder === null && hasRankedVisualRoots) {
+          semanticLinkName =
+            resolveRobotLinkDataByRuntimeName(robotLinkData, parentLink.name)?.id ??
+            parentLink.name;
+        } else {
+          let nextVisualBodyIndex = visualBodyIndexByRuntimeLink.get(parentLink.name) ?? 0;
+          while (
+            nextVisualBodyIndex < visualOwners.length &&
+            claimedIndexes.has(nextVisualBodyIndex)
+          ) {
+            nextVisualBodyIndex += 1;
+          }
+
+          if (nextVisualBodyIndex < visualOwners.length) {
+            visualOwnerIndex = nextVisualBodyIndex;
+          }
+        }
+
+        if (visualOwnerIndex !== null) {
+          claimedIndexes.add(visualOwnerIndex);
+          visualBodyIndexByRuntimeLink.set(parentLink.name, visualOwnerIndex + 1);
+          semanticLinkName = visualOwners[visualOwnerIndex] ?? null;
+        }
+      }
+
       semanticLinkName =
-        visualOwners?.[visualBodyIndex] ??
+        semanticLinkName ??
         resolveRobotLinkDataByRuntimeName(robotLinkData, parentLink.name)?.id ??
         parentLink.name;
       visualOwnerByGeometryRoot.set(geometryRoot, semanticLinkName);
+    }
+    let visualObjectIndex = visualObjectIndexByGeometryRoot.get(geometryRoot);
+    if (visualObjectIndex === undefined) {
+      visualObjectIndex = nextVisualObjectIndexBySemanticLink.get(semanticLinkName) ?? 0;
+      visualObjectIndexByGeometryRoot.set(geometryRoot, visualObjectIndex);
+      nextVisualObjectIndexBySemanticLink.set(semanticLinkName, visualObjectIndex + 1);
     }
 
     const isVisible =
@@ -355,7 +544,25 @@ export function syncLoadedRobotScene({
     }
 
     if (
-      mesh.userData?.parentLinkName !== semanticLinkName ||
+      assignSemanticGeometryMetadata(
+        geometryRoot,
+        semanticLinkName,
+        parentLink.name,
+        'visual',
+        visualObjectIndex,
+      )
+    ) {
+      changed = true;
+    }
+
+    if (
+      assignSemanticGeometryMetadata(
+        mesh,
+        semanticLinkName,
+        parentLink.name,
+        'visual',
+        visualObjectIndex,
+      ) ||
       mesh.userData?.isVisualMesh !== true ||
       mesh.userData?.isCollisionMesh === true ||
       mesh.visible !== isVisible
@@ -363,8 +570,6 @@ export function syncLoadedRobotScene({
       changed = true;
     }
 
-    mesh.userData.parentLinkName = semanticLinkName;
-    mesh.userData.runtimeParentLinkName = parentLink.name;
     mesh.userData.isVisualMesh = true;
     mesh.userData.isCollisionMesh = false;
     mesh.visible = isVisible;
@@ -378,7 +583,9 @@ export function syncLoadedRobotScene({
     insideCollider: boolean,
   ) => {
     const nextParentLink = isLinkNode(node) ? node : parentLink;
-    const nodeIsCollider = Boolean((node as any).isURDFCollider);
+    const nodeIsCollider = Boolean(
+      (node as any).isURDFCollider || node.userData?.isCollisionGroup === true,
+    );
     const nextInsideCollider = insideCollider || nodeIsCollider;
 
     if (nodeIsCollider) {
@@ -408,9 +615,8 @@ export function syncLoadedRobotScene({
         node.userData.runtimeParentLinkName = nextParentLink.name;
       }
 
-      if (!colliderVisible) {
-        return;
-      }
+      // Keep traversing hidden collider subtrees so collision meshes still receive
+      // stable metadata (link ownership, object index, semantic tags).
     }
 
     if ((node as THREE.Mesh).isMesh) {

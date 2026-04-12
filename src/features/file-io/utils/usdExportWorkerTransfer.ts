@@ -10,8 +10,7 @@ import type {
 
 export interface UsdExportWorkerTransferFile {
   path: string;
-  mimeType: string;
-  bytes: ArrayBuffer;
+  blob: Blob;
 }
 
 export interface UsdExportWorkerRequestPayload {
@@ -37,14 +36,6 @@ interface SerializedWorkerPayload<TPayload> {
   transferables: ArrayBuffer[];
 }
 
-async function readBlobBytes(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') {
-    return await blob.arrayBuffer();
-  }
-
-  return await new Response(blob).arrayBuffer();
-}
-
 async function serializeBlobMap(
   files: Map<string, Blob> | undefined,
 ): Promise<{ files: UsdExportWorkerTransferFile[]; transferables: ArrayBuffer[] }> {
@@ -55,26 +46,19 @@ async function serializeBlobMap(
     };
   }
 
-  const serializedFiles = await Promise.all(Array.from(files.entries()).map(async ([path, blob]) => {
-    const bytes = await readBlobBytes(blob);
-    return {
-      path,
-      mimeType: blob.type,
-      bytes,
-    };
+  const serializedFiles = Array.from(files.entries()).map(([path, blob]) => ({
+    path,
+    blob,
   }));
 
   return {
     files: serializedFiles,
-    transferables: serializedFiles.map((file) => file.bytes),
+    transferables: [],
   };
 }
 
 function hydrateBlobMap(files: UsdExportWorkerTransferFile[]): Map<string, Blob> {
-  return new Map<string, Blob>(files.map((file) => ([
-    file.path,
-    new Blob([file.bytes], { type: file.mimeType }),
-  ])));
+  return new Map<string, Blob>(files.map((file) => [file.path, file.blob]));
 }
 
 export async function serializeUsdExportRequestForWorker(

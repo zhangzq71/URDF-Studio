@@ -51,13 +51,21 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
           </ContextMenuItem>
 
           {contextMenu.target.type === 'link' && contextMenuHasVisual && (
-            <ContextMenuItem onClick={() => onDeleteLinkGeometry('visual')} icon={<Shapes size={12} />} tone="danger">
+            <ContextMenuItem
+              onClick={() => onDeleteLinkGeometry('visual')}
+              icon={<Shapes size={12} />}
+              tone="danger"
+            >
               {t.deleteVisualGeometry}
             </ContextMenuItem>
           )}
 
           {contextMenu.target.type === 'link' && contextMenuHasCollision && (
-            <ContextMenuItem onClick={() => onDeleteLinkGeometry('collision')} icon={<Shield size={12} />} tone="danger">
+            <ContextMenuItem
+              onClick={() => onDeleteLinkGeometry('collision')}
+              icon={<Shield size={12} />}
+              tone="danger"
+            >
               {t.deleteCollisionGeometry}
             </ContextMenuItem>
           )}
@@ -72,14 +80,27 @@ export const TreeNodeContextMenu = memo(function TreeNodeContextMenu({
         </>
       )}
 
-      {contextMenu.target.type === 'geometry' && contextMenuGeometryType !== null && (
-        <ContextMenuItem onClick={onDeleteGeometryMenuAction} icon={<Trash2 size={12} />} tone="danger">
-          {contextMenu.target.subType === 'visual' && contextMenuGeometryType === GeometryType.MESH
-            ? t.deleteMesh
-            : contextMenu.target.subType === 'visual'
-              ? t.deleteVisualGeometry
-              : t.deleteCollisionGeometry}
-        </ContextMenuItem>
+      {contextMenu.target.type === 'geometry' && (
+        <>
+          <ContextMenuItem onClick={onRenameMenuAction} icon={<Edit3 size={12} />}>
+            {t.rename}
+          </ContextMenuItem>
+
+          {contextMenuGeometryType !== null && (
+            <ContextMenuItem
+              onClick={onDeleteGeometryMenuAction}
+              icon={<Trash2 size={12} />}
+              tone="danger"
+            >
+              {contextMenu.target.subType === 'visual' &&
+              contextMenuGeometryType === GeometryType.MESH
+                ? t.deleteMesh
+                : contextMenu.target.subType === 'visual'
+                  ? t.deleteVisualGeometry
+                  : t.deleteCollisionGeometry}
+            </ContextMenuItem>
+          )}
+        </>
       )}
     </ContextMenuFrame>
   );

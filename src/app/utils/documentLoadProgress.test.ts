@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  mapRobotImportProgressToDocumentLoadPercent,
+  mapViewerDocumentLoadEventToDocumentLoadPercent,
+  resolveDocumentLoadingOverlayTargetFileName,
+} from './documentLoadProgress.ts';
+
+test('mapRobotImportProgressToDocumentLoadPercent maps URDF worker progress into the global bootstrap range', () => {
+  assert.equal(
+    mapRobotImportProgressToDocumentLoadPercent('urdf', {
+      progressPercent: 50,
+      message: 'Parsing URDF',
+    }),
+    20,
+  );
+});
+
+test('mapViewerDocumentLoadEventToDocumentLoadPercent maps USD viewer progress into the post-bootstrap range', () => {
+  assert.equal(
+    mapViewerDocumentLoadEventToDocumentLoadPercent('usd', {
+      status: 'loading',
+      phase: 'checking-path',
+      progressMode: 'percent',
+      progressPercent: 50,
+      loadedCount: null,
+      totalCount: null,
+    }),
+    15,
+  );
+});
+
+test('resolveDocumentLoadingOverlayTargetFileName prefers the actively loading file over preview or selection state', () => {
+  assert.equal(
+    resolveDocumentLoadingOverlayTargetFileName({
+      previewFileName: 'robots/preview.urdf',
+      selectedFileName: 'robots/selected.urdf',
+      documentLoadState: {
+        status: 'loading',
+        fileName: 'robots/loading.urdf',
+      },
+    }),
+    'robots/loading.urdf',
+  );
+});

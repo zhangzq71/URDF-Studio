@@ -175,13 +175,13 @@ export async function prepareImportPayloadWithWorker(
 }
 
 interface HydrateDeferredImportAssetsWithWorkerArgs {
-  zipFile: File;
+  archiveFile: File;
   assetFiles: readonly PreparedDeferredImportAssetFile[];
   onProgress?: (progress: PrepareImportProgress) => void;
 }
 
 export async function hydrateDeferredImportAssetsWithWorker({
-  zipFile,
+  archiveFile,
   assetFiles,
   onProgress,
 }: HydrateDeferredImportAssetsWithWorkerArgs): Promise<PreparedImportBlobFile[]> {
@@ -208,7 +208,7 @@ export async function hydrateDeferredImportAssetsWithWorker({
     const request: ImportPreparationWorkerRequest = {
       type: 'hydrate-deferred-import-assets',
       requestId,
-      zipFile,
+      archiveFile,
       assetFiles: [...assetFiles],
     };
 
@@ -227,4 +227,11 @@ export async function hydrateDeferredImportAssetsWithWorker({
       reject(error);
     }
   });
+}
+
+export function disposeImportPreparationWorker(): void {
+  workerUnavailable = false;
+  requestIdCounter = 0;
+  disposeSharedWorker();
+  pendingWorkerRequests.clear();
 }

@@ -1,7 +1,49 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { clearControlPointerState } from './pointerState.ts';
+import { clearControlPointerState, hasControlPointerIntent } from './pointerState.ts';
+
+test('hasControlPointerIntent detects an active gizmo hover axis', () => {
+  const controls = {
+    dragging: false,
+    axis: 'Z',
+    userData: {},
+  };
+
+  assert.equal(hasControlPointerIntent(controls), true);
+});
+
+test('hasControlPointerIntent detects a cached visible-axis hit before drag begins', () => {
+  const controls = {
+    dragging: false,
+    axis: null,
+    userData: {
+      urdfLastVisibleAxisHit: {
+        axis: 'Y',
+        x: 0.12,
+        y: -0.08,
+      },
+    },
+  };
+
+  assert.equal(hasControlPointerIntent(controls), true);
+});
+
+test('hasControlPointerIntent ignores idle controls with no active axis', () => {
+  const controls = {
+    dragging: false,
+    axis: null,
+    userData: {
+      urdfLastVisibleAxisHit: {
+        axis: null,
+        x: 0.12,
+        y: -0.08,
+      },
+    },
+  };
+
+  assert.equal(hasControlPointerIntent(controls), false);
+});
 
 test('clearControlPointerState clears the idle axis and visible-hit cache', () => {
   const controls = {

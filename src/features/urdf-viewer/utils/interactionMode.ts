@@ -19,18 +19,23 @@ export interface TopLayerInteractionSubTypeFromHitsOptions extends TopLayerInter
 }
 
 export function shouldBlockOrbitForGeometryHit(toolMode: ToolMode): boolean {
-  return toolMode === 'select'
-    || toolMode === 'translate'
-    || toolMode === 'rotate'
-    || toolMode === 'universal'
-    || toolMode === 'measure';
+  return (
+    toolMode === 'select' ||
+    toolMode === 'translate' ||
+    toolMode === 'rotate' ||
+    toolMode === 'universal' ||
+    toolMode === 'measure' ||
+    toolMode === 'paint'
+  );
 }
 
 export function shouldStartJointDragFromGeometryHit(toolMode: ToolMode): boolean {
-  return toolMode === 'select'
-    || toolMode === 'translate'
-    || toolMode === 'rotate'
-    || toolMode === 'universal';
+  return (
+    toolMode === 'select' ||
+    toolMode === 'translate' ||
+    toolMode === 'rotate' ||
+    toolMode === 'universal'
+  );
 }
 
 export function shouldDisableOrbitForDirectJointDrag(
@@ -50,15 +55,13 @@ export function resolveEffectiveInteractionSubType(
   const fallbackSubType: InteractiveGeometrySubType =
     preferredSubType === 'visual' ? 'collision' : 'visual';
 
-  const isPreferredVisible =
-    preferredSubType === 'visual' ? showVisual : showCollision;
+  const isPreferredVisible = preferredSubType === 'visual' ? showVisual : showCollision;
 
   if (isPreferredVisible) {
     return { subType: preferredSubType, didFallback: false };
   }
 
-  const isFallbackVisible =
-    fallbackSubType === 'visual' ? showVisual : showCollision;
+  const isFallbackVisible = fallbackSubType === 'visual' ? showVisual : showCollision;
 
   if (isFallbackVisible) {
     return { subType: fallbackSubType, didFallback: true };

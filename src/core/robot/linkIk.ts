@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { JointType, type RobotData, type UrdfMjcfSite, type Vector3 } from '@/types';
+import { JointType, type RobotData, type UrdfLink, type UrdfMjcfSite, type Vector3 } from '@/types';
 
 import { resolveLinkRenderableBounds } from './assemblyPlacement';
 import { solveClosedLoopMotionCompensation } from './closedLoops';
@@ -17,10 +17,12 @@ import {
 
 const IK_HANDLE_RADIUS = 0.03;
 const IK_LINE_SEARCH_ATTEMPTS = 4;
+const IK_COORDINATE_SEARCH_SCALES = [1, 0.5, 0.25] as const;
 const IK_SOLVER_STEP_ANGLE_LIMIT = 0.2;
 const IK_SOLVER_STEP_TRANSLATION_LIMIT = 0.02;
 const IK_NUMERICAL_EPSILON = 1e-12;
 const IK_WORLD_POINT_EPSILON = 1e-9;
+const IK_AXIS_ANCHOR_EPSILON = 1e-8;
 
 const SUPPORTED_LINK_IK_JOINT_TYPES = new Set<JointType>([
   JointType.FIXED,
@@ -65,6 +67,7 @@ export interface LinkIkPositionSolveRequest {
   positionTolerance?: number;
   stallTolerance?: number;
   damping?: number;
+  coordinatePairMaxDistance?: number;
 }
 
 export interface LinkIkPositionSolveResult {
@@ -87,6 +90,14 @@ interface LinkIkChain {
   jointIds: string[];
 }
 
+interface LinkIkEvaluation {
+  overrides: JointKinematicOverrideMap;
+  effectorWorldPosition: THREE.Vector3;
+  error: THREE.Vector3;
+  residual: number;
+  numericalFailure: boolean;
+}
+
 const tempBoundsCenter = new THREE.Vector3();
 const tempEffectorPosition = new THREE.Vector3();
 const tempJointPosition = new THREE.Vector3();
@@ -96,6 +107,8 @@ const tempTargetWorldPosition = new THREE.Vector3();
 const tempErrorVector = new THREE.Vector3();
 const tempJointAxis = new THREE.Vector3();
 const tempJacobianColumn = new THREE.Vector3();
+const tempAnchorAxis = new THREE.Vector3();
+const tempAnchorCandidate = new THREE.Vector3();
 
 function toVector3Value(vector: THREE.Vector3): Vector3 {
   return { x: vector.x, y: vector.y, z: vector.z };
@@ -312,9 +325,69 @@ function collectLinkIkChain(
   };
 }
 
-function resolveIkHandleAnchorLocal(bounds: THREE.Box3): Vector3 {
+function resolveJointAxisForIkAnchor(
+  robot: Pick<RobotData, 'joints'>,
+  jointIds: string[],
+): THREE.Vector3 | null {
+  const distalJointId = jointIds[jointIds.length - 1];
+  if (!distalJointId) {
+    return null;
+  }
+
+  const distalJoint = robot.joints[distalJointId];
+  if (!distalJoint?.axis) {
+    return null;
+  }
+
+  tempAnchorAxis.set(distalJoint.axis.x ?? 0, distalJoint.axis.y ?? 0, distalJoint.axis.z ?? 0);
+  if (tempAnchorAxis.lengthSq() <= IK_AXIS_ANCHOR_EPSILON) {
+    return null;
+  }
+
+  return tempAnchorAxis.normalize().clone();
+}
+
+function getAnchorAxisDistanceSq(point: THREE.Vector3, axis: THREE.Vector3): number {
+  const axisProjection = point.dot(axis);
+  return Math.max(0, point.lengthSq() - axisProjection * axisProjection);
+}
+
+function resolveIkHandleAnchorLocal(
+  bounds: THREE.Box3,
+  preferredAxisLocal: THREE.Vector3 | null = null,
+): Vector3 {
   bounds.getCenter(tempBoundsCenter);
-  return toVector3Value(tempBoundsCenter);
+
+  if (!preferredAxisLocal) {
+    return toVector3Value(tempBoundsCenter);
+  }
+
+  const centerDistanceSq = getAnchorAxisDistanceSq(tempBoundsCenter, preferredAxisLocal);
+  if (centerDistanceSq > IK_AXIS_ANCHOR_EPSILON) {
+    return toVector3Value(tempBoundsCenter);
+  }
+
+  let bestDistanceSq = centerDistanceSq;
+  let bestCandidate = tempBoundsCenter.clone();
+
+  const faceCenterCandidates = [
+    tempAnchorCandidate.set(bounds.min.x, tempBoundsCenter.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(bounds.max.x, tempBoundsCenter.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, bounds.min.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, bounds.max.y, tempBoundsCenter.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, tempBoundsCenter.y, bounds.min.z).clone(),
+    tempAnchorCandidate.set(tempBoundsCenter.x, tempBoundsCenter.y, bounds.max.z).clone(),
+  ];
+
+  faceCenterCandidates.forEach((candidate) => {
+    const candidateDistanceSq = getAnchorAxisDistanceSq(candidate, preferredAxisLocal);
+    if (candidateDistanceSq > bestDistanceSq + IK_AXIS_ANCHOR_EPSILON) {
+      bestDistanceSq = candidateDistanceSq;
+      bestCandidate = candidate;
+    }
+  });
+
+  return toVector3Value(bestCandidate);
 }
 
 function scoreMjcfSiteForIkAnchor(site: UrdfMjcfSite): number {
@@ -366,6 +439,40 @@ function resolveLinkIkAnchorFromMjcfSites(
   };
 }
 
+function buildLinkIkHandleDescriptor(
+  robot: Pick<RobotData, 'joints'>,
+  link: UrdfLink,
+  linkId: string,
+  jointIds: string[],
+): LinkIkHandleDescriptor | null {
+  const boundsResult = resolveLinkRenderableBounds(link);
+  const siteAnchorResult = !boundsResult ? resolveLinkIkAnchorFromMjcfSites(link) : null;
+  if (!boundsResult && !siteAnchorResult) {
+    return null;
+  }
+
+  if (!boundsResult) {
+    return {
+      linkId,
+      anchorLocal: siteAnchorResult!.anchorLocal,
+      anchorSource: siteAnchorResult!.anchorSource,
+      radius: IK_HANDLE_RADIUS,
+      jointIds,
+    };
+  }
+
+  return {
+    linkId,
+    anchorLocal: resolveIkHandleAnchorLocal(
+      boundsResult.bounds,
+      resolveJointAxisForIkAnchor(robot, jointIds),
+    ),
+    anchorSource: boundsResult.source,
+    radius: IK_HANDLE_RADIUS,
+    jointIds,
+  };
+}
+
 export function resolveLinkIkHandleDescriptor(
   robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
   linkId: string,
@@ -396,29 +503,24 @@ export function resolveLinkIkHandleDescriptor(
     return null;
   }
 
-  const boundsResult = resolveLinkRenderableBounds(link);
-  const siteAnchorResult = !boundsResult ? resolveLinkIkAnchorFromMjcfSites(link) : null;
-  if (!boundsResult && !siteAnchorResult) {
+  return buildLinkIkHandleDescriptor(robot, link, linkId, chainResult.chain?.jointIds ?? []);
+}
+
+export function resolveDirectManipulableLinkIkDescriptor(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
+  linkId: string,
+): LinkIkHandleDescriptor | null {
+  const link = robot.links[linkId];
+  if (!link || linkId === robot.rootLinkId) {
     return null;
   }
 
-  if (!boundsResult) {
-    return {
-      linkId,
-      anchorLocal: siteAnchorResult!.anchorLocal,
-      anchorSource: siteAnchorResult!.anchorSource,
-      radius: IK_HANDLE_RADIUS,
-      jointIds: chainResult.chain?.jointIds ?? [],
-    };
+  const chainResult = collectLinkIkChain(robot, linkId);
+  if (!chainResult.chain) {
+    return null;
   }
 
-  return {
-    linkId,
-    anchorLocal: resolveIkHandleAnchorLocal(boundsResult.bounds),
-    anchorSource: boundsResult.source,
-    radius: IK_HANDLE_RADIUS,
-    jointIds: chainResult.chain?.jointIds ?? [],
-  };
+  return buildLinkIkHandleDescriptor(robot, link, linkId, chainResult.chain.jointIds);
 }
 
 export function resolveLinkIkHandleDescriptors(
@@ -427,6 +529,52 @@ export function resolveLinkIkHandleDescriptors(
   return [robot.rootLinkId, ...getLeafLinkIds(robot)]
     .map((linkId) => resolveLinkIkHandleDescriptor(robot, linkId))
     .filter((descriptor): descriptor is LinkIkHandleDescriptor => descriptor !== null);
+}
+
+export function resolveSelectableIkHandleLinkId(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId'>,
+  linkId: string,
+): string | null {
+  if (!robot.links[linkId]) {
+    return null;
+  }
+
+  if (resolveLinkIkHandleDescriptor(robot, linkId)) {
+    return linkId;
+  }
+
+  const visitedLinkIds = new Set<string>([linkId]);
+  const pendingLinkIds = [linkId];
+  const descendantCandidateIds = new Set<string>();
+
+  while (pendingLinkIds.length > 0) {
+    const currentLinkId = pendingLinkIds.shift();
+    if (!currentLinkId) {
+      continue;
+    }
+
+    Object.values(robot.joints).forEach((joint) => {
+      if (joint.parentLinkId !== currentLinkId || visitedLinkIds.has(joint.childLinkId)) {
+        return;
+      }
+
+      visitedLinkIds.add(joint.childLinkId);
+      pendingLinkIds.push(joint.childLinkId);
+
+      const descriptor = resolveLinkIkHandleDescriptor(robot, joint.childLinkId);
+      if (!descriptor) {
+        return;
+      }
+
+      descendantCandidateIds.add(descriptor.linkId);
+    });
+  }
+
+  if (descendantCandidateIds.size !== 1) {
+    return null;
+  }
+
+  return [...descendantCandidateIds][0] ?? null;
 }
 
 export function resolveLinkIkHandleWorldPosition(
@@ -481,13 +629,7 @@ function buildLinkIkEvaluation(
   options: Required<Pick<LinkIkPositionSolveRequest, 'damping' | 'maxIterations'>> & {
     tolerance: number;
   },
-): {
-  overrides: JointKinematicOverrideMap;
-  effectorWorldPosition: THREE.Vector3;
-  error: THREE.Vector3;
-  residual: number;
-  numericalFailure: boolean;
-} {
+): {} & LinkIkEvaluation {
   const compensation = solveClosedLoopMotionCompensation(robot, {
     angles: overrides.angles,
     quaternions: overrides.quaternions,
@@ -707,16 +849,114 @@ function applyIkStep(
   };
 }
 
+function findCoordinateSearchImprovement(
+  robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId' | 'closedLoopConstraints'>,
+  chain: LinkIkChain,
+  acceptedEvaluation: LinkIkEvaluation,
+  linkId: string,
+  anchorLocal: Vector3,
+  targetWorldPosition: THREE.Vector3,
+  lockedJointIds: string[],
+  options: Required<Pick<LinkIkPositionSolveRequest, 'damping' | 'maxIterations'>> & {
+    coordinatePairMaxDistance: number;
+    tolerance: number;
+  },
+): LinkIkEvaluation | null {
+  let bestEvaluation: LinkIkEvaluation | null = null;
+  let bestResidual = acceptedEvaluation.residual;
+  const stepMagnitudes = chain.joints.map((variable) =>
+    variable.type === JointType.PRISMATIC
+      ? IK_SOLVER_STEP_TRANSLATION_LIMIT
+      : IK_SOLVER_STEP_ANGLE_LIMIT,
+  );
+
+  const tryProbeDelta = (probeDelta: number[]): void => {
+    const scaledOverrides = applyIkStep(robot, chain, acceptedEvaluation.overrides, probeDelta, 1);
+    if (!scaledOverrides) {
+      return;
+    }
+
+    const candidateEvaluation = buildLinkIkEvaluation(
+      robot,
+      linkId,
+      anchorLocal,
+      targetWorldPosition,
+      scaledOverrides,
+      lockedJointIds,
+      options,
+    );
+
+    if (
+      candidateEvaluation.numericalFailure ||
+      candidateEvaluation.residual + IK_NUMERICAL_EPSILON >= bestResidual
+    ) {
+      return;
+    }
+
+    bestEvaluation = candidateEvaluation;
+    bestResidual = candidateEvaluation.residual;
+  };
+
+  for (let jointIndex = 0; jointIndex < chain.joints.length; jointIndex += 1) {
+    const baseStepMagnitude = stepMagnitudes[jointIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+    for (const scale of IK_COORDINATE_SEARCH_SCALES) {
+      const stepMagnitude = baseStepMagnitude * scale;
+
+      for (const direction of [-1, 1] as const) {
+        const probeDelta = new Array<number>(chain.joints.length).fill(0);
+        probeDelta[jointIndex] = stepMagnitude * direction;
+        tryProbeDelta(probeDelta);
+      }
+    }
+  }
+
+  if (bestEvaluation) {
+    return bestEvaluation;
+  }
+
+  for (let firstIndex = 0; firstIndex < chain.joints.length; firstIndex += 1) {
+    const firstStepMagnitude = stepMagnitudes[firstIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+    for (let secondIndex = firstIndex + 1; secondIndex < chain.joints.length; secondIndex += 1) {
+      if (secondIndex - firstIndex > options.coordinatePairMaxDistance) {
+        continue;
+      }
+
+      const secondStepMagnitude = stepMagnitudes[secondIndex] ?? IK_SOLVER_STEP_ANGLE_LIMIT;
+
+      for (const scale of IK_COORDINATE_SEARCH_SCALES) {
+        const firstStep = firstStepMagnitude * scale;
+        const secondStep = secondStepMagnitude * scale;
+
+        for (const firstDirection of [-1, 1] as const) {
+          for (const secondDirection of [-1, 1] as const) {
+            const probeDelta = new Array<number>(chain.joints.length).fill(0);
+            probeDelta[firstIndex] = firstStep * firstDirection;
+            probeDelta[secondIndex] = secondStep * secondDirection;
+            tryProbeDelta(probeDelta);
+          }
+        }
+      }
+    }
+  }
+
+  return bestEvaluation;
+}
+
 export function solveLinkIkPositionTarget(
   robot: Pick<RobotData, 'links' | 'joints' | 'rootLinkId' | 'closedLoopConstraints'>,
   request: LinkIkPositionSolveRequest,
 ): LinkIkPositionSolveResult {
-  const descriptor = resolveLinkIkHandleDescriptor(robot, request.linkId);
+  const descriptor =
+    resolveDirectManipulableLinkIkDescriptor(robot, request.linkId) ??
+    resolveLinkIkHandleDescriptor(robot, request.linkId);
   const chainResult = collectLinkIkChain(robot, request.linkId);
   const maxIterations = request.maxIterations ?? 20;
   const positionTolerance = request.positionTolerance ?? 1e-3;
   const stallTolerance = request.stallTolerance ?? 1e-5;
   const damping = request.damping ?? 1e-3;
+  const coordinatePairMaxDistance = request.coordinatePairMaxDistance ?? Number.POSITIVE_INFINITY;
 
   if (!descriptor || !chainResult.chain) {
     return {
@@ -785,13 +1025,7 @@ export function solveLinkIkPositionTarget(
       break;
     }
 
-    let nextEvaluation: {
-      overrides: JointKinematicOverrideMap;
-      effectorWorldPosition: THREE.Vector3;
-      error: THREE.Vector3;
-      residual: number;
-      numericalFailure: boolean;
-    } | null = null;
+    let nextEvaluation: LinkIkEvaluation | null = null;
 
     for (let attempt = 0; attempt < IK_LINE_SEARCH_ATTEMPTS; attempt += 1) {
       const scaledOverrides = applyIkStep(
@@ -832,8 +1066,25 @@ export function solveLinkIkPositionTarget(
     }
 
     if (!nextEvaluation) {
-      failureReason = failureReason ?? 'stalled';
-      break;
+      nextEvaluation = findCoordinateSearchImprovement(
+        robot,
+        chainResult.chain,
+        acceptedEvaluation,
+        request.linkId,
+        descriptor.anchorLocal,
+        tempTargetWorldPosition,
+        lockedJointIds,
+        {
+          coordinatePairMaxDistance,
+          damping,
+          maxIterations,
+          tolerance: positionTolerance,
+        },
+      );
+      if (!nextEvaluation) {
+        failureReason = failureReason ?? 'stalled';
+        break;
+      }
     }
 
     const improvement = acceptedEvaluation.residual - nextEvaluation.residual;

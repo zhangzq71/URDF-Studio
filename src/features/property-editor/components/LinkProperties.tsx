@@ -5,11 +5,25 @@
  * - Visual/Collision/Physics tabs
  */
 import React, { useMemo } from 'react';
-import { Eye, Box, Waypoints } from 'lucide-react';
-import type { DetailLinkTab, RobotState, AppMode, MotorSpec, UrdfLink } from '@/types';
+import { Edit3, Eye, EyeOff, Box, Minus, Plus, Waypoints } from 'lucide-react';
+import type {
+  DetailLinkTab,
+  InteractionSelection,
+  RobotState,
+  AppMode,
+  MotorSpec,
+  UrdfLink,
+} from '@/types';
+import { GeometryType } from '@/types';
 import { translations } from '@/shared/i18n';
 import { useUIStore, type Language, type MassInertiaChangeBehavior } from '@/store';
 import { MAX_PROPERTY_DECIMALS, formatNumberWithMaxDecimals } from '@/core/utils/numberPrecision';
+import {
+  appendCollisionBody,
+  getCollisionGeometryEntries,
+  removeCollisionGeometryByObjectIndex,
+  updateCollisionGeometryByObjectIndex,
+} from '@/core/robot';
 import {
   composeInertiaTensorFromDerivedValues,
   computeInertialDerivedValues,
@@ -17,13 +31,23 @@ import {
   scaleInertiaTensorForMassChange,
   type InertiaTensorComponents,
 } from '@/shared/utils/inertialDerived';
-import { Button, Checkbox, Dialog, SegmentedControl } from '@/shared/components/ui';
+import {
+  Button,
+  Checkbox,
+  ContextMenuFrame,
+  ContextMenuItem,
+  Dialog,
+  SegmentedControl,
+} from '@/shared/components/ui';
 import {
   CollapsibleSection,
   InlineInputGroup,
   NumberInput,
+  PROPERTY_EDITOR_HELPER_TEXT_CLASS,
   PROPERTY_EDITOR_INLINE_AXIS_LABEL_CLASS,
   PROPERTY_EDITOR_INPUT_CLASS,
+  PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS,
+  PROPERTY_EDITOR_SECTION_TITLE_CLASS,
   ReadonlyVectorStatHeader,
   ReadonlyVectorStatRow,
   ReadonlyValueField,
@@ -140,7 +164,7 @@ const DetailGeometryTabButton = ({
     type="button"
     onClick={onClick}
     title={label}
-    className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 overflow-hidden rounded-t-lg border-x border-t px-1 py-1 text-[10px] font-semibold transition-all ${
+    className={`relative flex min-w-0 flex-1 items-center justify-center gap-1 overflow-hidden rounded-t-lg border-x border-t px-1 py-1 text-[10px] font-semibold transition-colors ${
       isActive
         ? 'z-10 -mb-px border-border-black bg-panel-bg pb-1.5 text-system-blue dark:bg-segmented-active'
         : 'border-transparent bg-transparent text-text-tertiary hover:bg-element-hover hover:text-text-secondary'
@@ -162,18 +186,52 @@ const DetailGeometryTabPanel = ({
 }) => (
   <div
     style={{ display: activeTab === tab ? undefined : 'none' }}
-    className="mb-2.5 animate-in rounded-b-lg border-x border-b border-border-black bg-panel-bg p-1.5 shadow-sm fade-in slide-in-from-bottom-1 duration-200"
+    className="mb-2.5 rounded-b-lg border-x border-b border-border-black bg-panel-bg p-1.5 shadow-sm"
   >
     {children}
   </div>
 );
 
+const getGeometryTypeLabel = (type: GeometryType, t: (typeof translations)['en']) =>
+  type === GeometryType.BOX
+    ? t.box
+    : type === GeometryType.PLANE
+      ? t.plane
+      : type === GeometryType.CYLINDER
+        ? t.cylinder
+        : type === GeometryType.SPHERE
+          ? t.sphere
+          : type === GeometryType.ELLIPSOID
+            ? t.ellipsoid
+            : type === GeometryType.CAPSULE
+              ? t.capsule
+              : type === GeometryType.HFIELD
+                ? t.hfield
+                : type === GeometryType.SDF
+                  ? t.sdf
+                  : type === GeometryType.MESH
+                    ? t.mesh
+                    : t.none;
+
 interface LinkPropertiesProps {
   data: UrdfLink;
   robot: RobotState;
   mode: AppMode;
-  selection: { id: string | null; type: string; subType?: 'visual' | 'collision' };
+  selection: RobotState['selection'];
   onUpdate: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  onSelect?: (
+    type: Exclude<InteractionSelection['type'], null>,
+    id: string,
+    subType?: 'visual' | 'collision',
+  ) => void;
+  onSelectGeometry?: (
+    linkId: string,
+    subType: 'visual' | 'collision',
+    objectIndex?: number,
+    suppressPulse?: boolean,
+    suppressAutoReveal?: boolean,
+  ) => void;
+  onAddCollisionBody?: (linkId: string) => void;
   motorLibrary: Record<string, MotorSpec[]>;
   assets: Record<string, string>;
   onUploadAsset: (file: File) => void;
@@ -181,11 +239,20 @@ interface LinkPropertiesProps {
   lang: Language;
 }
 
+interface CollisionListContextMenuState {
+  x: number;
+  y: number;
+  objectIndex: number;
+}
+
 export const LinkProperties: React.FC<LinkPropertiesProps> = ({
   data,
   robot,
   selection,
   onUpdate,
+  onSelect,
+  onSelectGeometry,
+  onAddCollisionBody,
   assets,
   onUploadAsset,
   t,
@@ -204,12 +271,24 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
   const [rememberMassInertiaBehavior, setRememberMassInertiaBehavior] = React.useState(false);
   const [floatingMassInertiaNotice, setFloatingMassInertiaNotice] =
     React.useState<FloatingMassInertiaNotice | null>(null);
+  const [collisionListContextMenu, setCollisionListContextMenu] =
+    React.useState<CollisionListContextMenuState | null>(null);
+  const [collisionListEditingObjectIndex, setCollisionListEditingObjectIndex] = React.useState<
+    number | null
+  >(null);
+  const [collisionListEditingDraft, setCollisionListEditingDraft] = React.useState('');
+  const collisionListRenameInputRef = React.useRef<HTMLInputElement | null>(null);
   const densityResult = useMemo(() => computeLinkDensity(data), [data]);
   const derivedInertial = useMemo(
     () => computeInertialDerivedValues(data.inertial),
     [data.inertial],
   );
+  const collisionGeometryEntries = useMemo(() => getCollisionGeometryEntries(data), [data]);
   const densityLabel = t.density;
+  const selectedCollisionObjectIndex =
+    selection.type === 'link' && selection.id === data.id && selection.subType === 'collision'
+      ? (selection.objectIndex ?? 0)
+      : (collisionGeometryEntries[0]?.objectIndex ?? 0);
 
   const handleTabChange = (tab: DetailLinkTab) => {
     setDetailLinkTab(tab);
@@ -267,7 +346,61 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     setPendingMassInertiaDecision(null);
     setRememberMassInertiaBehavior(false);
     setSelectedMassInertiaBehavior('reestimate');
+    setCollisionListContextMenu(null);
+    setCollisionListEditingObjectIndex(null);
+    setCollisionListEditingDraft('');
   }, [data.id]);
+
+  React.useEffect(() => {
+    if (!collisionListContextMenu) {
+      return;
+    }
+
+    const closeMenu = () => setCollisionListContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('contextmenu', closeMenu);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('contextmenu', closeMenu);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [collisionListContextMenu]);
+
+  React.useEffect(() => {
+    if (collisionListEditingObjectIndex === null) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      collisionListRenameInputRef.current?.focus();
+      collisionListRenameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [collisionListEditingObjectIndex]);
+
+  React.useEffect(() => {
+    if (collisionListEditingObjectIndex === null) {
+      return;
+    }
+
+    const editingEntry = collisionGeometryEntries.find(
+      (entry) => entry.objectIndex === collisionListEditingObjectIndex,
+    );
+    if (!editingEntry) {
+      setCollisionListEditingObjectIndex(null);
+      setCollisionListEditingDraft('');
+    }
+  }, [collisionGeometryEntries, collisionListEditingObjectIndex]);
 
   const applyMassChange = React.useCallback(
     (
@@ -498,6 +631,327 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
     </>
   );
 
+  const handleSelectCollisionGeometry = React.useCallback(
+    (objectIndex: number) => {
+      if (onSelectGeometry) {
+        onSelectGeometry(data.id, 'collision', objectIndex);
+        return;
+      }
+
+      onSelect?.('link', data.id, 'collision');
+    },
+    [data.id, onSelect, onSelectGeometry],
+  );
+
+  const handleToggleCollisionGeometryVisibility = React.useCallback(
+    (objectIndex: number, isVisible: boolean) => {
+      const nextLink = updateCollisionGeometryByObjectIndex(data, objectIndex, {
+        visible: !isVisible,
+      });
+
+      onUpdate('link', data.id, nextLink);
+
+      if (onSelectGeometry) {
+        // Keep the editor focused on the toggled collision body without forcing
+        // the global collision overlay to become visible.
+        onSelectGeometry(data.id, 'collision', objectIndex, true, true);
+        return;
+      }
+
+      onSelect?.('link', data.id, 'collision');
+    },
+    [data, onSelect, onSelectGeometry, onUpdate],
+  );
+
+  const beginCollisionListRenaming = React.useCallback(
+    (objectIndex: number) => {
+      const targetEntry = collisionGeometryEntries.find(
+        (entry) => entry.objectIndex === objectIndex,
+      );
+      if (!targetEntry) {
+        return;
+      }
+
+      if (onSelectGeometry) {
+        onSelectGeometry(data.id, 'collision', objectIndex, true);
+      } else {
+        onSelect?.('link', data.id, 'collision');
+      }
+
+      setCollisionListEditingObjectIndex(objectIndex);
+      setCollisionListEditingDraft(targetEntry.geometry.name?.trim() || '');
+    },
+    [collisionGeometryEntries, data.id, onSelect, onSelectGeometry],
+  );
+
+  const cancelCollisionListRenaming = React.useCallback(() => {
+    setCollisionListEditingObjectIndex(null);
+    setCollisionListEditingDraft('');
+  }, []);
+
+  const commitCollisionListRenaming = React.useCallback(() => {
+    if (collisionListEditingObjectIndex === null) {
+      return;
+    }
+
+    const normalizedName = collisionListEditingDraft.trim() || undefined;
+    const currentEntry = collisionGeometryEntries.find(
+      (entry) => entry.objectIndex === collisionListEditingObjectIndex,
+    );
+    if (!currentEntry) {
+      cancelCollisionListRenaming();
+      return;
+    }
+
+    if (currentEntry.geometry.name !== normalizedName) {
+      const nextLink = updateCollisionGeometryByObjectIndex(data, collisionListEditingObjectIndex, {
+        name: normalizedName,
+      });
+      onUpdate('link', data.id, nextLink);
+    }
+
+    cancelCollisionListRenaming();
+  }, [
+    cancelCollisionListRenaming,
+    collisionGeometryEntries,
+    collisionListEditingDraft,
+    collisionListEditingObjectIndex,
+    data,
+    onUpdate,
+  ]);
+
+  const handleCollisionListContextMenu = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>, objectIndex: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const menuWidth = 170;
+      const menuHeight = 44;
+      const maxX = Math.max(8, window.innerWidth - menuWidth - 8);
+      const maxY = Math.max(8, window.innerHeight - menuHeight - 8);
+
+      setCollisionListContextMenu({
+        objectIndex,
+        x: Math.min(event.clientX, maxX),
+        y: Math.min(event.clientY, maxY),
+      });
+    },
+    [],
+  );
+
+  const handleAddCollisionBodyClick = React.useCallback(() => {
+    if (onAddCollisionBody) {
+      onAddCollisionBody(data.id);
+      return;
+    }
+
+    const nextLink = appendCollisionBody(data);
+    const nextEntries = getCollisionGeometryEntries(nextLink);
+    const nextObjectIndex = Math.max(0, nextEntries.length - 1);
+
+    onUpdate('link', data.id, nextLink);
+    onSelectGeometry?.(data.id, 'collision', nextObjectIndex);
+  }, [data, onAddCollisionBody, onSelectGeometry, onUpdate]);
+
+  const handleDeleteCollisionBodyClick = React.useCallback(() => {
+    if (collisionGeometryEntries.length === 0) {
+      return;
+    }
+
+    const {
+      link: nextLink,
+      removed,
+      nextObjectIndex,
+    } = removeCollisionGeometryByObjectIndex(data, selectedCollisionObjectIndex);
+
+    if (!removed) {
+      return;
+    }
+
+    onUpdate('link', data.id, nextLink);
+
+    if (nextObjectIndex === null) {
+      onSelect?.('link', data.id);
+      return;
+    }
+
+    if (onSelectGeometry) {
+      onSelectGeometry(data.id, 'collision', nextObjectIndex);
+      return;
+    }
+
+    onSelect?.('link', data.id, 'collision');
+  }, [
+    collisionGeometryEntries.length,
+    data,
+    onSelect,
+    onSelectGeometry,
+    onUpdate,
+    selectedCollisionObjectIndex,
+  ]);
+
+  const collisionBodiesSection = (
+    <div className="mb-2.5">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <h3 className={PROPERTY_EDITOR_SECTION_TITLE_CLASS}>{t.collisionBodiesList}</h3>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label={t.deleteCollisionGeometry}
+            title={t.deleteCollisionGeometry}
+            onClick={handleDeleteCollisionBodyClick}
+            disabled={collisionGeometryEntries.length === 0}
+            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} w-6 border-danger-border bg-danger-soft px-0 text-danger hover:border-danger-border hover:bg-danger-soft hover:text-danger-hover focus-visible:ring-danger/20`}
+          >
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            aria-label={t.addCollisionBody}
+            title={t.addCollisionBody}
+            onClick={handleAddCollisionBodyClick}
+            className={`${PROPERTY_EDITOR_SECONDARY_BUTTON_CLASS} w-6 px-0`}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {collisionGeometryEntries.length ? (
+        <div className="max-h-48 overflow-y-auto rounded-lg border border-border-black bg-panel-bg/70 p-1 custom-scrollbar">
+          <div className="space-y-1 pr-0.5">
+            {collisionGeometryEntries.map((entry) => {
+              const isSelected = selectedCollisionObjectIndex === entry.objectIndex;
+              const geometryTypeLabel = getGeometryTypeLabel(entry.geometry.type, t);
+              const collisionLabel = fillTemplate(t.collisionBodyItem, {
+                index: String(entry.objectIndex + 1),
+              });
+              const collisionDisplayName = entry.geometry.name?.trim() || collisionLabel;
+              const isVisible = entry.geometry.visible !== false;
+              const visibilityActionLabel = `${isVisible ? t.hide : t.show} ${collisionDisplayName}`;
+              const isEditing = collisionListEditingObjectIndex === entry.objectIndex;
+
+              return (
+                <div
+                  key={`${data.id}:collision:${entry.objectIndex}`}
+                  data-collision-list-row={entry.objectIndex}
+                  className={`flex items-center rounded-md border transition-colors ${
+                    isSelected
+                      ? 'border-system-blue/50 bg-system-blue/10'
+                      : 'border-border-black/60 bg-panel-bg hover:bg-element-hover'
+                  }`}
+                  onContextMenu={(event) =>
+                    handleCollisionListContextMenu(event, entry.objectIndex)
+                  }
+                >
+                  {isEditing ? (
+                    <div className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1">
+                      <div
+                        className={`flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${
+                          isSelected
+                            ? 'border-system-blue/40 bg-system-blue/15 text-system-blue'
+                            : 'border-border-black/60 bg-element-bg/70 text-text-secondary'
+                        }`}
+                      >
+                        {entry.objectIndex + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <input
+                          ref={collisionListRenameInputRef}
+                          type="text"
+                          value={collisionListEditingDraft}
+                          aria-label={t.rename}
+                          onChange={(event) => setCollisionListEditingDraft(event.target.value)}
+                          onClick={(event) => event.stopPropagation()}
+                          onBlur={commitCollisionListRenaming}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              commitCollisionListRenaming();
+                            } else if (event.key === 'Escape') {
+                              cancelCollisionListRenaming();
+                            }
+                          }}
+                          className={`${PROPERTY_EDITOR_INPUT_CLASS} h-7 w-full min-w-0 px-2 text-[10px]`}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={collisionDisplayName}
+                      aria-pressed={isSelected}
+                      onClick={() => handleSelectCollisionGeometry(entry.objectIndex)}
+                      className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/25"
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap">
+                        <div
+                          className={`flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${
+                            isSelected
+                              ? 'border-system-blue/40 bg-system-blue/15 text-system-blue'
+                              : 'border-border-black/60 bg-element-bg/70 text-text-secondary'
+                          }`}
+                        >
+                          {entry.objectIndex + 1}
+                        </div>
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden whitespace-nowrap">
+                          <span className="truncate text-[10px] font-semibold text-text-primary">
+                            {collisionDisplayName}
+                          </span>
+                          {collisionDisplayName !== collisionLabel ? (
+                            <span className="truncate text-[9px] text-text-tertiary">
+                              {collisionLabel}
+                            </span>
+                          ) : null}
+                          <span className="shrink-0 rounded-sm border border-border-black/50 bg-element-bg/80 px-1 py-0.5 text-[8.5px] font-medium leading-none text-text-secondary">
+                            {geometryTypeLabel}
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-sm border px-1 py-0.5 text-[8.5px] font-medium leading-none ${
+                              isVisible
+                                ? 'border-system-blue/20 bg-system-blue/10 text-system-blue'
+                                : 'border-border-black/50 bg-element-bg/80 text-text-tertiary'
+                            }`}
+                          >
+                            {isVisible ? t.visible : t.hidden}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    aria-label={visibilityActionLabel}
+                    aria-pressed={isVisible}
+                    title={visibilityActionLabel}
+                    onClick={() =>
+                      handleToggleCollisionGeometryVisibility(entry.objectIndex, isVisible)
+                    }
+                    className={`mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-system-blue/25 ${
+                      isVisible
+                        ? 'border-system-blue/25 bg-system-blue/10 text-system-blue hover:bg-system-blue/15'
+                        : 'border-border-strong bg-panel-bg text-text-tertiary hover:bg-element-hover hover:text-text-primary'
+                    }`}
+                  >
+                    {isVisible ? (
+                      <Eye className="h-3.5 w-3.5" />
+                    ) : (
+                      <EyeOff className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed border-border-black/60 bg-element-bg/60 px-3 py-2">
+          <p className={PROPERTY_EDITOR_HELPER_TEXT_CLASS}>{t.collisionBodyEmpty}</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
       {nameField}
@@ -527,34 +981,40 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           />
         </div>
 
-        {/* Visual Tab Content - always mounted to preserve snapshot cache */}
         <DetailGeometryTabPanel activeTab={linkTab} tab="visual">
-          <GeometryEditor
-            data={data}
-            robot={robot}
-            category="visual"
-            onUpdate={(d) => onUpdate('link', selection.id!, d)}
-            assets={assets}
-            onUploadAsset={onUploadAsset}
-            t={t}
-            lang={lang}
-            isTabbed={true}
-          />
+          {linkTab === 'visual' ? (
+            <GeometryEditor
+              data={data}
+              robot={robot}
+              category="visual"
+              onUpdate={(d) => onUpdate('link', selection.id!, d)}
+              assets={assets}
+              onUploadAsset={onUploadAsset}
+              t={t}
+              lang={lang}
+              isTabbed={true}
+            />
+          ) : null}
         </DetailGeometryTabPanel>
 
-        {/* Collision Tab Content - always mounted to preserve snapshot cache */}
         <DetailGeometryTabPanel activeTab={linkTab} tab="collision">
-          <GeometryEditor
-            data={data}
-            robot={robot}
-            category="collision"
-            onUpdate={(d) => onUpdate('link', selection.id!, d)}
-            assets={assets}
-            onUploadAsset={onUploadAsset}
-            t={t}
-            lang={lang}
-            isTabbed={true}
-          />
+          {linkTab === 'collision' ? (
+            <div className="space-y-2">
+              {collisionBodiesSection}
+              <GeometryEditor
+                data={data}
+                robot={robot}
+                category="collision"
+                onUpdate={(d) => onUpdate('link', selection.id!, d)}
+                assets={assets}
+                onUploadAsset={onUploadAsset}
+                t={t}
+                lang={lang}
+                isTabbed={true}
+                showCollisionDeleteAction={false}
+              />
+            </div>
+          ) : null}
         </DetailGeometryTabPanel>
 
         <DetailGeometryTabPanel activeTab={linkTab} tab="physics">
@@ -652,6 +1112,21 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
           </div>
         </div>
       ) : null}
+
+      <ContextMenuFrame position={collisionListContextMenu}>
+        <ContextMenuItem
+          onClick={() => {
+            if (!collisionListContextMenu) {
+              return;
+            }
+            beginCollisionListRenaming(collisionListContextMenu.objectIndex);
+            setCollisionListContextMenu(null);
+          }}
+          icon={<Edit3 size={12} />}
+        >
+          {t.rename}
+        </ContextMenuItem>
+      </ContextMenuFrame>
     </>
   );
 };

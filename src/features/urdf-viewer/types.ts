@@ -2,7 +2,9 @@ import React from 'react';
 import * as THREE from 'three';
 import type { Language, translations } from '@/shared/i18n';
 import type { SnapshotCaptureAction } from '@/shared/components/3d';
+import type { JointPanelActiveJointOptions } from '@/shared/utils/jointPanelStore';
 import type {
+  AssemblyState,
   AssemblyTransform,
   InteractionHelperKind,
   InteractionSelection,
@@ -13,13 +15,16 @@ import type {
   Theme,
   UrdfJoint,
   UrdfLink,
+  UrdfOrigin,
 } from '@/types';
+import type { AssemblySelection } from '@/store/assemblySelectionStore';
 import type { ViewerRobotDataResolution } from './utils/viewerRobotData';
 import type {
   MeasureAnchorMode,
   MeasureGroup,
   MeasureMeasurement,
   MeasureObjectType,
+  MeasurePoseRepresentation,
   MeasureSlot,
   MeasureState,
   MeasureTarget,
@@ -33,7 +38,8 @@ export type ToolMode =
   | 'universal'
   | 'view'
   | 'face'
-  | 'measure';
+  | 'measure'
+  | 'paint';
 export type ViewerSceneMode = 'editor';
 export type ViewerHelperKind = InteractionHelperKind;
 export type ViewerInteractiveLayer =
@@ -87,6 +93,7 @@ export type {
   MeasureGroup,
   MeasureMeasurement,
   MeasureObjectType,
+  MeasurePoseRepresentation,
   MeasureSlot,
   MeasureState,
   MeasureTarget,
@@ -96,6 +103,22 @@ export type MeasureTargetResolver = (
   fallbackSelection?: MeasureSelectionLike,
   anchorMode?: MeasureAnchorMode,
 ) => MeasureTarget | null;
+
+export type ViewerPaintStatusTone = 'info' | 'success' | 'error';
+export type ViewerPaintSelectionScope = 'face' | 'island';
+export type ViewerPaintOperation = 'paint' | 'erase';
+
+export interface ViewerPaintStatus {
+  tone: ViewerPaintStatusTone;
+  message: string;
+}
+
+export interface ViewerPaintFaceHit {
+  linkId: string;
+  objectIndex: number;
+  mesh: THREE.Mesh;
+  faceIndex: number;
+}
 
 export interface ViewerRuntimeStageBridge {
   onRobotResolved?: (robot: any | null) => void;
@@ -114,7 +137,7 @@ export interface ViewerJointMotionStateValue {
   quaternion?: JointQuaternion;
 }
 
-export interface URDFViewerProps {
+export interface ViewerProps {
   urdfContent: string;
   assets: Record<string, string>;
   sourceFile?: RobotFile | null;
@@ -183,10 +206,20 @@ export interface URDFViewerProps {
   snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
   /** True when previewing a standalone mesh asset from the library (STL/DAE/OBJ/GLB). */
   isMeshPreview?: boolean;
+  ikDragActive?: boolean;
   /** Notify parent when collision transform has a pending confirm/cancel state */
   onTransformPendingChange?: (pending: boolean) => void;
   /** Visual ground alignment offset applied after load. */
   groundPlaneOffset?: number;
+  assemblyState?: AssemblyState | null;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: AssemblyTransform) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: AssemblyTransform,
+    options?: import('@/types/viewer').UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (bridgeId: string, origin: UrdfOrigin) => void;
 }
 
 export interface RobotModelProps {
@@ -223,6 +256,11 @@ export interface RobotModelProps {
     objectIndex: number,
     objectType: 'visual' | 'collision',
   ) => void;
+  onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
+  paintColor?: string;
+  paintSelectionScope?: ViewerPaintSelectionScope;
+  paintOperation?: ViewerPaintOperation;
+  onPaintStatusChange?: (status: ViewerPaintStatus | null) => void;
   onJointChange?: (name: string, angle: number) => void;
   onJointChangeCommit?: (name: string, angle: number) => void;
   initialJointAngles?: Record<string, number>;
@@ -233,7 +271,7 @@ export interface RobotModelProps {
     jointQuaternions: Record<string, ViewerJointMotionStateValue['quaternion']>,
   ) => void;
   onClearIkPreviewKinematicOverrides?: () => void;
-  setActiveJoint?: (jointName: string | null) => void;
+  setActiveJoint?: (jointName: string | null, options?: JointPanelActiveJointOptions) => void;
   justSelectedRef?: React.RefObject<boolean>;
   t: (typeof translations)['en'];
   mode?: ViewerSceneMode;
@@ -259,6 +297,7 @@ export interface RobotModelProps {
   focusTarget?: string | null;
   transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
   toolMode?: ToolMode;
+  ikDragActive?: boolean;
   onCollisionTransformPreview?: (
     linkName: string,
     position: { x: number; y: number; z: number },
@@ -274,13 +313,22 @@ export interface RobotModelProps {
   isOrbitDragging?: React.RefObject<boolean>;
   onTransformPending?: (pending: boolean) => void;
   isSelectionLockedRef?: React.RefObject<boolean>;
-  selection?: URDFViewerProps['selection'];
+  selection?: ViewerProps['selection'];
   hoverSelectionEnabled?: boolean;
-  hoveredSelection?: URDFViewerProps['hoveredSelection'];
+  hoveredSelection?: ViewerProps['hoveredSelection'];
   interactionLayerPriority?: ViewerInteractiveLayer[];
   isMeshPreview?: boolean;
   groundPlaneOffset?: number;
   active?: boolean;
+  assemblyState?: AssemblyState | null;
+  assemblySelection?: AssemblySelection;
+  onAssemblyTransform?: (transform: AssemblyTransform) => void;
+  onComponentTransform?: (
+    componentId: string,
+    transform: AssemblyTransform,
+    options?: import('@/types/viewer').UpdateCommitOptions,
+  ) => void;
+  onBridgeTransform?: (bridgeId: string, origin: UrdfOrigin) => void;
   sourceSceneAssemblyComponentId?: string | null;
   sourceSceneAssemblyComponentTransform?: AssemblyTransform | null;
   showSourceSceneAssemblyComponentControls?: boolean;
@@ -293,7 +341,7 @@ export interface RobotModelProps {
 export interface CollisionTransformControlsProps {
   robot: THREE.Object3D | null;
   robotVersion?: number;
-  selection: URDFViewerProps['selection'];
+  selection: ViewerProps['selection'];
   transformMode: 'select' | 'translate' | 'rotate' | 'universal';
   setIsDragging: (dragging: boolean) => void;
   onTransformChange?: (
@@ -338,6 +386,7 @@ export interface MeasureToolProps {
 export interface JointInteractionProps {
   joint: any;
   value: number;
+  transformMode?: 'select' | 'translate' | 'rotate' | 'universal';
   onChange: (val: number) => void;
   onCommit?: (val: number) => void;
   setIsDragging?: (dragging: boolean) => void;
