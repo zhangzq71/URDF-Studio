@@ -167,7 +167,7 @@ export const zh: TranslationKeys = {
   textureReadonlyMultiMaterialHint: '当前 visual 使用多材质，基础贴图在这里是只读的。',
   textureNotFound: '资源库里还没有图片贴图',
   meshLibrary: '网格库',
-  upload: '上传 (.stl, .obj, .dae, .gltf, .glb)',
+  upload: '上传',
   selected: '已选',
   applyMesh: '应用',
   meshHint: '单击预览，双击直接应用',

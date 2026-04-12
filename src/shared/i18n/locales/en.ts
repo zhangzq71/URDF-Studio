@@ -177,7 +177,7 @@ export const en: TranslationKeys = {
     'This visual uses multiple authored materials. Base texture editing is read-only here.',
   textureNotFound: 'No image textures in the asset library yet',
   meshLibrary: 'Mesh Library',
-  upload: 'Upload (.stl, .obj, .dae, .gltf, .glb)',
+  upload: 'Upload',
   selected: 'Selected',
   applyMesh: 'Apply',
   meshHint: 'Click to preview, double-click to apply',
