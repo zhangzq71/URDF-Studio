@@ -247,10 +247,15 @@ test('USD runtime continuous joint keeps the accumulated angle while driving the
 
   assert.ok(Math.abs(joint.angle - initialAngle) < 1e-12);
 
+  // The runtime is reset to the initial angle during creation, so one update
+  // is already recorded before any explicit setJointValue call.
+  const baselineUpdates = jointAngleUpdates.length;
+
   joint.setJointValue(nextAngle);
 
   assert.ok(Math.abs(joint.angle - nextAngle) < 1e-12);
-  assert.equal(jointAngleUpdates.length, 1);
-  assert.equal(jointAngleUpdates[0]?.linkPath, '/Robot/arm_link');
-  assert.ok(Math.abs((jointAngleUpdates[0]?.angleDeg ?? 0) - 120) < 1e-9);
+  assert.equal(jointAngleUpdates.length, baselineUpdates + 1);
+  const lastUpdate = jointAngleUpdates[jointAngleUpdates.length - 1];
+  assert.equal(lastUpdate?.linkPath, '/Robot/arm_link');
+  assert.ok(Math.abs((lastUpdate?.angleDeg ?? 0) - 120) < 1e-9);
 });

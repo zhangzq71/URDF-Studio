@@ -42,9 +42,16 @@ const resolveLinkMaterialEntry = (
   });
 
   if (resolvedMaterial.source === 'authored') {
+    if (resolvedMaterial.isMultiMaterial) {
+      return {
+        preserveEmbeddedMaterials: true,
+      };
+    }
+
     return {
       color: resolvedMaterial.color || undefined,
       texture: resolvedMaterial.texture || undefined,
+      forceUniformOverride: true,
     };
   }
 
@@ -56,6 +63,7 @@ const resolveLinkMaterialEntry = (
         visual.color ||
         undefined,
       texture: resolvedMaterial.texture || undefined,
+      forceUniformOverride: true,
     };
   }
 
@@ -291,6 +299,28 @@ const buildLinkSceneNode = async (
   }
 
   return group;
+};
+
+export const flattenUsdLinkSceneHierarchy = (sceneRoot: THREE.Object3D): void => {
+  sceneRoot.updateMatrixWorld(true);
+
+  const nestedLinkNodes: THREE.Object3D[] = [];
+  sceneRoot.traverse((node) => {
+    if (node === sceneRoot) {
+      return;
+    }
+    if (!node.userData?.usdLink) {
+      return;
+    }
+    if (node.parent === sceneRoot) {
+      return;
+    }
+    nestedLinkNodes.push(node);
+  });
+
+  nestedLinkNodes.forEach((node) => {
+    sceneRoot.attach(node);
+  });
 };
 
 export const buildUsdLinkSceneRoot = async ({

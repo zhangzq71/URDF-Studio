@@ -105,6 +105,15 @@ samp {
   --ui-code-attr: #7c3aed;
   --ui-code-value: #ea580c;
 
+  /* 3D and interaction colors */
+  --ui-3d-mesh-primary: #6b9bd2;
+  --ui-3d-paint-primary: #ff6c0a;
+  --ui-3d-selection: #007aff;
+
+  /* Scrollbar */
+  --ui-scrollbar-thumb: #94a3b8;
+  --ui-scrollbar-thumb-hover: #64748b;
+
   color-scheme: light;
 }
 
@@ -177,6 +186,15 @@ html[data-lang='zh'] {
   --ui-code-tag: #93c5fd;
   --ui-code-attr: #c4b5fd;
   --ui-code-value: #fdba74;
+
+  /* 3D and interaction colors */
+  --ui-3d-mesh-primary: #5c8ab8;
+  --ui-3d-paint-primary: #ff8833;
+  --ui-3d-selection: #0a84ff;
+
+  /* Scrollbar */
+  --ui-scrollbar-thumb: #475569;
+  --ui-scrollbar-thumb-hover: #64748b;
 
   color-scheme: dark;
 }
@@ -282,6 +300,10 @@ html[data-lang='zh'] {
   --color-code-tag: var(--ui-code-tag);
   --color-code-attr: var(--ui-code-attr);
   --color-code-value: var(--ui-code-value);
+
+  --color-3d-mesh-primary: var(--ui-3d-mesh-primary);
+  --color-3d-paint-primary: var(--ui-3d-paint-primary);
+  --color-3d-selection: var(--ui-3d-selection);
 
   --color-google-dark-bg: var(--color-panel-bg);
   --color-google-dark-surface: var(--color-element-bg);
@@ -405,7 +427,7 @@ body {
 /* Custom scrollbar for panels */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #94a3b8 transparent;
+  scrollbar-color: var(--ui-scrollbar-thumb) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -418,7 +440,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8; /* slate-400 */
+  background: var(--ui-scrollbar-thumb);
   border-radius: 3px;
 }
 
@@ -427,15 +449,15 @@ body {
 }
 
 .dark .custom-scrollbar {
-  scrollbar-color: #475569 transparent;
+  scrollbar-color: var(--ui-scrollbar-thumb) transparent;
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #475569; /* slate-600 */
+  background: var(--ui-scrollbar-thumb);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b; /* slate-500 */
+  background: var(--ui-scrollbar-thumb-hover);
 }
 
 /* Hide number input spinners */

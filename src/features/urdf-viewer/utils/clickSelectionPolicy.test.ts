@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_SELECT_CLICK_DRAG_THRESHOLD_PX,
   isPointerInteractionWithinClickThreshold,
+  shouldFinalizePointerInteraction,
   shouldDeferSelectionUntilPointerUp,
 } from './clickSelectionPolicy.ts';
 
@@ -61,5 +62,43 @@ test('pointer motion beyond threshold is treated as a drag', () => {
       endY: 30,
     }),
     false,
+  );
+});
+
+test('pointer finalization only runs when the viewer actually owns an active interaction', () => {
+  assert.equal(
+    shouldFinalizePointerInteraction({
+      interactionStarted: false,
+      dragging: false,
+      hasPendingSelection: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldFinalizePointerInteraction({
+      interactionStarted: true,
+      dragging: false,
+      hasPendingSelection: false,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldFinalizePointerInteraction({
+      interactionStarted: false,
+      dragging: true,
+      hasPendingSelection: false,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldFinalizePointerInteraction({
+      interactionStarted: false,
+      dragging: false,
+      hasPendingSelection: true,
+    }),
+    true,
   );
 });

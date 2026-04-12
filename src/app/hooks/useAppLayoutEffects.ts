@@ -3,6 +3,7 @@ import type { DragEvent } from 'react';
 import { getDroppedFiles } from '@/features/file-io';
 import type { InteractionSelection, RobotState } from '@/types';
 import { preloadSourceCodeEditor } from '@/app/utils/sourceCodeEditorLoader';
+import { validateSelection } from '@/store/selectionStore';
 import { useActiveHistory } from './useActiveHistory';
 
 interface LayoutSelection {
@@ -68,19 +69,10 @@ export function useAppLayoutEffects({
   }, [canRedo, canUndo, redo, undo]);
 
   useEffect(() => {
-    if (!selection.id || !selection.type) return;
-
-    const exists =
-      selection.type === 'link'
-        ? robot.links[selection.id]
-        : selection.type === 'joint'
-          ? robot.joints[selection.id]
-          : robot.inspectionContext?.mjcf?.tendons.some((tendon) => tendon.name === selection.id);
-
-    if (!exists) {
+    if (!validateSelection(selection, robot.links, robot.joints, robot.inspectionContext ?? null)) {
       clearSelection();
     }
-  }, [clearSelection, robot.joints, robot.links, selection]);
+  }, [clearSelection, robot.inspectionContext, robot.joints, robot.links, selection]);
 
   useEffect(() => {
     const handleWindowReset = () => {

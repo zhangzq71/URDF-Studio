@@ -309,8 +309,12 @@ export const ViewerToolbar: React.FC<ViewerToolbarProps> = ({
     <>
       <div
         onMouseDown={handleDragStart}
-        className="drag-handle flex h-full select-none items-center px-1"
-      />
+        className="drag-handle flex h-full cursor-move select-none items-center px-1 text-text-tertiary/50 transition-colors hover:text-text-tertiary"
+      >
+        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+        </svg>
+      </div>
       {tools.map((tool) => {
         const isActive = activeMode === tool.id;
         const Icon = tool.icon;

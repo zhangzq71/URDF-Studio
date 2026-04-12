@@ -130,7 +130,7 @@ export const en: TranslationKeys = {
   jointTypeFloating: 'Floating',
   jointTypeFloatingDescription:
     'Has six degrees of freedom with free translation and rotation in 3D space.',
-  dimensions: 'Dimensions / Radius / Length',
+  dimensions: 'Dimensions',
   meshScale: 'Mesh Scale',
   visible: 'Visible',
   hidden: 'Hidden',
@@ -749,7 +749,7 @@ export const en: TranslationKeys = {
   exportComingSoon: 'Coming Soon',
   exportUsdFileFormat: 'USD Layer Format',
   exportUsdFileFormatDesc:
-    'Exports an Isaac Sim style layered package. Choose text USDA or authored USD layers before optional binary conversion.',
+    'Exports an Isaac Sim / Genesis compatible layered package. Choose text USDA or authored USD layers before optional binary conversion.',
   exportUsdFileFormatUsd: 'USD',
   exportUsdFileFormatUsda: 'USDA',
   exportCompressMeshes: 'Compress Mesh Geometry',

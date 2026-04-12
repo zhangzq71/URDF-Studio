@@ -956,6 +956,49 @@ export class ThreeRenderDelegateCore {
                 return fallback.slice(0, 4);
             return [w, x, y, z];
         };
+        const conjugateQuaternionWxyz = (value) => {
+            const normalized = normalizeQuaternionWxyz(value, [1, 0, 0, 0]);
+            return [normalized[0], -normalized[1], -normalized[2], -normalized[3]];
+        };
+        const multiplyQuaternionWxyz = (leftValue, rightValue) => {
+            const left = normalizeQuaternionWxyz(leftValue, [1, 0, 0, 0]);
+            const right = normalizeQuaternionWxyz(rightValue, [1, 0, 0, 0]);
+            const [lw, lx, ly, lz] = left;
+            const [rw, rx, ry, rz] = right;
+            const quaternion = new Quaternion(
+                (lw * rx) + (lx * rw) + (ly * rz) - (lz * ry),
+                (lw * ry) - (lx * rz) + (ly * rw) + (lz * rx),
+                (lw * rz) + (lx * ry) - (ly * rx) + (lz * rw),
+                (lw * rw) - (lx * rx) - (ly * ry) - (lz * rz),
+            );
+            if (!Number.isFinite(quaternion.lengthSq()) || quaternion.lengthSq() <= 1e-12) {
+                return [1, 0, 0, 0];
+            }
+            quaternion.normalize();
+            return [quaternion.w, quaternion.x, quaternion.y, quaternion.z];
+        };
+        const deriveJointOriginQuatWxyz = (jointRecord) => {
+            if (jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number') {
+                return jointRecord.originQuatWxyz;
+            }
+            const localRot0Wxyz = ((jointRecord?.localRot0Wxyz && typeof jointRecord.localRot0Wxyz.length === 'number')
+                ? jointRecord.localRot0Wxyz
+                : (jointRecord?.localRot0 && typeof jointRecord.localRot0.length === 'number')
+                    ? jointRecord.localRot0
+                    : null);
+            if (!localRot0Wxyz) {
+                return null;
+            }
+            const localRot1Wxyz = ((jointRecord?.localRot1Wxyz && typeof jointRecord.localRot1Wxyz.length === 'number')
+                ? jointRecord.localRot1Wxyz
+                : (jointRecord?.localRot1 && typeof jointRecord.localRot1.length === 'number')
+                    ? jointRecord.localRot1
+                    : null);
+            if (!localRot1Wxyz) {
+                return localRot0Wxyz;
+            }
+            return multiplyQuaternionWxyz(localRot0Wxyz, conjugateQuaternionWxyz(localRot1Wxyz));
+        };
         const normalizeAxisToken = (value) => {
             const token = String(value || 'X').trim().toUpperCase();
             if (token.startsWith('Y'))
@@ -1006,6 +1049,8 @@ export class ThreeRenderDelegateCore {
             const mass = Number(value);
             return Number.isFinite(mass) && Math.abs(mass) > epsilon;
         };
+        const hasAuthoredVector3 = (vector3Tuple) => Array.isArray(vector3Tuple) && vector3Tuple.length >= 3;
+        const hasAuthoredQuaternionWxyz = (quaternionWxyz) => Array.isArray(quaternionWxyz) && quaternionWxyz.length >= 4;
         const hasNonIdentityQuaternionWxyz = (quaternionWxyz, epsilon = 1e-6) => {
             if (!Array.isArray(quaternionWxyz) || quaternionWxyz.length < 4)
                 return false;
@@ -1439,13 +1484,7 @@ export class ThreeRenderDelegateCore {
                     : (jointRecord?.localPos0 && typeof jointRecord.localPos0.length === 'number')
                         ? jointRecord.localPos0
                         : null);
-                const originQuatWxyz = ((jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number')
-                    ? jointRecord.originQuatWxyz
-                    : (jointRecord?.localRot0Wxyz && typeof jointRecord.localRot0Wxyz.length === 'number')
-                        ? jointRecord.localRot0Wxyz
-                        : (jointRecord?.localRot0 && typeof jointRecord.localRot0.length === 'number')
-                            ? jointRecord.localRot0
-                            : null);
+                const originQuatWxyz = deriveJointOriginQuatWxyz(jointRecord);
                 const normalizedOriginXyz = originXyz
                     ? normalizeVector3(originXyz, [0, 0, 0])
                     : null;
@@ -1745,13 +1784,7 @@ export class ThreeRenderDelegateCore {
                     : (jointRecord?.localPos0 && typeof jointRecord.localPos0.length === 'number')
                         ? jointRecord.localPos0
                         : null);
-                const originQuatWxyz = ((jointRecord?.originQuatWxyz && typeof jointRecord.originQuatWxyz.length === 'number')
-                    ? jointRecord.originQuatWxyz
-                    : (jointRecord?.localRot0Wxyz && typeof jointRecord.localRot0Wxyz.length === 'number')
-                        ? jointRecord.localRot0Wxyz
-                        : (jointRecord?.localRot0 && typeof jointRecord.localRot0.length === 'number')
-                            ? jointRecord.localRot0
-                            : null);
+                const originQuatWxyz = deriveJointOriginQuatWxyz(jointRecord);
                 const normalizedOriginXyz = originXyz
                     ? normalizeVector3(originXyz, [0, 0, 0])
                     : null;
@@ -1868,19 +1901,27 @@ export class ThreeRenderDelegateCore {
                 if (!linkPathSet.has(linkPath))
                     continue;
                 const massValue = toFiniteNumber(dynamicsRecord?.mass);
-                const centerOfMassLocal = normalizeVector3(dynamicsRecord?.centerOfMassLocal, [0, 0, 0]);
+                const hasAuthoredMassValue = Number.isFinite(Number(dynamicsRecord?.mass));
+                const hasAuthoredCenterOfMass = hasAuthoredVector3(dynamicsRecord?.centerOfMassLocal);
+                const centerOfMassLocal = hasAuthoredCenterOfMass
+                    ? normalizeVector3(dynamicsRecord?.centerOfMassLocal, [0, 0, 0])
+                    : null;
                 const diagonalInertiaTuple = toFiniteVector3Tuple(dynamicsRecord?.diagonalInertia);
-                const principalAxesLocalWxyz = normalizeQuaternionWxyz(dynamicsRecord?.principalAxesLocalWxyz, [1, 0, 0, 0]);
-                const hasDynamicsData = (hasSignificantMassValue(massValue)
-                    || hasSignificantVector3(centerOfMassLocal)
-                    || (Array.isArray(diagonalInertiaTuple) && hasSignificantVector3(diagonalInertiaTuple))
-                    || hasNonIdentityQuaternionWxyz(principalAxesLocalWxyz));
-                if (!hasDynamicsData)
+                const hasAuthoredDiagonalInertia = Array.isArray(diagonalInertiaTuple);
+                const principalAxesLocalWxyz = hasAuthoredQuaternionWxyz(dynamicsRecord?.principalAxesLocalWxyz)
+                    ? normalizeQuaternionWxyz(dynamicsRecord?.principalAxesLocalWxyz, [1, 0, 0, 0])
+                    : null;
+                const hasAuthoredPrincipalAxes = Array.isArray(principalAxesLocalWxyz);
+                const hasAuthoredDynamicsData = (hasAuthoredMassValue
+                    || hasAuthoredCenterOfMass
+                    || hasAuthoredDiagonalInertia
+                    || hasAuthoredPrincipalAxes);
+                if (!hasAuthoredDynamicsData)
                     continue;
                 stageLinkDynamicsRecordByLinkPath.set(linkPath, {
-                    mass: massValue === undefined ? null : Number(massValue),
+                    mass: hasAuthoredMassValue && massValue !== undefined ? Number(massValue) : null,
                     centerOfMassLocal,
-                    diagonalInertia: Array.isArray(diagonalInertiaTuple)
+                    diagonalInertia: hasAuthoredDiagonalInertia
                         ? normalizeVector3(diagonalInertiaTuple, [0, 0, 0])
                         : null,
                     principalAxesLocalWxyz,
@@ -1998,12 +2039,29 @@ export class ThreeRenderDelegateCore {
                 const truthMassValue = Number.isFinite(Number(inertialEntry?.mass))
                     ? Number(inertialEntry.mass)
                     : null;
+                const hasStageMassValue = (stageDynamicsRecord?.mass !== null && Number.isFinite(Number(stageDynamicsRecord?.mass)))
+                    || massValueFromPrim !== undefined
+                    || Number.isFinite(Number(stagePatch?.mass));
                 const stageMassValue = stageDynamicsRecord?.mass !== null && Number.isFinite(Number(stageDynamicsRecord?.mass))
                     ? Number(stageDynamicsRecord.mass)
                     : (massValueFromPrim !== undefined ? Number(massValueFromPrim) : (Number.isFinite(Number(stagePatch?.mass)) ? Number(stagePatch.mass) : null));
                 const centerOfMassTupleFromPrim = toFiniteVector3Tuple(safeGetPrimAttribute(prim, 'physics:centerOfMass'));
                 const diagonalInertiaTupleFromPrim = toFiniteVector3Tuple(safeGetPrimAttribute(prim, 'physics:diagonalInertia'));
                 const principalAxesTupleFromPrim = toFiniteQuaternionWxyzTuple(safeGetPrimAttribute(prim, 'physics:principalAxes'));
+                const hasStageCenterOfMassValue = hasAuthoredVector3(stageDynamicsRecord?.centerOfMassLocal)
+                    || Array.isArray(centerOfMassTupleFromPrim)
+                    || hasAuthoredVector3(stagePatch?.centerOfMassLocal);
+                const hasStageDiagonalInertiaValue = Array.isArray(stageDynamicsRecord?.diagonalInertia)
+                    || Array.isArray(diagonalInertiaTupleFromPrim)
+                    || hasAuthoredVector3(stagePatch?.diagonalInertia);
+                const hasStagePrincipalAxesValue = hasAuthoredQuaternionWxyz(stageDynamicsRecord?.principalAxesLocalWxyz)
+                    || Array.isArray(principalAxesTupleFromPrim)
+                    || hasAuthoredQuaternionWxyz(stagePatch?.principalAxesLocalWxyz);
+                const hasAuthoredDynamicsData = Boolean(inertialEntry)
+                    || hasStageMassValue
+                    || hasStageCenterOfMassValue
+                    || hasStageDiagonalInertiaValue
+                    || hasStagePrincipalAxesValue;
                 const stageCenterOfMassSource = stageDynamicsRecord?.centerOfMassLocal || centerOfMassTupleFromPrim || stagePatch?.centerOfMassLocal || null;
                 const stageDiagonalInertiaSource = stageDynamicsRecord?.diagonalInertia || diagonalInertiaTupleFromPrim || stagePatch?.diagonalInertia || null;
                 const stagePrincipalAxesSource = stageDynamicsRecord?.principalAxesLocalWxyz || principalAxesTupleFromPrim || stagePatch?.principalAxesLocalWxyz || null;
@@ -2025,7 +2083,7 @@ export class ThreeRenderDelegateCore {
                     || hasSignificantVector3(centerOfMassLocal)
                     || hasSignificantVector3(diagonalInertia)
                     || hasNonIdentityQuaternionWxyz(principalAxesWxyz));
-                if (!hasDynamicsData) {
+                if (!hasAuthoredDynamicsData && !hasDynamicsData) {
                     continue;
                 }
                 linkDynamicsEntries.push({

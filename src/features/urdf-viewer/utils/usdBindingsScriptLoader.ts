@@ -1,3 +1,9 @@
+export {
+  appendCacheKey,
+  buildUsdBindingsAssetPath,
+  buildUsdBindingsScriptUrl,
+} from './usdBindingsAssetPaths.ts';
+
 let classicScriptLoadState = new WeakMap<Document, Map<string, Promise<void>>>();
 let workerClassicScriptLoadState = new Map<string, Promise<void>>();
 
@@ -15,7 +21,7 @@ function resolveGlobalScriptUrl(src: string): string {
   return new URL(src, baseHref).href;
 }
 
-async function ensureClassicScriptLoadedInWorker(src: string): Promise<void> {
+function ensureClassicScriptLoadedInWorker(src: string): Promise<void> {
   const resolvedSrc = resolveGlobalScriptUrl(src);
   const existingPromise = workerClassicScriptLoadState.get(resolvedSrc);
   if (existingPromise) {
@@ -66,16 +72,6 @@ function findExistingScript(src: string, targetDocument: Document): HTMLScriptEl
   }
 
   return null;
-}
-
-export function appendCacheKey(resourcePath: string, cacheKey: string): string {
-  return resourcePath.includes('?')
-    ? `${resourcePath}&v=${cacheKey}`
-    : `${resourcePath}?v=${cacheKey}`;
-}
-
-export function buildUsdBindingsScriptUrl(cacheKey: string): string {
-  return appendCacheKey('/usd/bindings/emHdBindings.js', cacheKey);
 }
 
 export function ensureClassicScriptLoaded(src: string, targetDocument?: Document): Promise<void> {

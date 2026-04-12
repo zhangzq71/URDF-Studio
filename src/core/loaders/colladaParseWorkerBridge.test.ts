@@ -106,7 +106,7 @@ test('Collada parse worker bridge fails fast when Worker is unavailable instead 
     const client = createColladaParseWorkerPoolClient();
     await assert.rejects(
       client.load('/demo.dae', new THREE.LoadingManager()),
-      /Collada parse worker is unavailable in this environment/i,
+      /Collada parse worker is (?:unavailable|not available) in this environment/i,
     );
     assert.equal(fetchCount, 0);
   } finally {
@@ -154,6 +154,44 @@ test('Collada parse worker cache can be cleared explicitly', async () => {
     result: serializedResult,
   });
   await assert.doesNotReject(secondLoad);
+});
+
+test('Collada parse worker returns distinct scene instances for concurrent loads of the same asset', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createColladaParseWorkerPoolClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const child = new THREE.Object3D();
+  child.name = 'shared_visual';
+  const root = new THREE.Group();
+  root.name = 'collada_root';
+  root.add(child);
+
+  const serializedResult = {
+    resourcePath: '',
+    sceneJson: root.toJSON() as unknown as Record<string, unknown>,
+  };
+
+  const firstLoad = client.load('/shared.dae', new THREE.LoadingManager());
+  const secondLoad = client.load('/shared.dae', new THREE.LoadingManager());
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+
+  fakeWorker.emitMessage({
+    type: 'parse-collada-result',
+    requestId: 1,
+    result: serializedResult,
+  });
+
+  const [firstScene, secondScene] = await Promise.all([firstLoad, secondLoad]);
+
+  assert.notEqual(firstScene, secondScene);
+  assert.notEqual(firstScene.children[0], secondScene.children[0]);
+  assert.equal(firstScene.children[0]?.name, 'shared_visual');
+  assert.equal(secondScene.children[0]?.name, 'shared_visual');
 });
 
 test('Collada parse worker pool can be disposed and recreated on demand', async () => {

@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { GeometryType, JointType, type RobotState } from '@/types';
 
 import { createUsdAssetRegistry } from './usdAssetRegistry.ts';
-import { buildUsdLinkSceneRoot } from './usdLinkSceneBuilder.ts';
+import { buildUsdLinkSceneRoot, flattenUsdLinkSceneHierarchy } from './usdLinkSceneBuilder.ts';
 
 if (typeof globalThis.ProgressEvent === 'undefined') {
   class ProgressEventPolyfill extends Event {
@@ -185,4 +185,33 @@ test('buildUsdLinkSceneRoot preserves per-face box material metadata without col
       ?.texture,
     'textures/back.png',
   );
+});
+
+test('flattenUsdLinkSceneHierarchy reparents descendant links to the scene root while preserving world transforms', async () => {
+  const robot = createTwoLinkRobot();
+  const { registry } = createUsdAssetRegistry({});
+  const rootLink = await buildUsdLinkSceneRoot({
+    robot,
+    registry,
+  });
+  const sceneRoot = new THREE.Group();
+  sceneRoot.name = 'two_link_robot';
+  sceneRoot.add(rootLink);
+  sceneRoot.updateMatrixWorld(true);
+
+  const nestedChildLink = rootLink.getObjectByName('link1');
+  assert.ok(nestedChildLink instanceof THREE.Group);
+  const nestedWorldPosition = new THREE.Vector3();
+  nestedChildLink.getWorldPosition(nestedWorldPosition);
+
+  flattenUsdLinkSceneHierarchy(sceneRoot);
+  sceneRoot.updateMatrixWorld(true);
+
+  const flattenedChildLink = sceneRoot.getObjectByName('link1');
+  assert.ok(flattenedChildLink instanceof THREE.Group);
+  assert.equal(flattenedChildLink.parent, sceneRoot);
+
+  const flattenedWorldPosition = new THREE.Vector3();
+  flattenedChildLink.getWorldPosition(flattenedWorldPosition);
+  assert.deepEqual(flattenedWorldPosition.toArray(), nestedWorldPosition.toArray());
 });

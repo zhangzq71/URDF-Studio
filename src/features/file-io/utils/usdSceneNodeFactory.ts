@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 import type { UrdfVisual } from '@/types';
-import { getBoxFaceMaterialPalette } from '@/core/robot';
+import { getBoxFaceMaterialPalette, hasGeometryMeshMaterialGroups } from '@/core/robot';
 import {
   shouldNormalizeColladaRoot,
   type ColladaRootNormalizationHints,
@@ -15,6 +15,7 @@ import {
 } from '@/core/loaders/objParseWorkerBridge.ts';
 import { createGeometryFromSerializedStlData } from '@/core/loaders/stlGeometryData.ts';
 import { loadSerializedStlGeometryData } from '@/core/loaders/stlParseWorkerBridge.ts';
+import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import { ensureWorkerXmlDomApis } from '@/core/utils/ensureWorkerXmlDomApis.ts';
 
 import {
@@ -44,6 +45,8 @@ export type UsdVisualRole = 'visual' | 'collision';
 export type UsdMaterialMetadata = {
   color?: string;
   texture?: string;
+  forceUniformOverride?: boolean;
+  preserveEmbeddedMaterials?: boolean;
 };
 
 export interface UsdMeshCompressionOptions {
@@ -342,6 +345,37 @@ const applyExplicitMeshDisplayColor = (root: THREE.Object3D, color: string | und
   });
 };
 
+const loadedUsdObjectShouldPreserveEmbeddedMaterials = (object: THREE.Object3D): boolean => {
+  const materialNames = new Set<string>();
+  let hasMaterialTexture = false;
+  let hasMultiMaterialMesh = false;
+
+  object.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) {
+      return;
+    }
+
+    const material = (child as THREE.Mesh).material;
+    const materials = Array.isArray(material) ? material : [material];
+    if (materials.length > 1) {
+      hasMultiMaterialMesh = true;
+    }
+
+    materials.forEach((entry) => {
+      const materialName = entry?.name?.trim();
+      if (materialName) {
+        materialNames.add(materialName);
+      }
+
+      if ('map' in (entry || {}) && (entry as THREE.MeshStandardMaterial).map) {
+        hasMaterialTexture = true;
+      }
+    });
+  });
+
+  return hasMaterialTexture || hasMultiMaterialMesh || materialNames.size > 1;
+};
+
 const buildCachedUsdStlGeometry = async (
   assetUrl: string,
   registry: UsdAssetRegistry,
@@ -409,6 +443,11 @@ const loadUsdMeshObject = async (
     const serializedObject = await loadSerializedObjModelData(resolvedUrl);
     const object = createObjectFromSerializedObjData(serializedObject);
     normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
+    if (hasGeometryMeshMaterialGroups(visual)) {
+      applyVisualMeshMaterialGroupsToObject(object, visual, {
+        manager: getUsdTextureLoadingManager(registry),
+      });
+    }
     expandUsdMultiMaterialMeshesForSerialization(object);
     return object;
   }
@@ -416,6 +455,11 @@ const loadUsdMeshObject = async (
   if (lowerPath.endsWith('.dae')) {
     const object = await loadColladaScene(resolvedUrl, getUsdTextureLoadingManager(registry));
     normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
+    if (hasGeometryMeshMaterialGroups(visual)) {
+      applyVisualMeshMaterialGroupsToObject(object, visual, {
+        manager: getUsdTextureLoadingManager(registry),
+      });
+    }
     expandUsdMultiMaterialMeshesForSerialization(object);
     if (shouldNormalizeColladaRoot(meshPath, colladaRootNormalizationHints)) {
       object.rotation.set(0, 0, 0);
@@ -427,6 +471,11 @@ const loadUsdMeshObject = async (
   if (lowerPath.endsWith('.gltf') || lowerPath.endsWith('.glb')) {
     const object = cloneUsdGltfSceneAsset(await loadUsdGltfSceneAsset(resolvedUrl, registry));
     normalizeUsdRenderableMaterials(object, colorOverride || visual.color);
+    if (hasGeometryMeshMaterialGroups(visual)) {
+      applyVisualMeshMaterialGroupsToObject(object, visual, {
+        manager: getUsdTextureLoadingManager(registry),
+      });
+    }
     expandUsdMultiMaterialMeshesForSerialization(object);
     return object;
   }
@@ -455,7 +504,7 @@ export const buildUsdVisualSceneNode = async ({
   const object = await loadUsdMeshObject(
     visual,
     registry,
-    materialState?.color,
+    materialState?.forceUniformOverride ? materialState.color : undefined,
     meshCompression,
     colladaRootNormalizationHints,
   );
@@ -489,7 +538,14 @@ export const buildUsdVisualSceneNode = async ({
     });
   }
 
-  applyExplicitMeshDisplayColor(object, materialState?.color);
+  const shouldPreserveEmbeddedMaterials =
+    materialState?.preserveEmbeddedMaterials === true ||
+    (!materialState?.forceUniformOverride &&
+      loadedUsdObjectShouldPreserveEmbeddedMaterials(object));
+
+  if (!shouldPreserveEmbeddedMaterials) {
+    applyExplicitMeshDisplayColor(object, materialState?.color);
+  }
   anchor.add(object);
   return anchor;
 };

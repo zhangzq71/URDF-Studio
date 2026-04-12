@@ -122,7 +122,7 @@ export const zh: TranslationKeys = {
   jointTypePlanarDescription: '可在同一平面内平移，并绕平面法线旋转。',
   jointTypeFloating: '浮动关节',
   jointTypeFloatingDescription: '拥有六自由度，可在三维空间中自由平移和旋转。',
-  dimensions: '尺寸 / 半径 / 长度',
+  dimensions: '尺寸',
   meshScale: 'Mesh 缩放',
   visible: '可见',
   hidden: '隐藏',
@@ -714,7 +714,7 @@ export const zh: TranslationKeys = {
   exportComingSoon: '即将推出',
   exportUsdFileFormat: 'USD Layer 格式',
   exportUsdFileFormatDesc:
-    '导出为 Isaac Sim 风格的分层包，可选择文本 USDA 或 authored USD layer，再按需转换为二进制包。',
+    '导出为兼容 Isaac Sim / Genesis 的分层包，可选择文本 USDA 或 authored USD layer，再按需转换为二进制包。',
   exportUsdFileFormatUsd: 'USD',
   exportUsdFileFormatUsda: 'USDA',
   exportCompressMeshes: '压缩 Mesh 几何',

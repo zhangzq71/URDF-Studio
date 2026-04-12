@@ -377,6 +377,13 @@ const serializeUsdPreviewMaterials = async (
   lines.push(`${indent}}`);
 };
 
+const serializeUsdJointScope = (lines: string[], depth: number): void => {
+  const indent = makeUsdIndent(depth);
+  lines.push(`${indent}def Scope "joints"`);
+  lines.push(`${indent}{`);
+  lines.push(`${indent}}`);
+};
+
 const serializeUsdMeshGeometryLibrary = async (
   lines: string[],
   depth: number,
@@ -474,6 +481,7 @@ const serializeSceneNode = async (
   if (depth === 0) {
     await serializeUsdMeshGeometryLibrary(lines, childDepth, context, progressTracker);
     await serializeUsdPreviewMaterials(lines, childDepth, context, progressTracker);
+    serializeUsdJointScope(lines, childDepth);
   }
 
   advanceUsdProgress(progressTracker, name);
@@ -484,6 +492,9 @@ const serializeSceneNode = async (
   }
   if (depth === 0 && context.materialRecords.length > 0) {
     usedNames.add('Looks');
+  }
+  if (depth === 0) {
+    usedNames.add('joints');
   }
 
   for (let index = 0; index < object.children.length; index += 1) {

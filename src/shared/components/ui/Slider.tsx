@@ -57,63 +57,77 @@ export const Slider: React.FC<SliderProps> = ({
     ? '[&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent'
     : '[&::-moz-range-thumb]:h-[18px] [&::-moz-range-thumb]:w-[18px] [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-transparent [&::-webkit-slider-thumb]:h-[18px] [&::-webkit-slider-thumb]:w-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-transparent';
   const sliderRef = React.useRef<HTMLDivElement>(null);
-  const formatDisplayValue = React.useCallback((nextValue: number) => (
-    formatValue ? formatValue(nextValue) : `${nextValue}`
-  ), [formatValue]);
-  const parseDisplayValue = React.useCallback((input: string) => {
-    if (parseValue) {
-      return parseValue(input);
-    }
-
-    const normalized = input.trim().replace(/,/g, '').replace(/[^0-9eE+.-]/g, '');
-    if (!normalized) {
-      return null;
-    }
-
-    const numericValue = Number.parseFloat(normalized);
-    return Number.isFinite(numericValue) ? numericValue : null;
-  }, [parseValue]);
-  const clampToRange = React.useCallback((nextValue: number) => {
-    if (!Number.isFinite(nextValue)) return safeMin;
-    return Math.min(Math.max(nextValue, safeMin), safeMax);
-  }, [safeMin, safeMax]);
-  const resolvedMarks = React.useMemo(
-    () => (marks ?? [])
-      .map((mark) => ({
-        ...mark,
-        value: clampToRange(mark.value),
-      }))
-      .sort((left, right) => left.value - right.value),
-    [clampToRange, marks],
+  const formatDisplayValue = React.useCallback(
+    (nextValue: number) => (formatValue ? formatValue(nextValue) : `${nextValue}`),
+    [formatValue],
   );
-  const snapToStep = React.useCallback((nextValue: number) => {
-    const clampedValue = clampToRange(nextValue);
-
-    if (snapToMarks && resolvedMarks.length > 0) {
-      let nearestMarkValue = resolvedMarks[0].value;
-      let smallestDistance = Math.abs(clampedValue - nearestMarkValue);
-
-      for (let index = 1; index < resolvedMarks.length; index += 1) {
-        const distance = Math.abs(clampedValue - resolvedMarks[index].value);
-        if (distance < smallestDistance) {
-          smallestDistance = distance;
-          nearestMarkValue = resolvedMarks[index].value;
-        }
+  const parseDisplayValue = React.useCallback(
+    (input: string) => {
+      if (parseValue) {
+        return parseValue(input);
       }
 
-      return nearestMarkValue;
-    }
+      const normalized = input
+        .trim()
+        .replace(/,/g, '')
+        .replace(/[^0-9eE+.-]/g, '');
+      if (!normalized) {
+        return null;
+      }
 
-    if (!Number.isFinite(step) || step <= 0) {
-      return clampedValue;
-    }
+      const numericValue = Number.parseFloat(normalized);
+      return Number.isFinite(numericValue) ? numericValue : null;
+    },
+    [parseValue],
+  );
+  const clampToRange = React.useCallback(
+    (nextValue: number) => {
+      if (!Number.isFinite(nextValue)) return safeMin;
+      return Math.min(Math.max(nextValue, safeMin), safeMax);
+    },
+    [safeMin, safeMax],
+  );
+  const resolvedMarks = React.useMemo(
+    () =>
+      (marks ?? [])
+        .map((mark) => ({
+          ...mark,
+          value: clampToRange(mark.value),
+        }))
+        .sort((left, right) => left.value - right.value),
+    [clampToRange, marks],
+  );
+  const snapToStep = React.useCallback(
+    (nextValue: number) => {
+      const clampedValue = clampToRange(nextValue);
 
-    const steppedValue = safeMin + Math.round((clampedValue - safeMin) / step) * step;
-    const stepDecimals = `${step}`.split('.')[1]?.length ?? 0;
-    const precision = Math.min(stepDecimals + 2, 10);
+      if (snapToMarks && resolvedMarks.length > 0) {
+        let nearestMarkValue = resolvedMarks[0].value;
+        let smallestDistance = Math.abs(clampedValue - nearestMarkValue);
 
-    return clampToRange(Number(steppedValue.toFixed(precision)));
-  }, [clampToRange, resolvedMarks, safeMin, snapToMarks, step]);
+        for (let index = 1; index < resolvedMarks.length; index += 1) {
+          const distance = Math.abs(clampedValue - resolvedMarks[index].value);
+          if (distance < smallestDistance) {
+            smallestDistance = distance;
+            nearestMarkValue = resolvedMarks[index].value;
+          }
+        }
+
+        return nearestMarkValue;
+      }
+
+      if (!Number.isFinite(step) || step <= 0) {
+        return clampedValue;
+      }
+
+      const steppedValue = safeMin + Math.round((clampedValue - safeMin) / step) * step;
+      const stepDecimals = `${step}`.split('.')[1]?.length ?? 0;
+      const precision = Math.min(stepDecimals + 2, 10);
+
+      return clampToRange(Number(steppedValue.toFixed(precision)));
+    },
+    [clampToRange, resolvedMarks, safeMin, snapToMarks, step],
+  );
 
   const [localValue, setLocalValue] = React.useState(() => clampToRange(value));
   const [isDragging, setIsDragging] = React.useState(false);
@@ -133,133 +147,175 @@ export const Slider: React.FC<SliderProps> = ({
     }
   }, [formatDisplayValue, isEditingValue, localValue]);
 
+  const latestValuesRef = React.useRef({
+    safeMin,
+    safeMax,
+    step,
+    isDragging,
+  });
+
+  React.useEffect(() => {
+    latestValuesRef.current = {
+      safeMin,
+      safeMax,
+      step,
+      isDragging,
+    };
+  });
+
   const stopDragging = React.useCallback(() => {
     setIsDragging(false);
     onChangeEnd?.();
   }, [onChangeEnd]);
 
-  const handleChange = React.useCallback((newValue: number) => {
-    const clampedValue = clampToRange(newValue);
-    setLocalValue(clampedValue);
-    onChange(clampedValue);
-  }, [clampToRange, onChange]);
+  const handleChange = React.useCallback(
+    (newValue: number) => {
+      const clampedValue = clampToRange(newValue);
+      setLocalValue(clampedValue);
+      onChange(clampedValue);
+    },
+    [clampToRange, onChange],
+  );
 
-  const updateValueFromClientX = React.useCallback((clientX: number) => {
-    const sliderElement = sliderRef.current;
-    if (!sliderElement) {
-      return;
-    }
+  const updateValueFromClientX = React.useCallback(
+    (clientX: number) => {
+      const sliderElement = sliderRef.current;
+      if (!sliderElement) {
+        return;
+      }
 
-    const rect = sliderElement.getBoundingClientRect();
-    if (rect.width <= 0) {
-      return;
-    }
+      const rect = sliderElement.getBoundingClientRect();
+      if (rect.width <= 0) {
+        return;
+      }
 
-    const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
-    const rawValue = safeMin + ratio * (safeMax - safeMin);
-    handleChange(snapToStep(rawValue));
-  }, [handleChange, safeMax, safeMin, snapToStep]);
+      const {
+        safeMin: currentMin,
+        safeMax: currentMax,
+        step: currentStep,
+      } = latestValuesRef.current;
+      const ratio = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+      const rawValue = currentMin + ratio * (currentMax - currentMin);
+
+      // Snap logic moved into a local helper to use latest step/min
+      const clampedValue = Math.min(Math.max(rawValue, currentMin), currentMax);
+      let snappedValue = clampedValue;
+      if (Number.isFinite(currentStep) && currentStep > 0) {
+        snappedValue =
+          currentMin + Math.round((clampedValue - currentMin) / currentStep) * currentStep;
+        const stepDecimals = `${currentStep}`.split('.')[1]?.length ?? 0;
+        const precision = Math.min(stepDecimals + 2, 10);
+        snappedValue = Number(snappedValue.toFixed(precision));
+        snappedValue = Math.min(Math.max(snappedValue, currentMin), currentMax);
+      }
+
+      handleChange(snappedValue);
+    },
+    [handleChange],
+  );
 
   const range = safeMax - safeMin;
   const percentage = range > 0 ? ((localValue - safeMin) / range) * 100 : 0;
   // Visual Clamping: Ensure the slider UI stays within bounds even if value is out of range
   const clampedPercentage = Math.min(Math.max(percentage, 0), 100);
-  const updateThumbHover = React.useCallback((clientX: number, clientY: number) => {
-    if (disabled) {
-      setIsThumbHovered(false);
-      return;
-    }
+  const updateThumbHover = React.useCallback(
+    (clientX: number, clientY: number) => {
+      if (disabled) {
+        setIsThumbHovered(false);
+        return;
+      }
 
-    const sliderElement = sliderRef.current;
-    if (!sliderElement) {
-      setIsThumbHovered(false);
-      return;
-    }
+      const sliderElement = sliderRef.current;
+      if (!sliderElement) {
+        setIsThumbHovered(false);
+        return;
+      }
 
-    const rect = sliderElement.getBoundingClientRect();
-    const thumbCenterX = rect.left + (clampedPercentage / 100) * rect.width;
-    const thumbCenterY = rect.top + rect.height / 2;
-    const withinX = Math.abs(clientX - thumbCenterX) <= halfThumb + (compactThumb ? 7 : 6);
-    const withinY = Math.abs(clientY - thumbCenterY) <= 14;
+      const rect = sliderElement.getBoundingClientRect();
+      const thumbCenterX = rect.left + (clampedPercentage / 100) * rect.width;
+      const thumbCenterY = rect.top + rect.height / 2;
+      const withinX = Math.abs(clientX - thumbCenterX) <= halfThumb + (compactThumb ? 7 : 6);
+      const withinY = Math.abs(clientY - thumbCenterY) <= 14;
 
-    setIsThumbHovered(withinX && withinY);
-  }, [clampedPercentage, compactThumb, disabled, halfThumb]);
+      setIsThumbHovered(withinX && withinY);
+    },
+    [clampedPercentage, compactThumb, disabled, halfThumb],
+  );
 
   React.useEffect(() => {
     if (!isDragging) return;
 
     const handlePointerMove = (event: PointerEvent) => {
       updateValueFromClientX(event.clientX);
-      updateThumbHover(event.clientX, event.clientY);
     };
-    const handleMouseMove = (event: MouseEvent) => {
-      updateValueFromClientX(event.clientX);
-      updateThumbHover(event.clientX, event.clientY);
+
+    const handlePointerUp = () => {
+      stopDragging();
     };
-    const handleTouchMove = (event: TouchEvent) => {
-      const touch = event.touches[0];
-      if (!touch) {
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
+    };
+  }, [isDragging, stopDragging, updateValueFromClientX]);
+
+  const startDragging = React.useCallback(
+    (clientX: number, pointerId?: number) => {
+      if (disabled) {
         return;
       }
 
-      updateValueFromClientX(touch.clientX);
-      updateThumbHover(touch.clientX, touch.clientY);
-    };
+      setIsDragging((wasDragging) => {
+        if (!wasDragging) {
+          onChangeStart?.();
+        }
+        return true;
+      });
+      updateValueFromClientX(clientX);
 
-    window.addEventListener('pointerup', stopDragging);
-    window.addEventListener('pointercancel', stopDragging);
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('touchmove', handleTouchMove);
-    window.addEventListener('mouseup', stopDragging);
-    window.addEventListener('touchend', stopDragging);
-    window.addEventListener('blur', stopDragging);
-
-    return () => {
-      window.removeEventListener('pointerup', stopDragging);
-      window.removeEventListener('pointercancel', stopDragging);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('touchmove', handleTouchMove);
-      window.removeEventListener('mouseup', stopDragging);
-      window.removeEventListener('touchend', stopDragging);
-      window.removeEventListener('blur', stopDragging);
-    };
-  }, [isDragging, stopDragging, updateThumbHover, updateValueFromClientX]);
-
-  const startDragging = React.useCallback((clientX: number) => {
-    if (disabled) {
-      return;
-    }
-
-    setIsDragging((wasDragging) => {
-      if (!wasDragging) {
-        onChangeStart?.();
+      if (pointerId !== undefined && sliderRef.current?.setPointerCapture) {
+        try {
+          sliderRef.current.setPointerCapture(pointerId);
+        } catch {
+          // Ignore capture errors
+        }
       }
-      return true;
-    });
-    updateValueFromClientX(clientX);
-  }, [disabled, onChangeStart, updateValueFromClientX]);
+    },
+    [disabled, onChangeStart, updateValueFromClientX],
+  );
 
-  const handleTrackPointerDown = React.useCallback((clientX: number) => {
-    startDragging(clientX);
-  }, [startDragging]);
+  const handleTrackPointerDown = React.useCallback(
+    (clientX: number) => {
+      startDragging(clientX);
+    },
+    [startDragging],
+  );
 
-  const commitValueInput = React.useCallback((nextInputValue?: string) => {
-    const resolvedInputValue = nextInputValue ?? valueInput;
-    const parsedValue = parseDisplayValue(resolvedInputValue);
+  const commitValueInput = React.useCallback(
+    (nextInputValue?: string) => {
+      const resolvedInputValue = nextInputValue ?? valueInput;
+      const parsedValue = parseDisplayValue(resolvedInputValue);
 
-    if (parsedValue === null) {
-      setValueInput(formatDisplayValue(localValue));
+      if (parsedValue === null) {
+        setValueInput(formatDisplayValue(localValue));
+        setIsEditingValue(false);
+        return;
+      }
+
+      const nextValue = snapToStep(parsedValue);
+      handleChange(nextValue);
+      setValueInput(formatDisplayValue(nextValue));
       setIsEditingValue(false);
-      return;
-    }
-
-    const nextValue = snapToStep(parsedValue);
-    handleChange(nextValue);
-    setValueInput(formatDisplayValue(nextValue));
-    setIsEditingValue(false);
-  }, [formatDisplayValue, handleChange, localValue, parseDisplayValue, snapToStep, valueInput]);
+    },
+    [formatDisplayValue, handleChange, localValue, parseDisplayValue, snapToStep, valueInput],
+  );
 
   const thumbBoxShadow = disabled
     ? 'var(--ui-slider-thumb-shadow)'
@@ -281,7 +337,9 @@ export const Slider: React.FC<SliderProps> = ({
           <div className="flex min-w-0 flex-1 items-center gap-2">
             {icon && <span className="text-text-tertiary">{icon}</span>}
             {label && (
-              <span className={`min-w-0 truncate text-xs font-medium text-text-primary ${labelClassName}`}>
+              <span
+                className={`min-w-0 truncate text-xs font-medium text-text-primary ${labelClassName}`}
+              >
                 {label}
               </span>
             )}
@@ -324,7 +382,7 @@ export const Slider: React.FC<SliderProps> = ({
           )}
         </div>
       )}
-      
+
       <div>
         <div
           ref={sliderRef}
@@ -333,22 +391,7 @@ export const Slider: React.FC<SliderProps> = ({
           onPointerDown={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            handleTrackPointerDown(event.clientX);
-          }}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleTrackPointerDown(event.clientX);
-          }}
-          onTouchStart={(event) => {
-            const touch = event.touches[0];
-            if (!touch) {
-              return;
-            }
-
-            event.preventDefault();
-            event.stopPropagation();
-            handleTrackPointerDown(touch.clientX);
+            startDragging(event.clientX, event.pointerId);
           }}
           onPointerEnter={(e) => updateThumbHover(e.clientX, e.clientY)}
           onPointerMove={(e) => updateThumbHover(e.clientX, e.clientY)}
@@ -376,12 +419,6 @@ export const Slider: React.FC<SliderProps> = ({
             }}
             onPointerUp={stopDragging}
             onPointerCancel={stopDragging}
-            onMouseDown={(e) => {
-              e.preventDefault();
-            }}
-            onClick={(e) => {
-              e.preventDefault();
-            }}
             disabled={disabled}
             className={`pointer-events-none absolute -top-1.5 z-0 h-8 appearance-none bg-transparent opacity-0 disabled:cursor-not-allowed ${nativeThumbClassName}`}
             style={{
@@ -415,14 +452,13 @@ export const Slider: React.FC<SliderProps> = ({
         {resolvedMarks.length > 0 && (
           <div className="relative mt-2 h-7 px-0.5" data-testid="ui-slider-marks">
             {resolvedMarks.map((mark, index) => {
-              const markPercentage = range > 0
-                ? ((mark.value - safeMin) / range) * 100
-                : 0;
-              const alignmentClass = index === 0
-                ? 'translate-x-0'
-                : index === resolvedMarks.length - 1
-                  ? '-translate-x-full'
-                  : '-translate-x-1/2';
+              const markPercentage = range > 0 ? ((mark.value - safeMin) / range) * 100 : 0;
+              const alignmentClass =
+                index === 0
+                  ? 'translate-x-0'
+                  : index === resolvedMarks.length - 1
+                    ? '-translate-x-full'
+                    : '-translate-x-1/2';
 
               return (
                 <div
@@ -431,9 +467,10 @@ export const Slider: React.FC<SliderProps> = ({
                   style={{ left: `${markPercentage}%` }}
                 >
                   <div className="mx-auto h-1.5 w-px rounded-full bg-border-black/70" />
-                  <div className={`mt-1 whitespace-nowrap text-[9px] font-medium ${
-                    disabled ? 'text-text-tertiary/60' : 'text-text-tertiary'
-                  }`}
+                  <div
+                    className={`mt-1 whitespace-nowrap text-[9px] font-medium ${
+                      disabled ? 'text-text-tertiary/60' : 'text-text-tertiary'
+                    }`}
                   >
                     {mark.label}
                   </div>

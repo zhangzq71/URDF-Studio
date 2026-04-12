@@ -62,69 +62,73 @@ export function TreeEditorSidebarHeader({
         </div>
       </button>
 
-      <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-        <div className="flex w-full rounded-lg bg-segmented-bg p-0.5">
-          <button
-            onClick={onSwitchToStructure}
-            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
+      {!collapsed && (
+        <>
+          <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
+            <div className="flex w-full rounded-lg bg-segmented-bg p-0.5">
+              <button
+                onClick={onSwitchToStructure}
+                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
             ${
               !isProMode
                 ? 'bg-segmented-active text-system-blue shadow-sm'
                 : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
             }`}
-          >
-            <Trees size={13} />
-            {simpleModeLabel}
-          </button>
-          <button
-            onClick={onSwitchToWorkspace}
-            className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
+              >
+                <Trees size={13} />
+                {simpleModeLabel}
+              </button>
+              <button
+                onClick={onSwitchToWorkspace}
+                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold tracking-[0.02em] transition-all
             ${
               isProMode
                 ? 'bg-segmented-active text-system-blue shadow-sm'
                 : 'text-text-tertiary hover:text-text-primary dark:text-text-tertiary dark:hover:text-text-secondary'
             }`}
-          >
-            <LayoutGrid size={13} />
-            {proModeLabel}
-          </button>
-        </div>
-      </div>
+              >
+                <LayoutGrid size={13} />
+                {proModeLabel}
+              </button>
+            </div>
+          </div>
 
-      <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
-        <div className="flex items-center gap-2">
-          <label className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
-            {nameLabel}
-          </label>
-          {isEditingName ? (
-            <input
-              ref={nameInputRef}
-              type="text"
-              value={nameDraft}
-              onChange={(event) => onNameDraftChange(event.target.value)}
-              onBlur={onCommitNameEditing}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  onCommitNameEditing();
-                } else if (event.key === 'Escape') {
-                  onCancelNameEditing();
-                }
-              }}
-              className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[11px] font-medium text-text-primary px-1.5 py-0.5 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
-              placeholder={namePlaceholder}
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={onStartNameEditing}
-              className="flex-1 min-w-0 text-left text-[11px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
-              title={currentName || namePlaceholder}
-            >
-              {currentName || namePlaceholder}
-            </button>
-          )}
-        </div>
-      </div>
+          <div className="px-2.5 py-1.5 bg-white dark:bg-panel-bg border-b border-border-black dark:border-border-black shrink-0">
+            <div className="flex items-center gap-2">
+              <label className="shrink-0 text-[10px] text-text-tertiary font-semibold tracking-[0.02em]">
+                {nameLabel}
+              </label>
+              {isEditingName ? (
+                <input
+                  ref={nameInputRef}
+                  type="text"
+                  value={nameDraft}
+                  onChange={(event) => onNameDraftChange(event.target.value)}
+                  onBlur={onCommitNameEditing}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      onCommitNameEditing();
+                    } else if (event.key === 'Escape') {
+                      onCancelNameEditing();
+                    }
+                  }}
+                  className="flex-1 min-w-0 bg-input-bg focus:bg-panel-bg text-[11px] font-medium text-text-primary px-1.5 py-0.5 rounded-md border border-border-strong focus:border-system-blue outline-none transition-colors"
+                  placeholder={namePlaceholder}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={onStartNameEditing}
+                  className="flex-1 min-w-0 text-left text-[11px] font-medium text-text-primary hover:text-system-blue transition-colors truncate"
+                  title={currentName || namePlaceholder}
+                >
+                  {currentName || namePlaceholder}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

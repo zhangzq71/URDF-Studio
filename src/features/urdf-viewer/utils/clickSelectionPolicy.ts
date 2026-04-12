@@ -10,6 +10,12 @@ export interface PointerClickThresholdOptions {
   thresholdPx?: number;
 }
 
+export interface PointerInteractionFinalizationOptions {
+  interactionStarted: boolean;
+  dragging: boolean;
+  hasPendingSelection: boolean;
+}
+
 export function shouldDeferSelectionUntilPointerUp(
   toolMode: ToolMode,
   hasDirectJointDragTarget = false,
@@ -36,4 +42,12 @@ export function isPointerInteractionWithinClickThreshold({
   const dx = endX - startX;
   const dy = endY - startY;
   return dx * dx + dy * dy <= thresholdPx * thresholdPx;
+}
+
+export function shouldFinalizePointerInteraction({
+  interactionStarted,
+  dragging,
+  hasPendingSelection,
+}: PointerInteractionFinalizationOptions): boolean {
+  return interactionStarted || dragging || hasPendingSelection;
 }

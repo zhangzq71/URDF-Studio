@@ -317,19 +317,35 @@ export const useSelectionStore = create<SelectionState>()((set, get) => ({
   })(),
 }));
 
+function hasSelectionEntry(entries: Record<string, { name?: string }>, identity: string): boolean {
+  if (identity in entries) {
+    return true;
+  }
+
+  return Object.values(entries).some((entry) => entry.name === identity);
+}
+
 // Helper to check if selection exists in data
 export function validateSelection(
   selection: Selection,
-  links: Record<string, unknown>,
-  joints: Record<string, unknown>,
+  links: Record<string, { name?: string }>,
+  joints: Record<string, { name?: string }>,
+  inspectionContext?: {
+    mjcf?: {
+      tendons?: Array<{
+        name: string;
+      }>;
+    };
+  } | null,
 ): boolean {
   if (!selection.id || !selection.type) return true; // Empty selection is valid
 
   if (selection.type === 'link') {
-    return !!links[selection.id];
+    return hasSelectionEntry(links, selection.id);
   }
   if (selection.type === 'joint') {
-    return !!joints[selection.id];
+    return hasSelectionEntry(joints, selection.id);
   }
-  return false;
+
+  return Boolean(inspectionContext?.mjcf?.tendons?.some((tendon) => tendon.name === selection.id));
 }

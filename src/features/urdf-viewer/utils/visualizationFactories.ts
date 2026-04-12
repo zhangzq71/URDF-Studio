@@ -524,6 +524,7 @@ export function createJointAxisViz(
 export function createCoMVisual(): THREE.Group {
   const comVisual = new THREE.Group();
   comVisual.name = '__com_visual__';
+  comVisual.renderOrder = COM_VISUAL_RENDER_ORDER;
   comVisual.userData = createSelectableHelperUserData();
 
   // Fixed radius for CoM sphere (0.01m = 1cm)

@@ -6,11 +6,36 @@ export const makeUsdIndent = (depth: number): string => {
   return '    '.repeat(depth);
 };
 
+const trimFixedUsdFloat = (value: string): string => {
+  if (!value.includes('.')) {
+    return value;
+  }
+
+  return value.replace(/(?:\.0+|(\.\d*?[1-9])0+)$/, '$1');
+};
+
+const trimExponentialUsdFloat = (value: string): string => {
+  return value
+    .replace(/(\.\d*?[1-9])0+e/, '$1e')
+    .replace(/\.0+e/, 'e')
+    .replace(/e\+?/, 'e')
+    .replace(/e(-?)0+(\d+)/, 'e$1$2');
+};
+
 export const formatUsdFloat = (value: number): string => {
   if (!Number.isFinite(value)) return '0';
-  const normalized = Math.abs(value) < 1e-9 ? 0 : value;
-  const fixed = Number(normalized.toFixed(6));
-  return Number.isInteger(fixed) ? String(fixed) : String(fixed);
+  const normalized = Object.is(value, -0) ? 0 : value;
+  const absolute = Math.abs(normalized);
+
+  if (absolute === 0) {
+    return '0';
+  }
+
+  if (absolute >= 1e-6 && absolute < 1e9) {
+    return trimFixedUsdFloat(normalized.toFixed(6));
+  }
+
+  return trimExponentialUsdFloat(normalized.toExponential(6));
 };
 
 export const formatUsdTuple = (values: number[]): string => {

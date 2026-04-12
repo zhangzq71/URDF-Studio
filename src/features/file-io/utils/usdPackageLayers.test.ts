@@ -91,11 +91,13 @@ test('usd package layers serialize root and sensor configuration prims', () => {
 });
 
 test('isaacsim usd package layers add a Robot variant and robot sidecar references', () => {
-  const robotLayer = buildUsdRobotLayerContent(
-    createLayeredRobot(),
-    buildUsdLinkPathMaps(createLayeredRobot(), 'demo_robot'),
-    'demo_robot',
-  );
+  const robot = createLayeredRobot();
+  const pathMaps = buildUsdLinkPathMaps(robot, 'demo_robot', {
+    layoutProfile: 'isaacsim',
+  });
+  const robotLayer = buildUsdRobotLayerContent(robot, pathMaps, 'demo_robot', {
+    layoutProfile: 'isaacsim',
+  });
   const rootLayer = buildUsdRootLayerContent('demo_robot', 'demo_robot', {
     layoutProfile: 'isaacsim',
     fileFormat: 'usda',
@@ -106,6 +108,9 @@ test('isaacsim usd package layers add a Robot variant and robot sidecar referenc
   assert.match(rootLayer, /prepend payload = @configuration\/demo_robot_robot\.usda@/);
   assert.match(robotLayer, /prepend apiSchemas = \["IsaacRobotAPI"\]/);
   assert.match(robotLayer, /prepend rel isaac:physics:robotLinks = \[/);
+  assert.match(robotLayer, /<\/demo_robot\/base_link>/);
+  assert.match(robotLayer, /<\/demo_robot\/child_link>/);
+  assert.doesNotMatch(robotLayer, /<\/demo_robot\/base_link\/child_link>/);
   assert.match(robotLayer, /prepend rel isaac:physics:robotJoints = \[/);
   assert.match(robotLayer, /prepend apiSchemas = \["IsaacLinkAPI"\]/);
   assert.match(robotLayer, /prepend apiSchemas = \["IsaacJointAPI"\]/);
@@ -141,6 +146,29 @@ test('usd package layers serialize articulation, joint paths, and mesh collision
     /over "collision_0" \(\n\s+prepend apiSchemas = \["PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"\]\n\s*\)\n\s+\{/,
   );
   assert.match(physicsLayer, /uniform token physics:approximation = "convexHull"/);
+});
+
+test('isaacsim usd package layers flatten link prim paths for physics bodies', () => {
+  const robot = createLayeredRobot();
+  const pathMaps = buildUsdLinkPathMaps(robot, 'demo_robot', {
+    layoutProfile: 'isaacsim',
+  });
+  const physicsLayer = buildUsdPhysicsLayerContent(robot, pathMaps, 'demo_robot', 'demo_robot', {
+    layoutProfile: 'isaacsim',
+    fileFormat: 'usda',
+  });
+
+  assert.match(physicsLayer, /rel physics:body0 = <\/demo_robot\/base_link>/);
+  assert.match(physicsLayer, /rel physics:body1 = <\/demo_robot\/child_link>/);
+  assert.doesNotMatch(physicsLayer, /rel physics:body1 = <\/demo_robot\/base_link\/child_link>/);
+  assert.match(
+    physicsLayer,
+    /over "base_link" \(\n\s+prepend apiSchemas = \["PhysicsRigidBodyAPI"\]\n\s*\)\n\s+\{/,
+  );
+  assert.match(
+    physicsLayer,
+    /over "child_link" \(\n\s+prepend apiSchemas = \["PhysicsRigidBodyAPI", "PhysicsMassAPI"\]\n\s*\)\n\s+\{/,
+  );
 });
 
 test('usd package layers package root and configuration files under stable usd paths', async () => {

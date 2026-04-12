@@ -86,48 +86,6 @@ export async function executeUsdExport({
     indeterminate: true,
   });
 
-  const shouldExportLiveUsdStage =
-    target.type === 'current' &&
-    selectedFile?.format === 'usd' &&
-    sidebarTab !== 'workspace' &&
-    currentUsdExportMode === 'live-stage' &&
-    config.usd.fileFormat === 'usd' &&
-    selectedFile.name.toLowerCase().endsWith('.usd');
-
-  if (shouldExportLiveUsdStage && selectedFile) {
-    reportProgress(2, t.exportProgressBuildingUsdScene, t.exportProgressUsdScenePreparingDetail, {
-      stageProgress: 0.16,
-      indeterminate: true,
-    });
-
-    const roundtripArchive = await buildLiveUsdRoundtripArchive({
-      sourceFile: selectedFile,
-      availableFiles,
-      assets,
-      allFileContents,
-    });
-
-    reportProgress(3, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
-      stageProgress: 0.64,
-      indeterminate: true,
-    });
-
-    const zip = new JSZip();
-    roundtripArchive.archiveFiles.forEach((blob, filePath) => {
-      zip.file(filePath, blob);
-    });
-
-    const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
-    downloadBlob(content, roundtripArchive.archiveFileName);
-    markCurrentTargetSaved();
-
-    return {
-      partial: false,
-      warnings: [],
-      issues: [],
-    };
-  }
-
   const exportContext =
     target.type === 'library-file'
       ? {
@@ -136,7 +94,49 @@ export async function executeUsdExport({
         }
       : resolveExportContext(target);
 
+  const shouldFallbackToLiveUsdStage =
+    target.type === 'current' &&
+    selectedFile?.format === 'usd' &&
+    sidebarTab !== 'workspace' &&
+    currentUsdExportMode === 'live-stage' &&
+    config.usd.fileFormat === 'usd' &&
+    selectedFile.name.toLowerCase().endsWith('.usd');
+
   if (!exportContext) {
+    if (shouldFallbackToLiveUsdStage && selectedFile) {
+      reportProgress(2, t.exportProgressBuildingUsdScene, t.exportProgressUsdScenePreparingDetail, {
+        stageProgress: 0.16,
+        indeterminate: true,
+      });
+
+      const roundtripArchive = await buildLiveUsdRoundtripArchive({
+        sourceFile: selectedFile,
+        availableFiles,
+        assets,
+        allFileContents,
+      });
+
+      reportProgress(3, t.exportProgressPreparing, t.exportProgressPreparingDetail, {
+        stageProgress: 0.64,
+        indeterminate: true,
+      });
+
+      const zip = new JSZip();
+      roundtripArchive.archiveFiles.forEach((blob, filePath) => {
+        zip.file(filePath, blob);
+      });
+
+      const content = await generateZipBlobWithProgress(zip, reportProgress, 4);
+      downloadBlob(content, roundtripArchive.archiveFileName);
+      markCurrentTargetSaved();
+
+      return {
+        partial: false,
+        warnings: [],
+        issues: [],
+      };
+    }
+
     if (requiresResolvedUsdContext) {
       throw new Error(t.usdExportUnavailable);
     }
