@@ -191,6 +191,11 @@ function shouldYieldHelperToGeometry(
   }
 
   if (helperCandidate.screenSpaceProjected) {
+    // Overlay helpers rendered on top should not yield to geometry behind
+    // them, even when caught by screen-space fallback.
+    if (hasOverlayPresentation(getCandidateObject(helperCandidate))) {
+      return false;
+    }
     return true;
   }
 
@@ -226,7 +231,19 @@ export function resolveHoverInteractionResolution(
 ): HoverInteractionResolution {
   const sortedCandidates = [...candidates].sort((left, right) => {
     if (left.screenSpaceProjected !== right.screenSpaceProjected) {
+      const projectedCandidate = left.screenSpaceProjected ? left : right;
       const otherCandidate = left.screenSpaceProjected ? right : left;
+
+      // Overlay helpers (e.g., center-of-mass) are rendered on top of
+      // geometry and should win even when caught by screen-space fallback,
+      // because the user clicks what they see rendered in front.
+      if (
+        isHelperCandidate(projectedCandidate) &&
+        hasOverlayPresentation(getCandidateObject(projectedCandidate))
+      ) {
+        return left.screenSpaceProjected ? -1 : 1;
+      }
+
       if (otherCandidate.targetKind === 'geometry') {
         return left.screenSpaceProjected ? 1 : -1;
       }

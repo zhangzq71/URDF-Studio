@@ -268,6 +268,39 @@ function installDownloadMocks() {
   };
 }
 
+function installLiveStageExportMock(
+  implementation: (options?: Record<string, unknown>) => Promise<{
+    ok: boolean;
+    content?: string | null;
+    outputFileName?: string | null;
+    error?: string | null;
+  }>,
+) {
+  const targetWindow = window as typeof window & {
+    exportLoadedStageSnapshot?: typeof implementation;
+  };
+  const originalHandler = targetWindow.exportLoadedStageSnapshot;
+  let callCount = 0;
+
+  targetWindow.exportLoadedStageSnapshot = async (options?: Record<string, unknown>) => {
+    callCount += 1;
+    return implementation(options);
+  };
+
+  return {
+    get callCount() {
+      return callCount;
+    },
+    restore() {
+      if (originalHandler) {
+        targetWindow.exportLoadedStageSnapshot = originalHandler;
+        return;
+      }
+      delete targetWindow.exportLoadedStageSnapshot;
+    },
+  };
+}
+
 type WorkerEventHandler = (event: { data?: unknown; error?: unknown; message?: string }) => void;
 
 function installUsdExportPipelineWorkerMock() {
@@ -667,6 +700,154 @@ test('useFileExport skips binary USD conversion when exporting authored USDA lay
       assert.ok(downloadMocks.capturedBlob);
     } finally {
       rendered.cleanup();
+    }
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    workerMocks.restore();
+    downloadMocks.restore();
+    domEnvironment.restore();
+  }
+});
+
+test('useFileExport prefers prepared USD bundle export over live-stage roundtrip when both are available', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const downloadMocks = installDownloadMocks();
+  const workerMocks = installUsdExportPipelineWorkerMock();
+
+  try {
+    const liveStageExport = installLiveStageExportMock(async () => ({
+      ok: true,
+      content: '#usda 1.0\n',
+    }));
+
+    try {
+      const selectedFile: RobotFile = {
+        name: 'robots/demo/demo.usd',
+        format: 'usd',
+        content: '#usda 1.0\n',
+      };
+
+      useUIStore.setState({
+        lang: 'en',
+        appMode: 'editor',
+        sidebarTab: 'structure',
+      });
+
+      useAssetsStore.getState().setAvailableFiles([selectedFile]);
+      useAssetsStore.getState().setSelectedFile(selectedFile);
+      useAssetsStore.getState().setAllFileContents({
+        [selectedFile.name]: selectedFile.content,
+      });
+      useAssetsStore.getState().setDocumentLoadState({
+        status: 'ready',
+        fileName: selectedFile.name,
+        format: 'usd',
+        error: null,
+      });
+      useAssetsStore
+        .getState()
+        .setUsdPreparedExportCache(
+          '/robots/demo/demo.usd',
+          createPreparedUsdExportCache('/robots/demo/demo.usd'),
+        );
+
+      useRobotStore.getState().setRobot(createCurrentRobot());
+
+      const rendered = renderHook();
+
+      try {
+        const result = await rendered.hook.handleExportWithConfig(createUsdExportConfig(), {
+          type: 'current',
+        });
+
+        assert.deepEqual(result, {
+          partial: false,
+          warnings: [],
+          issues: [],
+        });
+        assert.equal(workerMocks.usdExportRequestCount, 1);
+        assert.equal(workerMocks.usdBinaryRequestCount, 1);
+        assert.equal(liveStageExport.callCount, 0);
+        assert.ok(downloadMocks.clicked);
+        assert.equal(downloadMocks.appendedAnchor?.download, 'edited_worker_bot_usd.zip');
+        assert.ok(downloadMocks.capturedBlob);
+      } finally {
+        rendered.cleanup();
+      }
+    } finally {
+      liveStageExport.restore();
+    }
+  } finally {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    workerMocks.restore();
+    downloadMocks.restore();
+    domEnvironment.restore();
+  }
+});
+
+test('useFileExport falls back to live-stage roundtrip when no prepared USD export bundle is available', async () => {
+  resetStoresToBaseline();
+  const domEnvironment = installDomEnvironment();
+  const downloadMocks = installDownloadMocks();
+  const workerMocks = installUsdExportPipelineWorkerMock();
+
+  try {
+    const liveStageExport = installLiveStageExportMock(async () => ({
+      ok: true,
+      content: '#usda 1.0\n',
+    }));
+
+    try {
+      const selectedFile: RobotFile = {
+        name: 'robots/demo/demo.usd',
+        format: 'usd',
+        content: '#usda 1.0\n',
+      };
+
+      useUIStore.setState({
+        lang: 'en',
+        appMode: 'editor',
+        sidebarTab: 'structure',
+      });
+
+      useAssetsStore.getState().setAvailableFiles([selectedFile]);
+      useAssetsStore.getState().setSelectedFile(selectedFile);
+      useAssetsStore.getState().setAllFileContents({
+        [selectedFile.name]: selectedFile.content,
+      });
+      useAssetsStore.getState().setDocumentLoadState({
+        status: 'ready',
+        fileName: selectedFile.name,
+        format: 'usd',
+        error: null,
+      });
+
+      useRobotStore.getState().setRobot(createCurrentRobot());
+
+      const rendered = renderHook();
+
+      try {
+        const result = await rendered.hook.handleExportWithConfig(createUsdExportConfig(), {
+          type: 'current',
+        });
+
+        assert.deepEqual(result, {
+          partial: false,
+          warnings: [],
+          issues: [],
+        });
+        assert.equal(workerMocks.usdExportRequestCount, 0);
+        assert.equal(workerMocks.usdBinaryRequestCount, 0);
+        assert.equal(liveStageExport.callCount, 1);
+        assert.ok(downloadMocks.clicked);
+        assert.equal(downloadMocks.appendedAnchor?.download, 'demo.zip');
+        assert.ok(downloadMocks.capturedBlob);
+      } finally {
+        rendered.cleanup();
+      }
+    } finally {
+      liveStageExport.restore();
     }
   } finally {
     await new Promise((resolve) => setTimeout(resolve, 0));

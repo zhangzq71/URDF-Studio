@@ -983,7 +983,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
               aria-label={isGeometryVisible ? t.hide : t.show}
               title={isGeometryVisible ? t.hide : t.show}
               onClick={() => update({ visible: !isGeometryVisible })}
-              className={`inline-flex h-6 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/25 ${
+              className={`inline-flex h-[22px] shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-system-blue/25 ${
                 isCompactGeometryActions ? 'w-6 px-0' : 'gap-1 px-1.5'
               } ${
                 isGeometryVisible
@@ -1155,7 +1155,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
       )}
 
       {geomData.type === GeometryType.MESH && (
-        <InputGroup label={t.meshScale}>
+        <InlineInputGroup label={t.meshScale} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={3}
             fields={[
@@ -1176,12 +1176,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
               },
             ]}
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {/* Box dimensions: Width (X), Depth (Y), Height (Z) */}
       {geomData.type === GeometryType.BOX && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={3}
             fields={[
@@ -1207,11 +1207,11 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {geomData.type === GeometryType.PLANE && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={2}
             fields={[
@@ -1231,12 +1231,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {/* Sphere dimensions: Radius only */}
       {geomData.type === GeometryType.SPHERE && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={1}
             fields={[
@@ -1250,12 +1250,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {/* Ellipsoid dimensions: axis radii */}
       {geomData.type === GeometryType.ELLIPSOID && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={3}
             fields={[
@@ -1281,12 +1281,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {/* Cylinder dimensions: Radius and Height */}
       {geomData.type === GeometryType.CYLINDER && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={2}
             fields={[
@@ -1306,12 +1306,12 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {/* Capsule dimensions: Radius and Total Length */}
       {geomData.type === GeometryType.CAPSULE && (
-        <InputGroup label={t.dimensions}>
+        <InlineInputGroup label={t.dimensions} labelWidthClassName="w-11">
           <InlineDimensionInputRow
             columns={2}
             fields={[
@@ -1331,7 +1331,7 @@ export const GeometryEditor: React.FC<GeometryEditorProps> = ({
             labelClassName={PROPERTY_EDITOR_INLINE_FIELD_LABEL_CLASS}
             labelWidthClassName="whitespace-nowrap"
           />
-        </InputGroup>
+        </InlineInputGroup>
       )}
 
       {(geomData.type === GeometryType.HFIELD || geomData.type === GeometryType.SDF) && (

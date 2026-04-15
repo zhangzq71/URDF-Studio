@@ -1,6 +1,11 @@
 /// <reference lib="webworker" />
 
 import {
+  USD_BINDINGS_CACHE_KEY,
+  buildUsdBindingsAssetPath,
+  buildUsdBindingsScriptUrl,
+} from '@/features/urdf-viewer/utils/usdBindingsAssetPaths.ts';
+import {
   convertUsdArchiveFilesToBinaryCore,
   type BinaryReadyUsdRuntime,
 } from '../utils/usdBinaryArchive.ts';
@@ -34,7 +39,7 @@ async function ensureBindingsClassicScriptLoaded(): Promise<void> {
   if (!classicScriptLoadPromise) {
     classicScriptLoadPromise = (async () => {
       const baseHref = String(globalThis.location?.href || 'http://localhost/');
-      const scriptUrl = new URL('/usd/bindings/emHdBindings.js', baseHref).href;
+      const scriptUrl = new URL(buildUsdBindingsScriptUrl(USD_BINDINGS_CACHE_KEY), baseHref).href;
       const response = await fetch(scriptUrl);
       if (!response.ok) {
         throw new Error(`Failed to fetch USD bindings script: ${scriptUrl}`);
@@ -61,7 +66,13 @@ async function loadBinaryUsdRuntime(): Promise<BinaryReadyUsdRuntime> {
       }
 
       const USD = await getUsdModuleFn({
-        mainScriptUrlOrBlob: '/usd/bindings/emHdBindings.js',
+        mainScriptUrlOrBlob: buildUsdBindingsAssetPath('emHdBindings.js', {
+          cacheKey: USD_BINDINGS_CACHE_KEY,
+        }),
+        locateFile: (file: string) =>
+          buildUsdBindingsAssetPath(String(file || ''), {
+            cacheKey: USD_BINDINGS_CACHE_KEY,
+          }),
         PTHREAD_POOL_LIMIT: 1,
         PTHREAD_POOL_SIZE: 1,
         PTHREAD_NUM_CORES: 1,

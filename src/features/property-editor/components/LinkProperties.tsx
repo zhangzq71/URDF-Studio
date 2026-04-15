@@ -41,6 +41,7 @@ import {
 } from '@/shared/components/ui';
 import {
   CollapsibleSection,
+  InputGroup,
   InlineInputGroup,
   NumberInput,
   PROPERTY_EDITOR_HELPER_TEXT_CLASS,
@@ -575,7 +576,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
         </ReadonlyValueField>
       </InlineInputGroup>
 
-      <InlineInputGroup label={t.diagonalInertia} labelWidthClassName="w-16" align="start">
+      <InputGroup label={t.diagonalInertia} className="mt-2.5">
         <div className="grid min-w-0 w-full grid-cols-3 gap-1.5">
           {diagonalInertiaLabels.map((label, index) => (
             <div key={label} className="flex min-w-0 items-center gap-1.5">
@@ -595,14 +596,9 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             </div>
           ))}
         </div>
-      </InlineInputGroup>
+      </InputGroup>
 
-      <InlineInputGroup
-        label={t.principalAxes}
-        labelWidthClassName="w-16"
-        align="start"
-        className="mb-0"
-      >
+      <InputGroup label={t.principalAxes} className="mt-3.5 mb-0">
         <div className="min-w-0 w-full space-y-1.5">
           <ReadonlyVectorStatHeader />
           {principalAxisLabels.map((label, index) => {
@@ -620,7 +616,7 @@ export const LinkProperties: React.FC<LinkPropertiesProps> = ({
             );
           })}
         </div>
-      </InlineInputGroup>
+      </InputGroup>
     </CollapsibleSection>
   );
 

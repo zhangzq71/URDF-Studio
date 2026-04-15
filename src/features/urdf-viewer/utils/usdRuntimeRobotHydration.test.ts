@@ -345,20 +345,14 @@ test('hydrateUsdViewerRobotResolutionFromRuntime repositions inertial origin whe
   );
 });
 
-test('hydrateUsdViewerRobotResolutionFromRuntime synthesizes attachment visuals and collision bodies for extra mesh descriptors in a single authored scope', () => {
-  const baseWorld = composeMatrix({ x: 1.5, y: -0.5, z: 0.25 }, { r: 0.02, p: -0.03, y: 0.04 });
+test('hydrateUsdViewerRobotResolutionFromRuntime keeps grouped mesh descriptors collapsed within a single authored scope', () => {
+  const baseWorld = composeMatrix({ x: 0, y: 0, z: 0 });
   const primaryVisualWorld = baseWorld
     .clone()
     .multiply(composeMatrix({ x: 0.2, y: 0.1, z: 0.3 }, { r: 0.01, p: 0.02, y: 0.03 }));
-  const extraVisualWorld = baseWorld
-    .clone()
-    .multiply(composeMatrix({ x: -0.35, y: 0.45, z: 0.6 }, { r: 0.04, p: -0.01, y: 0.05 }));
   const primaryCollisionWorld = baseWorld
     .clone()
     .multiply(composeMatrix({ x: 0.12, y: -0.08, z: 0.18 }, { r: 0.02, p: 0.01, y: -0.03 }));
-  const extraCollisionWorld = baseWorld
-    .clone()
-    .multiply(composeMatrix({ x: -0.22, y: 0.16, z: 0.42 }, { r: -0.01, p: 0.03, y: 0.04 }));
 
   const resolution: ViewerRobotDataResolution = {
     stageSourcePath: '/robots/demo/grouped_scope.usd',
@@ -430,10 +424,120 @@ test('hydrateUsdViewerRobotResolutionFromRuntime synthesizes attachment visuals 
       if (primPath === '/Robot/base_link/visuals/visual_0/Scene/ros_body1')
         return primaryVisualWorld.clone();
       if (primPath === '/Robot/base_link/visuals/visual_0/Scene/ros_body1_1')
-        return extraVisualWorld.clone();
+        return primaryVisualWorld.clone();
       if (primPath === '/Robot/base_link/collisions/collision_0/Scene/collider')
         return primaryCollisionWorld.clone();
       if (primPath === '/Robot/base_link/collisions/collision_0/Scene/collider_1')
+        return primaryCollisionWorld.clone();
+      return null;
+    },
+  });
+
+  assert.ok(hydrated);
+  assertMatrixClose(
+    hydrated.robotData.links.base_link.visual.origin,
+    baseWorld.clone().invert().multiply(primaryVisualWorld.clone()),
+    'primary visual origin should stay relative to the authored link frame',
+  );
+  assertMatrixClose(
+    hydrated.robotData.links.base_link.collision.origin,
+    baseWorld.clone().invert().multiply(primaryCollisionWorld.clone()),
+    'primary collision origin should stay relative to the authored link frame',
+  );
+  assert.equal(hydrated.robotData.links.base_link.collisionBodies?.length ?? 0, 0);
+  assert.equal(Object.keys(hydrated.robotData.links).length, 1);
+  assert.equal(Object.keys(hydrated.robotData.joints).length, 0);
+});
+
+test('hydrateUsdViewerRobotResolutionFromRuntime synthesizes attachment visuals and collision bodies for extra authored groups', () => {
+  const baseWorld = composeMatrix({ x: 1.5, y: -0.5, z: 0.25 }, { r: 0.02, p: -0.03, y: 0.04 });
+  const primaryVisualWorld = baseWorld
+    .clone()
+    .multiply(composeMatrix({ x: 0.2, y: 0.1, z: 0.3 }, { r: 0.01, p: 0.02, y: 0.03 }));
+  const extraVisualWorld = baseWorld
+    .clone()
+    .multiply(composeMatrix({ x: -0.35, y: 0.45, z: 0.6 }, { r: 0.04, p: -0.01, y: 0.05 }));
+  const primaryCollisionWorld = baseWorld
+    .clone()
+    .multiply(composeMatrix({ x: 0.12, y: -0.08, z: 0.18 }, { r: 0.02, p: 0.01, y: -0.03 }));
+  const extraCollisionWorld = baseWorld
+    .clone()
+    .multiply(composeMatrix({ x: -0.22, y: 0.16, z: 0.42 }, { r: -0.01, p: 0.03, y: 0.04 }));
+
+  const resolution: ViewerRobotDataResolution = {
+    stageSourcePath: '/robots/demo/grouped_scope.usd',
+    linkIdByPath: {
+      '/Robot/base_link': 'base_link',
+    },
+    linkPathById: {
+      base_link: '/Robot/base_link',
+    },
+    jointPathById: {},
+    childLinkPathByJointId: {},
+    parentLinkPathByJointId: {},
+    robotData: {
+      name: 'grouped_scope',
+      rootLinkId: 'base_link',
+      links: {
+        base_link: {
+          ...DEFAULT_LINK,
+          id: 'base_link',
+          name: 'base_link',
+          visible: true,
+          visual: {
+            ...DEFAULT_LINK.visual,
+            type: GeometryType.MESH,
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+          collision: {
+            ...DEFAULT_LINK.collision,
+            type: GeometryType.MESH,
+            origin: { xyz: { x: 0, y: 0, z: 0 }, rpy: { r: 0, p: 0, y: 0 } },
+          },
+        },
+      },
+      joints: {},
+    },
+  };
+
+  const snapshot = {
+    render: {
+      meshDescriptors: [
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id0',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/visual_0/Scene/ros_body1',
+        },
+        {
+          meshId: '/Robot/base_link/visuals.proto_mesh_id1',
+          sectionName: 'visuals',
+          resolvedPrimPath: '/Robot/base_link/visuals/visual_1/Scene/ros_body1_1',
+        },
+        {
+          meshId: '/Robot/base_link/collisions.proto_mesh_id0',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/base_link/collisions/collision_0/Scene/collider',
+        },
+        {
+          meshId: '/Robot/base_link/collisions.proto_mesh_id1',
+          sectionName: 'collisions',
+          resolvedPrimPath: '/Robot/base_link/collisions/collision_1/Scene/collider_1',
+        },
+      ],
+    },
+  };
+
+  const hydrated = hydrateUsdViewerRobotResolutionFromRuntime(resolution, snapshot as any, {
+    getPreferredLinkWorldTransform: (linkPath: string) =>
+      linkPath === '/Robot/base_link' ? baseWorld.clone() : null,
+    getWorldTransformForPrimPath: (primPath: string) => {
+      if (primPath === '/Robot/base_link/visuals/visual_0/Scene/ros_body1')
+        return primaryVisualWorld.clone();
+      if (primPath === '/Robot/base_link/visuals/visual_1/Scene/ros_body1_1')
+        return extraVisualWorld.clone();
+      if (primPath === '/Robot/base_link/collisions/collision_0/Scene/collider')
+        return primaryCollisionWorld.clone();
+      if (primPath === '/Robot/base_link/collisions/collision_1/Scene/collider_1')
         return extraCollisionWorld.clone();
       return null;
     },
@@ -465,7 +569,7 @@ test('hydrateUsdViewerRobotResolutionFromRuntime synthesizes attachment visuals 
   );
   assert.ok(
     attachmentLink,
-    'expected a synthetic visual attachment link for the extra mesh descriptor',
+    'expected a synthetic visual attachment link for the extra authored group',
   );
   const attachmentJoint = Object.values(hydrated.robotData.joints).find(
     (joint) => joint.childLinkId === attachmentLink?.id,

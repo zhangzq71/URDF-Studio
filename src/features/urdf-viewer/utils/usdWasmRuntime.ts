@@ -1,5 +1,5 @@
 import {
-  appendCacheKey,
+  buildUsdBindingsAssetPath,
   buildUsdBindingsScriptUrl,
   ensureClassicScriptLoaded,
 } from './usdBindingsScriptLoader.ts';
@@ -9,8 +9,7 @@ import type {
   UsdModule,
 } from '../runtime/viewer/usd-loader.types';
 import { logRuntimeFailure } from '@/core/utils/runtimeDiagnostics';
-
-const EMHD_BINDINGS_CACHE_KEY = '20260318a';
+import { USD_BINDINGS_CACHE_KEY } from './usdBindingsAssetPaths.ts';
 
 type LoadVirtualFileFn = (args: {
   USD: UsdModule;
@@ -39,7 +38,7 @@ export interface UsdWasmRuntime {
 }
 
 function withCacheKey(resourcePath: string): string {
-  return appendCacheKey(resourcePath, EMHD_BINDINGS_CACHE_KEY);
+  return buildUsdBindingsAssetPath(resourcePath, { cacheKey: USD_BINDINGS_CACHE_KEY });
 }
 
 function resolveGetUsdModuleFn(): ((config: Record<string, any>) => Promise<UsdModule>) | null {
@@ -73,9 +72,9 @@ function assertUsdRuntimeEnvironment(): void {
 
   if (!globalThis.isSecureContext) {
     throw new Error(
-      'USD loading requires a secure context. Open the app from `http://localhost:<port>` or `http://127.0.0.1:<port>`, '
-      + 'or serve it over HTTPS. Accessing the Vite dev server from a LAN IP address or another non-HTTPS URL is not enough, '
-      + 'even when `npm run dev` is sending COOP/COEP headers.',
+      'USD loading requires a secure context. Open the app from `http://localhost:<port>` or `http://127.0.0.1:<port>`, ' +
+        'or serve it over HTTPS. Accessing the Vite dev server from a LAN IP address or another non-HTTPS URL is not enough, ' +
+        'even when `npm run dev` is sending COOP/COEP headers.',
     );
   }
 
@@ -84,24 +83,29 @@ function assertUsdRuntimeEnvironment(): void {
   }
 
   throw new Error(
-    'USD loading requires a cross-origin isolated page because the bundled USD WASM runtime uses SharedArrayBuffer. '
-    + 'Start the app with `npm run dev` or `npm run preview`, open it from `localhost`/`127.0.0.1` (or HTTPS), '
-    + 'and make sure the server sends `Cross-Origin-Opener-Policy: same-origin` and '
-    + '`Cross-Origin-Embedder-Policy: require-corp`.',
+    'USD loading requires a cross-origin isolated page because the bundled USD WASM runtime uses SharedArrayBuffer. ' +
+      'Start the app with `npm run dev` or `npm run preview`, open it from `localhost`/`127.0.0.1` (or HTTPS), ' +
+      'and make sure the server sends `Cross-Origin-Opener-Policy: same-origin` and ' +
+      '`Cross-Origin-Embedder-Policy: require-corp`.',
   );
 }
 
-let getUsdModuleFnPromise: Promise<((config: Record<string, any>) => Promise<UsdModule>)> | null = null;
+let getUsdModuleFnPromise: Promise<(config: Record<string, any>) => Promise<UsdModule>> | null =
+  null;
 let usdRuntimePromise: Promise<UsdWasmRuntime> | null = null;
 
-async function loadEmHdBindingsGetUsdModuleFn(): Promise<((config: Record<string, any>) => Promise<UsdModule>)> {
+async function loadEmHdBindingsGetUsdModuleFn(): Promise<
+  (config: Record<string, any>) => Promise<UsdModule>
+> {
   const existingGetter = resolveGetUsdModuleFn();
   if (existingGetter) {
     return existingGetter;
   }
 
   if (!getUsdModuleFnPromise) {
-    getUsdModuleFnPromise = ensureClassicScriptLoaded(buildUsdBindingsScriptUrl(EMHD_BINDINGS_CACHE_KEY))
+    getUsdModuleFnPromise = ensureClassicScriptLoaded(
+      buildUsdBindingsScriptUrl(USD_BINDINGS_CACHE_KEY),
+    )
       .then(() => {
         const loadedGetter = resolveGetUsdModuleFn();
         if (!loadedGetter) {
@@ -123,33 +127,28 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
     usdRuntimePromise = (async () => {
       assertUsdRuntimeEnvironment();
 
-      const [
-        getUsdModuleFn,
-        usdFsModule,
-        usdLoaderModule,
-        uploadWorkflowModule,
-        visibilityModule,
-      ] = await Promise.all([
-        loadEmHdBindingsGetUsdModuleFn(),
-        import('../runtime/viewer/usd-fs.js') as Promise<{
-          UsdFsHelper: new (
-            getUsdModule: () => UsdModule,
-            debugFileHandling: boolean,
-          ) => UsdFsHelperInstance;
-        }>,
-        import('../runtime/viewer/usd-loader-runtime.ts'),
-        import('../runtime/viewer/upload-workflow.js') as Promise<{
-          loadVirtualFile: LoadVirtualFileFn;
-        }>,
-        import('../runtime/viewer/visibility.js') as Promise<{
-          applyMeshVisibilityFilters: ApplyMeshVisibilityFiltersFn;
-        }>,
-      ]);
+      const [getUsdModuleFn, usdFsModule, usdLoaderModule, uploadWorkflowModule, visibilityModule] =
+        await Promise.all([
+          loadEmHdBindingsGetUsdModuleFn(),
+          import('../runtime/viewer/usd-fs.js') as Promise<{
+            UsdFsHelper: new (
+              getUsdModule: () => UsdModule,
+              debugFileHandling: boolean,
+            ) => UsdFsHelperInstance;
+          }>,
+          import('../runtime/viewer/usd-loader-runtime.ts'),
+          import('../runtime/viewer/upload-workflow.js') as Promise<{
+            loadVirtualFile: LoadVirtualFileFn;
+          }>,
+          import('../runtime/viewer/visibility.js') as Promise<{
+            applyMeshVisibilityFilters: ApplyMeshVisibilityFiltersFn;
+          }>,
+        ]);
 
       const threadCount = resolvePreferredUsdThreadCount();
       const USD = await getUsdModuleFn({
-        mainScriptUrlOrBlob: withCacheKey('/usd/bindings/emHdBindings.js'),
-        locateFile: (file: string) => withCacheKey(`/usd/bindings/${String(file || '')}`),
+        mainScriptUrlOrBlob: withCacheKey('emHdBindings.js'),
+        locateFile: (file: string) => withCacheKey(String(file || '')),
         PTHREAD_POOL_LIMIT: threadCount,
         PTHREAD_POOL_SIZE: threadCount,
         PTHREAD_NUM_CORES: threadCount,
@@ -158,7 +157,7 @@ export async function ensureUsdWasmRuntime(): Promise<UsdWasmRuntime> {
         printErr: (...args: unknown[]) => {
           const message = args.map((entry) => String(entry ?? '')).join(' ');
           if (!message) return;
-          if (message.includes('Selected hydra renderer doesn\'t support prim type')) return;
+          if (message.includes("Selected hydra renderer doesn't support prim type")) return;
           if (message.includes('Unsupported interpolation type')) return;
           if (message.includes('pluginFactory') && message.includes('Failed verification')) return;
           console.error(...args);

@@ -40,13 +40,23 @@ export type UsdArchivePackage = {
   archiveFiles: Map<string, Blob>;
 };
 
-export type UsdPackageLayoutProfile = 'legacy' | 'isaacsim';
+export type UsdPackageLayoutProfile = 'legacy' | 'isaacsim' | 'genesis';
+export type ResolvedUsdPackageLayoutProfile = 'legacy' | 'isaacsim';
 export type UsdLayerFileFormat = 'usd' | 'usda';
 
 export interface UsdPackageLayoutOptions {
   layoutProfile?: UsdPackageLayoutProfile;
   fileFormat?: UsdLayerFileFormat;
 }
+
+export const resolveUsdPackageLayoutProfile = (
+  layoutProfile?: UsdPackageLayoutProfile,
+): ResolvedUsdPackageLayoutProfile => {
+  if (layoutProfile == null) {
+    return 'legacy';
+  }
+  return layoutProfile === 'genesis' ? 'isaacsim' : layoutProfile;
+};
 
 const createIdentityBlob = (content: string): Blob => {
   return new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -60,7 +70,7 @@ const resolveUsdConfigStem = (
   packageRoot: string,
   options: UsdPackageLayoutOptions = {},
 ): string => {
-  const layoutProfile = options.layoutProfile ?? 'legacy';
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
   if (layoutProfile === 'isaacsim') {
     // Isaac Sim exports keep sidecar stems aligned with the root prim name.
     return packageRoot;
@@ -143,6 +153,7 @@ const serializeJointDefinition = (
   }
 
   const supportsAxis = typeName === 'PhysicsRevoluteJoint' || typeName === 'PhysicsPrismaticJoint';
+  const axisToken = getAxisToken(joint.axis);
   const driveInstanceName = getUsdDriveInstanceName(typeName);
   const driveDamping =
     Number.isFinite(joint.dynamics?.damping) && Math.abs(joint.dynamics.damping) > 1e-9
@@ -159,16 +170,14 @@ const serializeJointDefinition = (
     lines,
     depth,
     `def ${typeName} "${sanitizeUsdIdentifier(joint.id || joint.name || 'joint')}"`,
+    shouldEmitDrive ? [`prepend apiSchemas = ["PhysicsDriveAPI:${driveInstanceName}"]`] : [],
   );
   lines.push(`${indent}{`);
-  if (shouldEmitDrive) {
-    lines.push(`${childIndent}prepend apiSchemas = ["PhysicsDriveAPI:${driveInstanceName}"]`);
-  }
   lines.push(`${childIndent}rel physics:body0 = <${parentPath}>`);
   lines.push(`${childIndent}rel physics:body1 = <${childPath}>`);
 
   if (supportsAxis) {
-    lines.push(`${childIndent}uniform token physics:axis = "${getAxisToken(joint.axis)}"`);
+    lines.push(`${childIndent}uniform token physics:axis = "${axisToken}"`);
   }
   lines.push(
     `${childIndent}custom string urdf:jointType = "${escapeUsdString(String(joint.type || 'fixed').toLowerCase())}"`,
@@ -330,10 +339,9 @@ const serializeCollisionOverrides = (link: UrdfLink, lines: string[], depth: num
   lines.push(`${indent}}`);
 };
 
-const serializeLinkPhysicsOverrides = (
+const serializeLinkPhysicsOverride = (
   robot: RobotState,
   linkId: string,
-  childIdsByParent: Map<string, string[]>,
   lines: string[],
   depth: number,
 ): void => {
@@ -377,14 +385,30 @@ const serializeLinkPhysicsOverrides = (
 
   serializeCollisionOverrides(link, lines, depth + 1);
 
-  (childIdsByParent.get(linkId) || []).forEach((childLinkId) => {
-    serializeLinkPhysicsOverrides(robot, childLinkId, childIdsByParent, lines, depth + 1);
-  });
-
   lines.push(`${indent}}`);
 };
 
-export const buildUsdLinkPathMaps = (robot: RobotState, rootPrimName: string): UsdLinkPathMaps => {
+const serializeNestedLinkPhysicsOverrides = (
+  robot: RobotState,
+  linkId: string,
+  childIdsByParent: Map<string, string[]>,
+  lines: string[],
+  depth: number,
+): void => {
+  serializeLinkPhysicsOverride(robot, linkId, lines, depth);
+
+  (childIdsByParent.get(linkId) || []).forEach((childLinkId) => {
+    serializeNestedLinkPhysicsOverrides(robot, childLinkId, childIdsByParent, lines, depth + 1);
+  });
+};
+
+export const buildUsdLinkPathMaps = (
+  robot: RobotState,
+  rootPrimName: string,
+  options: UsdPackageLayoutOptions = {},
+): UsdLinkPathMaps => {
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
+  const useFlatLinkPaths = layoutProfile === 'isaacsim';
   const childIdsByParent = new Map<string, string[]>();
   Object.values(robot.joints).forEach((joint) => {
     const children = childIdsByParent.get(joint.parentLinkId) || [];
@@ -394,7 +418,9 @@ export const buildUsdLinkPathMaps = (robot: RobotState, rootPrimName: string): U
 
   const linkPaths = new Map<string, string>();
   const visit = (linkId: string, parentPath: string) => {
-    const path = `${parentPath}/${sanitizeUsdIdentifier(linkId)}`;
+    const path = useFlatLinkPaths
+      ? `/${rootPrimName}/${sanitizeUsdIdentifier(linkId)}`
+      : `${parentPath}/${sanitizeUsdIdentifier(linkId)}`;
     linkPaths.set(linkId, path);
     (childIdsByParent.get(linkId) || []).forEach((childLinkId) => visit(childLinkId, path));
   };
@@ -437,7 +463,20 @@ export const buildUsdPhysicsLayerContent = (
   ]);
   lines.push('{');
 
-  serializeLinkPhysicsOverrides(robot, robot.rootLinkId, pathMaps.childIdsByParent, lines, 1);
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
+  if (layoutProfile === 'isaacsim') {
+    Array.from(pathMaps.linkPaths.keys()).forEach((linkId) => {
+      serializeLinkPhysicsOverride(robot, linkId, lines, 1);
+    });
+  } else {
+    serializeNestedLinkPhysicsOverrides(
+      robot,
+      robot.rootLinkId,
+      pathMaps.childIdsByParent,
+      lines,
+      1,
+    );
+  }
 
   lines.push('');
   lines.push('    over "joints"');
@@ -477,7 +516,7 @@ export const buildUsdRootLayerContent = (
   configStem: string,
   options: UsdPackageLayoutOptions = {},
 ): string => {
-  const layoutProfile = options.layoutProfile ?? 'legacy';
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
   const layerExtension = getUsdLayerExtension(options.fileFormat);
 
   if (layoutProfile === 'isaacsim') {
@@ -592,10 +631,9 @@ export const buildUsdRootLayerContent = (
   ].join('\n');
 };
 
-const serializeIsaacLinkOverrides = (
+const serializeIsaacLinkOverride = (
   linkId: string,
   robot: RobotState,
-  childIdsByParent: Map<string, string[]>,
   lines: string[],
   depth: number,
 ): void => {
@@ -613,17 +651,28 @@ const serializeIsaacLinkOverrides = (
   lines.push(`${indent}{`);
   lines.push(`${childIndent}string isaac:nameOverride`);
 
-  (childIdsByParent.get(linkId) || []).forEach((childLinkId) => {
-    serializeIsaacLinkOverrides(childLinkId, robot, childIdsByParent, lines, depth + 1);
-  });
-
   lines.push(`${indent}}`);
+};
+
+const serializeNestedIsaacLinkOverrides = (
+  linkId: string,
+  robot: RobotState,
+  childIdsByParent: Map<string, string[]>,
+  lines: string[],
+  depth: number,
+): void => {
+  serializeIsaacLinkOverride(linkId, robot, lines, depth);
+
+  (childIdsByParent.get(linkId) || []).forEach((childLinkId) => {
+    serializeNestedIsaacLinkOverrides(childLinkId, robot, childIdsByParent, lines, depth + 1);
+  });
 };
 
 export const buildUsdRobotLayerContent = (
   robot: RobotState,
   pathMaps: UsdLinkPathMaps,
   rootPrimName: string,
+  options: UsdPackageLayoutOptions = {},
 ): string => {
   const lines = [
     '#usda 1.0',
@@ -657,7 +706,14 @@ export const buildUsdRobotLayerContent = (
   lines.push('    ]');
   lines.push('');
 
-  serializeIsaacLinkOverrides(robot.rootLinkId, robot, pathMaps.childIdsByParent, lines, 1);
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
+  if (layoutProfile !== 'isaacsim') {
+    serializeNestedIsaacLinkOverrides(robot.rootLinkId, robot, pathMaps.childIdsByParent, lines, 1);
+  } else {
+    Array.from(pathMaps.linkPaths.keys()).forEach((linkId) => {
+      serializeIsaacLinkOverride(linkId, robot, lines, 1);
+    });
+  }
   lines.push('');
   lines.push('    over "joints"');
   lines.push('    {');
@@ -694,7 +750,7 @@ export const createUsdArchivePackage = (
   assetFiles: Map<string, Blob> = new Map(),
   options: UsdPackageLayoutOptions = {},
 ): UsdArchivePackage => {
-  const layoutProfile = options.layoutProfile ?? 'legacy';
+  const layoutProfile = resolveUsdPackageLayoutProfile(options.layoutProfile);
   const layerExtension = getUsdLayerExtension(options.fileFormat);
   const packageRoot = sanitizeUsdIdentifier(exportName || 'robot');
   const configStemBase = resolveUsdConfigStem(packageRoot, options);

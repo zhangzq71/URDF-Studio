@@ -275,7 +275,7 @@ export const RotationValueInput: React.FC<RotationValueInputProps> = ({
         value={rotationDisplayMode}
         onChange={setRotationDisplayMode}
         size="xs"
-        className="w-full [&>button]:min-h-6 [&>button]:flex-1 [&>button]:!gap-0.5 [&>button]:!px-1.5 [&>button]:!py-0 [&>button]:!text-[9px]"
+        className="w-full [&>button]:min-h-[22px] [&>button]:flex-1 [&>button]:!gap-0.5 [&>button]:!px-1.5 [&>button]:!py-0 [&>button]:!text-[9px]"
       />
       {showFrameHint ? (
         <div className="text-[9px] leading-4 text-text-tertiary">{t.urdfFrame}</div>

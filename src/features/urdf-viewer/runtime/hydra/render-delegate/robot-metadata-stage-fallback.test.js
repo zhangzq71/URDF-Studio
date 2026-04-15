@@ -129,6 +129,68 @@ def Scope "joints"
 }
 `;
 
+const exportedTinyDynamicsPhysicsLayerText = `#usda 1.0
+(
+    defaultPrim = "Robot"
+)
+
+over "Robot"
+{
+    prepend apiSchemas = ["PhysicsArticulationRootAPI"]
+
+    over "base_link"
+    {
+        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+        float physics:mass = 2
+        float3 physics:centerOfMass = (0.01, 0.02, 0.03)
+        float3 physics:diagonalInertia = (0.1, 0.2, 0.3)
+        quatf physics:principalAxes = (1, 0, 0, 0)
+
+        over "collisions"
+        {
+            over "collision_0"
+            {
+                bool physics:collisionEnabled = true
+            }
+        }
+
+        over "link1"
+        {
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            float physics:mass = 4.19e-15
+            float3 physics:centerOfMass = (1e-27, -2e-27, -1.307861e-11)
+            float3 physics:diagonalInertia = (1.094396e-28, 2.287836e-28, 3.417764e-28)
+            quatf physics:principalAxes = (1, 0, 0, 0)
+
+            over "collisions"
+            {
+                over "collision_0"
+                {
+                    bool physics:collisionEnabled = true
+                }
+            }
+        }
+    }
+}
+
+def Scope "joints"
+{
+    def PhysicsRevoluteJoint "joint_link1"
+    {
+        rel physics:body0 = </Robot/base_link>
+        rel physics:body1 = </Robot/base_link/link1>
+        uniform token physics:axis = "Z"
+        custom float3 urdf:axisLocal = (0, 0, -1)
+        float physics:lowerLimit = -90
+        float physics:upperLimit = 60
+        point3f physics:localPos0 = (1, 2, 3)
+        quatf physics:localRot0 = (0.707107, 0, 0, 0.707107)
+        point3f physics:localPos1 = (0, 0, 0)
+        quatf physics:localRot1 = (1, 0, 0, 0)
+    }
+}
+`;
+
 const exportedSensorLayerText = `#usda 1.0
 (
     defaultPrim = "Sensors"
@@ -147,7 +209,7 @@ function createLayer(text) {
     };
 }
 
-function createFallbackMetadataDelegate() {
+function createFallbackMetadataDelegate(physicsLayerText = exportedPhysicsLayerText, stageSourcePath = '/robots/two_link_robot.usd') {
     const delegate = Object.create(ThreeRenderDelegateCore.prototype);
     delegate.meshes = {
         '/Robot/base_link/visuals.proto_mesh_id0': {},
@@ -159,7 +221,7 @@ function createFallbackMetadataDelegate() {
     delegate._robotMetadataSnapshotByStageSource = new Map();
     delegate._robotMetadataBuildPromisesByStageSource = new Map();
     delegate._nowPerfMs = () => 1234;
-    delegate.getNormalizedStageSourcePath = () => '/robots/two_link_robot.usd';
+    delegate.getNormalizedStageSourcePath = () => stageSourcePath;
     delegate.getStage = () => ({
         GetRootLayer() {
             return createLayer(exportedRootLayerText);
@@ -167,7 +229,7 @@ function createFallbackMetadataDelegate() {
         GetUsedLayers() {
             return [
                 createLayer(exportedBaseLayerText),
-                createLayer(exportedPhysicsLayerText),
+                createLayer(physicsLayerText),
                 createLayer(exportedSensorLayerText),
             ];
         },
@@ -255,6 +317,33 @@ test('buildRobotMetadataSnapshotForStage reconstructs robot metadata from export
     }
 });
 
+test('buildRobotMetadataSnapshotForStage preserves tiny explicit link dynamics from stage layers', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = createFallbackMetadataDelegate(
+            exportedTinyDynamicsPhysicsLayerText,
+            '/robots/two_link_robot_tiny_dynamics.usd',
+        );
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot_tiny_dynamics.usd', null);
+
+        assert.ok(snapshot);
+        assert.equal(snapshot.source, 'usd-stage');
+        assert.equal(snapshot.linkDynamicsEntries.length, 2);
+
+        const childDynamics = snapshot.linkDynamicsEntries.find((entry) => entry.linkPath === '/Robot/base_link/link1');
+        assert.ok(childDynamics);
+        assert.equal(childDynamics.mass, 4.19e-15);
+        assert.deepEqual(childDynamics.centerOfMassLocal, [1e-27, -2e-27, -1.307861e-11]);
+        assert.deepEqual(childDynamics.diagonalInertia, [1.094396e-28, 2.287836e-28, 3.417764e-28]);
+        assert.deepEqual(childDynamics.principalAxesLocal, [0, 0, 0, 1]);
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
 test('buildRobotMetadataSnapshotForStage backfills missing joint origins from physics joint records returned by the driver', () => {
     const previousWindow = globalThis.window;
     globalThis.window = {
@@ -317,6 +406,79 @@ test('buildRobotMetadataSnapshotForStage backfills missing joint origins from ph
         const joint = snapshot.jointCatalogEntries[0];
         assert.deepEqual(joint.originXyz, [1, 2, 3]);
         assert.deepEqual(joint.originQuatWxyz.map((value) => Number(value.toFixed(6))), [0.707107, 0, 0, 0.707107]);
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('buildRobotMetadataSnapshotForStage derives joint origin quaternions from localRot0/localRot1 when authored USD origin data is missing', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = {
+        driver: {
+            GetRobotMetadataSnapshot(sortedLinkPaths, stageSourcePath) {
+                assert.deepEqual(sortedLinkPaths, [
+                    '/Robot/base_link',
+                    '/Robot/base_link/lidar_link',
+                ]);
+                assert.equal(stageSourcePath, '/robots/fixed_joint_rotation.usd');
+                return {
+                    stageSourcePath,
+                    source: 'usd-stage-cpp',
+                    linkParentPairs: [
+                        ['/Robot/base_link/lidar_link', '/Robot/base_link'],
+                    ],
+                    jointCatalogEntries: [
+                        {
+                            linkPath: '/Robot/base_link/lidar_link',
+                            parentLinkPath: '/Robot/base_link',
+                            jointName: 'joint_lidar',
+                            jointTypeName: 'fixed',
+                            axisToken: 'X',
+                            localPivotInLink: [0, 0, 0],
+                        },
+                    ],
+                    linkDynamicsEntries: [],
+                };
+            },
+            GetPhysicsJointRecords() {
+                return [
+                    {
+                        jointPath: '/Robot/joints/joint_lidar',
+                        jointName: 'joint_lidar',
+                        jointTypeName: 'PhysicsFixedJoint',
+                        body0Path: '/Robot/base_link',
+                        body1Path: '/Robot/base_link/lidar_link',
+                        axisToken: 'X',
+                        localPos0: [0, 0, 0.05],
+                        localRot0Wxyz: [0.707107, 0, 0.707107, 0],
+                        localPos1: [0, 0, 0],
+                        localRot1Wxyz: [0.707107, 0, 0.707107, 0],
+                    },
+                ];
+            },
+        },
+    };
+
+    try {
+        const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+        delegate.meshes = {
+            '/Robot/base_link/visuals.proto_mesh_id0': {},
+        };
+        delegate._protoMeshMetadataByMeshId = new Map();
+        delegate._robotMetadataSnapshotByStageSource = new Map();
+        delegate._robotMetadataBuildPromisesByStageSource = new Map();
+        delegate._nowPerfMs = () => 1234;
+        delegate.getNormalizedStageSourcePath = () => '/robots/fixed_joint_rotation.usd';
+        delegate.getStage = () => null;
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/fixed_joint_rotation.usd', null);
+        assert.ok(snapshot);
+        assert.equal(snapshot.jointCatalogEntries.length, 1);
+
+        const joint = snapshot.jointCatalogEntries[0];
+        assert.deepEqual(joint.originXyz, [0, 0, 0.05]);
+        assert.deepEqual(joint.originQuatWxyz.map((value) => Number(value.toFixed(6))), [1, 0, 0, 0]);
     }
     finally {
         globalThis.window = previousWindow;

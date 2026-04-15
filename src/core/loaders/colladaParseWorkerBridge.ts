@@ -49,7 +49,7 @@ export function createColladaParseWorkerPoolClient({
     getResult: (response) => (response as { result: SerializedColladaSceneData }).result,
   });
 
-  const pendingLoads = new Map<string, Promise<THREE.Object3D>>();
+  const pendingLoads = new Map<string, Promise<SerializedColladaSceneData>>();
 
   const load = async (assetUrl: string, manager: THREE.LoadingManager): Promise<THREE.Object3D> => {
     const cachedResult = client.getCached(assetUrl);
@@ -59,21 +59,21 @@ export function createColladaParseWorkerPoolClient({
 
     const pendingLoad = pendingLoads.get(assetUrl);
     if (pendingLoad) {
-      return await pendingLoad;
+      return createSceneFromSerializedColladaData(await pendingLoad, { manager });
     }
 
     const nextLoad = client
       .dispatch({ type: 'parse-collada', assetUrl })
       .then((workerResult) => {
         client.setCached(assetUrl, workerResult);
-        return createSceneFromSerializedColladaData(workerResult, { manager });
+        return workerResult;
       })
       .finally(() => {
         pendingLoads.delete(assetUrl);
       });
 
     pendingLoads.set(assetUrl, nextLoad);
-    return await nextLoad;
+    return createSceneFromSerializedColladaData(await nextLoad, { manager });
   };
 
   return {

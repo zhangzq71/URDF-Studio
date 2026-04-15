@@ -427,6 +427,51 @@ test('isaacsim USDA export keeps root stem without forcing _description sidecar 
   assert.match(payload.content, /prepend payload = @configuration\/go1_robot\.usda@/);
 });
 
+test('isaacsim USDA export flattens link prim hierarchy for external articulation consumers', async () => {
+  const payload = await exportRobotToUsd({
+    robot: createTwoLinkRobot(),
+    exportName: 'go1',
+    assets: createTwoLinkAssets(),
+    fileFormat: 'usda',
+    layoutProfile: 'isaacsim',
+  });
+
+  const baseLayer = await readArchiveText(payload, 'go1/configuration/go1_base.usda');
+  const physicsLayer = await readArchiveText(payload, 'go1/configuration/go1_physics.usda');
+  const robotLayer = await readArchiveText(payload, 'go1/configuration/go1_robot.usda');
+
+  assert.match(baseLayer, /def Xform "base_link"/);
+  assert.match(baseLayer, /def Xform "link1"/);
+  assert.match(baseLayer, /def Scope "joints"/);
+  assert.doesNotMatch(baseLayer, /\n        def Xform "link1"/);
+  assert.match(baseLayer, /def Xform "link1"\n\s+\{\n\s+double3 xformOp:translate = \(1, 2, 3\)/);
+
+  assert.match(physicsLayer, /rel physics:body0 = <\/go1\/base_link>/);
+  assert.match(physicsLayer, /rel physics:body1 = <\/go1\/link1>/);
+  assert.doesNotMatch(physicsLayer, /rel physics:body1 = <\/go1\/base_link\/link1>/);
+
+  assert.match(robotLayer, /<\/go1\/base_link>/);
+  assert.match(robotLayer, /<\/go1\/link1>/);
+  assert.doesNotMatch(robotLayer, /<\/go1\/base_link\/link1>/);
+});
+
+test('genesis USDA export aliases to the isaacsim-compatible layered layout', async () => {
+  const payload = await exportRobotToUsd({
+    robot: createTwoLinkRobot(),
+    exportName: 'go1',
+    assets: createTwoLinkAssets(),
+    fileFormat: 'usda',
+    layoutProfile: 'genesis',
+  });
+
+  assert.equal(payload.rootLayerPath, 'go1/go1.usda');
+
+  const physicsLayer = await readArchiveText(payload, 'go1/configuration/go1_physics.usda');
+  assert.match(physicsLayer, /rel physics:body0 = <\/go1\/base_link>/);
+  assert.match(physicsLayer, /rel physics:body1 = <\/go1\/link1>/);
+  assert.doesNotMatch(physicsLayer, /rel physics:body1 = <\/go1\/base_link\/link1>/);
+});
+
 test('preserves link transforms and writes physics joints into separate USD layers', async () => {
   const payload = await exportRobotToUsd({
     robot: createTwoLinkRobot(),
@@ -715,6 +760,62 @@ test('diagonalizes off-diagonal inertial tensors before writing USD mass propert
     [1.1, 2.3, 3.4],
     'expected exported inertia to differ from the raw diagonal entries when off-diagonal terms exist',
   );
+});
+
+test('preserves tiny explicit inertial values when writing USD mass properties', async () => {
+  const robot = createTwoLinkRobot();
+  robot.links.link1.inertial = {
+    mass: 4.19e-15,
+    origin: { xyz: { x: 1e-27, y: -2e-27, z: -1.3078606502004276e-11 }, rpy: { r: 0, p: 0, y: 0 } },
+    inertia: {
+      ixx: 1.1e-28,
+      ixy: 1.2e-29,
+      ixz: -1.8e-29,
+      iyy: 2.3e-28,
+      iyz: 0.9e-29,
+      izz: 3.4e-28,
+    },
+  };
+
+  const payload = await exportRobotToUsd({
+    robot,
+    exportName: 'two_link_robot_tiny_inertia',
+    assets: createTwoLinkAssets(),
+  });
+
+  const physicsLayer = await readArchiveText(
+    payload,
+    'two_link_robot_tiny_inertia/usd/configuration/two_link_robot_tiny_inertia_description_physics.usd',
+  );
+  const expected = computeUsdInertiaProperties(robot.links.link1.inertial);
+  assert.ok(expected, 'expected tiny inertia to remain representable');
+
+  const masses = Array.from(physicsLayer.matchAll(/float physics:mass = ([^\n]+)/g)).map((match) =>
+    Number(match[1].trim()),
+  );
+  assert.equal(masses.at(-1), 4.19e-15);
+
+  const centerOfMass = extractTuples(physicsLayer, 'physics:centerOfMass').at(-1);
+  assert.ok(centerOfMass, 'expected link1 center of mass');
+  [1e-27, -2e-27, -1.3078606502004276e-11].forEach((value, index) => {
+    assert.ok(
+      Math.abs(centerOfMass[index]! - value) <= Math.max(Math.abs(value) * 1e-6, 1e-33),
+      `expected centerOfMass[${index}] to preserve tiny authored values`,
+    );
+  });
+
+  const diagonalInertia = extractTuples(physicsLayer, 'physics:diagonalInertia').at(-1);
+  assert.ok(diagonalInertia, 'expected link1 diagonal inertia');
+  expected.diagonalInertia.forEach((value, index) => {
+    assert.ok(
+      Math.abs(diagonalInertia[index]! - value) <= Math.max(Math.abs(value) * 1e-6, 1e-33),
+      `expected tiny inertia[${index}] to survive USD export`,
+    );
+  });
+
+  const principalAxes = extractTuples(physicsLayer, 'physics:principalAxes').at(-1);
+  assert.ok(principalAxes, 'expected link1 principal axes');
+  assertQuaternionClose(principalAxes, expected.principalAxesLocal, 1e-6);
 });
 
 test('can simplify mesh geometry before serializing USD mesh prims', async () => {

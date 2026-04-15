@@ -98,14 +98,6 @@ export function TreeEditorFileBrowserContent({
         </div>
       </div>
 
-      {isOpen && isProMode && availableFiles.length > 0 && (
-        <div className="px-2.5 py-1 bg-system-blue/10 dark:bg-system-blue/20 border-b border-system-blue/20 dark:border-system-blue/30">
-          <span className="ui-static-copy-guard text-[9px] leading-none text-system-blue">
-            {t.clickToAddComponent}
-          </span>
-        </div>
-      )}
-
       {isOpen && (
         <div
           className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar py-1"

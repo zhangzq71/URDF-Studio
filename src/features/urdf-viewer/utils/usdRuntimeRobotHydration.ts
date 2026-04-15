@@ -11,7 +11,10 @@ import {
 import { computeLinkWorldMatrices, createOriginMatrix } from '@/core/robot/kinematics';
 import type { UrdfVisual } from '@/types';
 import type { ViewerRobotDataResolution } from './viewerRobotData';
-import { resolveUsdDescriptorTargetLinkPath } from './usdDescriptorLinkResolution';
+import {
+  getUsdDescriptorSectionChildToken,
+  resolveUsdDescriptorTargetLinkPath,
+} from './usdDescriptorLinkResolution';
 import { resolveUsdPrimitiveGeometryFromDescriptor } from './usdPrimitiveGeometry';
 import { resolveUsdMeshApproximationGeometry } from './usdViewerRobotAdapter';
 
@@ -25,6 +28,12 @@ type DescriptorRole = 'visual' | 'collision';
 interface DescriptorEntry {
   descriptor: UsdSceneMeshDescriptor;
   ordinal: number;
+  groupKey: string;
+}
+
+interface DescriptorGroup {
+  groupKey: string;
+  entries: DescriptorEntry[];
 }
 
 const IDENTITY_MATRIX = new THREE.Matrix4();
@@ -185,6 +194,7 @@ function buildDescriptorMap(
     entries.push({
       descriptor,
       ordinal: parseDescriptorOrdinal(descriptor, index),
+      groupKey: getUsdDescriptorSectionChildToken(descriptor) || '__default__',
     });
     descriptorsByLinkRole.set(key, entries);
   });
@@ -201,6 +211,27 @@ function buildDescriptorMap(
   });
 
   return descriptorsByLinkRole;
+}
+
+function groupDescriptorEntries(entries: DescriptorEntry[]): DescriptorGroup[] {
+  const groups = new Map<string, DescriptorEntry[]>();
+
+  entries.forEach((entry) => {
+    const bucket = groups.get(entry.groupKey) || [];
+    bucket.push(entry);
+    groups.set(entry.groupKey, bucket);
+  });
+
+  return Array.from(groups.entries())
+    .map(([groupKey, groupedEntries]) => ({
+      groupKey,
+      entries: groupedEntries.slice().sort((left, right) => left.ordinal - right.ordinal),
+    }))
+    .sort((left, right) => {
+      const leftOrdinal = left.entries[0]?.ordinal ?? 0;
+      const rightOrdinal = right.entries[0]?.ordinal ?? 0;
+      return leftOrdinal - rightOrdinal;
+    });
 }
 
 function collectVisualAttachmentLinkIds(
@@ -597,16 +628,23 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
     }
 
     const visualAttachmentLinkIds = collectVisualAttachmentLinkIds(nextResolution, linkId);
-    const visualDescriptors = descriptorsByLinkRole.get(`${linkId}:visual`) || [];
-    visualDescriptors.forEach((entry, index) => {
+    const visualDescriptorGroups = groupDescriptorEntries(
+      descriptorsByLinkRole.get(`${linkId}:visual`) || [],
+    );
+    visualDescriptorGroups.forEach((group, index) => {
+      const representativeEntry = group.entries[0];
+      if (!representativeEntry) {
+        return;
+      }
+
       let targetLinkId = index === 0 ? linkId : visualAttachmentLinkIds[index - 1];
       if (!targetLinkId && index > 0) {
         targetLinkId = createSyntheticVisualAttachmentLink(
           nextResolution,
           linkId,
           linkPath,
-          entry.descriptor,
-          entry.ordinal,
+          representativeEntry.descriptor,
+          representativeEntry.ordinal,
         );
         visualAttachmentLinkIds.push(targetLinkId);
       }
@@ -614,7 +652,7 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
         return;
       }
 
-      const primWorldMatrix = resolvePrimWorldMatrix(runtime, entry.descriptor);
+      const primWorldMatrix = resolvePrimWorldMatrix(runtime, representativeEntry.descriptor);
       if (!primWorldMatrix) {
         return;
       }
@@ -626,7 +664,7 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
 
       const visualForHydration = shouldIgnoreSyntheticMeshApproximationOrigin(
         snapshot,
-        entry.descriptor,
+        representativeEntry.descriptor,
         targetLink.visual,
       )
         ? {
@@ -642,13 +680,20 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
       );
     });
 
-    const collisionDescriptors = descriptorsByLinkRole.get(`${linkId}:collision`) || [];
-    collisionDescriptors.forEach((entry, index) => {
+    const collisionDescriptorGroups = groupDescriptorEntries(
+      descriptorsByLinkRole.get(`${linkId}:collision`) || [],
+    );
+    collisionDescriptorGroups.forEach((group, index) => {
+      const representativeEntry = group.entries[0];
+      if (!representativeEntry) {
+        return;
+      }
+
       if (index > 0) {
         ensureCollisionBodySlot(nextResolution, linkId, index);
       }
 
-      const primWorldMatrix = resolvePrimWorldMatrix(runtime, entry.descriptor);
+      const primWorldMatrix = resolvePrimWorldMatrix(runtime, representativeEntry.descriptor);
       if (!primWorldMatrix) {
         return;
       }
@@ -656,7 +701,7 @@ export function hydrateUsdViewerRobotResolutionFromRuntime(
       const currentCollision = index === 0 ? link.collision : link.collisionBodies?.[index - 1];
       const collisionForHydration = shouldIgnoreSyntheticMeshApproximationOrigin(
         snapshot,
-        entry.descriptor,
+        representativeEntry.descriptor,
         currentCollision,
       )
         ? {

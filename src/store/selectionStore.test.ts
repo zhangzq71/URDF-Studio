@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { useSelectionStore } from './selectionStore.ts';
+import { useSelectionStore, validateSelection } from './selectionStore.ts';
 
 function resetSelectionStore() {
   const state = useSelectionStore.getState();
@@ -149,6 +149,45 @@ test('empty string ids are normalized to the empty selection state', () => {
 
   state.setHoveredSelection({ type: 'link', id: '' });
   assert.deepEqual(useSelectionStore.getState().hoveredSelection, { type: null, id: null });
+});
+
+test('validateSelection accepts runtime names in addition to canonical link and joint keys', () => {
+  assert.equal(
+    validateSelection(
+      { type: 'link', id: 'base_link' },
+      {
+        link_key: { name: 'base_link' },
+      },
+      {},
+    ),
+    true,
+  );
+  assert.equal(
+    validateSelection(
+      { type: 'joint', id: 'shoulder_joint' },
+      {},
+      {
+        joint_key: { name: 'shoulder_joint' },
+      },
+    ),
+    true,
+  );
+});
+
+test('validateSelection keeps tendon selections when the MJCF tendon still exists', () => {
+  assert.equal(
+    validateSelection(
+      { type: 'tendon', id: 'finger_tendon' },
+      {},
+      {},
+      {
+        mjcf: {
+          tendons: [{ name: 'finger_tendon' }],
+        },
+      },
+    ),
+    true,
+  );
 });
 
 test('focusOn re-arms the same target so repeated locate actions can retrigger camera focus', async () => {

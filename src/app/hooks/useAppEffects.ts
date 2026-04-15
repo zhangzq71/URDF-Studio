@@ -4,6 +4,7 @@
  */
 import { useEffect } from 'react';
 import { useRobotStore, useSelectionStore, useUIStore } from '@/store';
+import { validateSelection } from '@/store/selectionStore';
 import { useActiveHistory } from './useActiveHistory';
 
 /**
@@ -46,16 +47,8 @@ export function useSelectionCleanup() {
   const clearSelection = useSelectionStore((state) => state.clearSelection);
 
   useEffect(() => {
-    if (selection.id && selection.type) {
-      const exists =
-        selection.type === 'link'
-          ? links[selection.id]
-          : selection.type === 'joint'
-            ? joints[selection.id]
-            : inspectionContext?.mjcf?.tendons.some((tendon) => tendon.name === selection.id);
-      if (!exists) {
-        clearSelection();
-      }
+    if (!validateSelection(selection, links, joints, inspectionContext ?? null)) {
+      clearSelection();
     }
   }, [inspectionContext, links, joints, selection, clearSelection]);
 }

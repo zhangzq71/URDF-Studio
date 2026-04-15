@@ -195,6 +195,45 @@ test('resolveHoverInteractionResolution lets nearer geometry beat a non-overlay 
   assert.equal(result.primaryInteraction?.subType, 'visual');
 });
 
+test('resolveHoverInteractionResolution lets screen-space overlay CoM beat collision geometry behind it', () => {
+  const comObject = createMesh({ renderOrder: 10001, depthTest: false });
+  const candidates = [
+    createLinkCandidate('collision_link', 0.2, 'collision', createMesh()),
+    {
+      ...createHelperCandidate('base_link', 0, 'center-of-mass', comObject),
+      screenSpaceProjected: true,
+    },
+  ];
+
+  const result = resolveHoverInteractionResolution(candidates, [
+    'collision',
+    'center-of-mass',
+    'visual',
+  ]);
+
+  assert.equal(result.primaryInteraction?.id, 'base_link');
+  assert.equal(result.primaryInteraction?.helperKind, 'center-of-mass');
+});
+
+test('resolveHoverInteractionResolution keeps non-overlay screen-space helpers behind collision geometry', () => {
+  const candidates = [
+    createLinkCandidate('collision_link', 0.2, 'collision', createMesh()),
+    {
+      ...createHelperCandidate('base_link', 0, 'center-of-mass', createMesh()),
+      screenSpaceProjected: true,
+    },
+  ];
+
+  const result = resolveHoverInteractionResolution(candidates, [
+    'collision',
+    'center-of-mass',
+    'visual',
+  ]);
+
+  assert.equal(result.primaryInteraction?.id, 'collision_link');
+  assert.equal(result.primaryInteraction?.subType, 'collision');
+});
+
 test('resolveHoverInteractionResolution returns null when there are no candidates', () => {
   const result = resolveHoverInteractionResolution([]);
 

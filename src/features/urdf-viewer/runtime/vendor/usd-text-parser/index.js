@@ -319,6 +319,38 @@ function normalizeQuaternionWxyzTuple(tupleValue) {
         return null;
     return [w / length, x / length, y / length, z / length];
 }
+function conjugateQuaternionWxyzTuple(tupleValue) {
+    const normalized = normalizeQuaternionWxyzTuple(tupleValue);
+    if (!normalized)
+        return null;
+    return [normalized[0], -normalized[1], -normalized[2], -normalized[3]];
+}
+function multiplyQuaternionWxyzTuples(leftTuple, rightTuple) {
+    const left = normalizeQuaternionWxyzTuple(leftTuple);
+    const right = normalizeQuaternionWxyzTuple(rightTuple);
+    if (!left || !right)
+        return null;
+    const [lw, lx, ly, lz] = left;
+    const [rw, rx, ry, rz] = right;
+    return normalizeQuaternionWxyzTuple([
+        (lw * rw) - (lx * rx) - (ly * ry) - (lz * rz),
+        (lw * rx) + (lx * rw) + (ly * rz) - (lz * ry),
+        (lw * ry) - (lx * rz) + (ly * rw) + (lz * rx),
+        (lw * rz) + (lx * ry) - (ly * rx) + (lz * rw),
+    ]);
+}
+function deriveJointOriginQuatWxyzTuple(originQuatWxyz, localRot0Wxyz, localRot1Wxyz) {
+    const normalizedOriginQuatWxyz = normalizeQuaternionWxyzTuple(originQuatWxyz);
+    if (normalizedOriginQuatWxyz)
+        return normalizedOriginQuatWxyz;
+    const normalizedLocalRot0Wxyz = normalizeQuaternionWxyzTuple(localRot0Wxyz);
+    if (!normalizedLocalRot0Wxyz)
+        return null;
+    const invertedLocalRot1Wxyz = conjugateQuaternionWxyzTuple(localRot1Wxyz);
+    if (!invertedLocalRot1Wxyz)
+        return normalizedLocalRot0Wxyz;
+    return multiplyQuaternionWxyzTuples(normalizedLocalRot0Wxyz, invertedLocalRot1Wxyz) || normalizedLocalRot0Wxyz;
+}
 function parseQuaternionWxyzFromTupleLiteral(tupleLiteral) {
     if (!tupleLiteral)
         return null;
@@ -370,11 +402,11 @@ export function extractJointRecordsFromLayerText(layerText) {
         const originXyz = parseVector3FromTupleLiteral((body.match(/urdf:originXyz\s*=\s*\(([^)]+)\)/i)?.[1]
             || body.match(/physics:localPos0\s*=\s*\(([^)]+)\)/i)?.[1]
             || ""));
-        const originQuatWxyz = parseQuaternionWxyzFromTupleLiteral((body.match(/urdf:originQuatWxyz\s*=\s*\(([^)]+)\)/i)?.[1]
-            || body.match(/physics:localRot0\s*=\s*\(([^)]+)\)/i)?.[1]
-            || ""));
+        const authoredOriginQuatWxyz = parseQuaternionWxyzFromTupleLiteral(body.match(/urdf:originQuatWxyz\s*=\s*\(([^)]+)\)/i)?.[1] || "");
+        const localRot0Wxyz = parseQuaternionWxyzFromTupleLiteral(body.match(/physics:localRot0\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         const localPos1 = parseVector3FromTupleLiteral(body.match(/physics:localPos1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
         const localRot1Wxyz = parseQuaternionWxyzFromTupleLiteral(body.match(/physics:localRot1\s*=\s*\(([^)]+)\)/i)?.[1] || "");
+        const originQuatWxyz = deriveJointOriginQuatWxyzTuple(authoredOriginQuatWxyz, localRot0Wxyz, localRot1Wxyz);
         records.push({
             jointTypeName: urdfJointType || jointTypeName,
             jointName,
@@ -390,6 +422,7 @@ export function extractJointRecordsFromLayerText(layerText) {
             closedLoopType: closedLoopType || null,
             originXyz,
             originQuatWxyz,
+            localRot0Wxyz,
             localPos1,
             localRot1Wxyz,
         });

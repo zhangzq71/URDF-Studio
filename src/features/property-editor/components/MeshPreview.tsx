@@ -7,6 +7,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { MeshAssetNode } from '@/shared/components/3d';
 import { findAssetByPath } from '@/core/loaders/meshLoader';
+import { DEFAULT_MESH_PREVIEW_COLOR } from '@/types/constants';
 
 interface MeshPreviewProps {
   meshPath: string;
@@ -54,7 +55,8 @@ function AutoFitCamera() {
 
     const hs = hsRef.current.copy(size).multiplyScalar(0.5);
     const projUp = Math.abs(up.x) * hs.x + Math.abs(up.y) * hs.y + Math.abs(up.z) * hs.z;
-    const projRight = Math.abs(right.x) * hs.x + Math.abs(right.y) * hs.y + Math.abs(right.z) * hs.z;
+    const projRight =
+      Math.abs(right.x) * hs.x + Math.abs(right.y) * hs.y + Math.abs(right.z) * hs.z;
 
     const distV = projUp / Math.tan(vFovHalf);
     const distH = projRight / Math.tan(hFovHalf);
@@ -116,17 +118,27 @@ function MeshContent({
   normalizeColladaRoot?: boolean;
 }) {
   const material = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: '#6b9bd2', metalness: 0.1, roughness: 0.6 }),
-    []
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: DEFAULT_MESH_PREVIEW_COLOR,
+        metalness: 0.1,
+        roughness: 0.6,
+      }),
+    [],
   );
-  useEffect(() => () => { material.dispose(); }, [material]);
+  useEffect(
+    () => () => {
+      material.dispose();
+    },
+    [material],
+  );
 
   return (
     <MeshAssetNode
       meshPath={meshPath}
       assets={assets}
       material={material}
-      color="#6b9bd2"
+      color={DEFAULT_MESH_PREVIEW_COLOR}
       normalizeRoot={normalizeColladaRoot}
       preserveOriginalMaterial
       unknownContent={
@@ -148,42 +160,39 @@ function LoadingFallback() {
   );
 }
 
-export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(({
-  meshPath,
-  assets,
-  normalizeColladaRoot = false,
-  notFoundText = 'Mesh not found'
-}) => {
-  const assetUrl = findAssetByPath(meshPath, assets);
+export const MeshPreview: React.FC<MeshPreviewProps> = React.memo(
+  ({ meshPath, assets, normalizeColladaRoot = false, notFoundText = 'Mesh not found' }) => {
+    const assetUrl = findAssetByPath(meshPath, assets);
 
-  if (!assetUrl) {
+    if (!assetUrl) {
+      return (
+        <div className="flex h-[112px] items-center justify-center rounded border border-border-black bg-element-bg">
+          <span className="text-[10px] text-text-tertiary">{notFoundText}</span>
+        </div>
+      );
+    }
+
     return (
-      <div className="flex h-[112px] items-center justify-center rounded border border-border-black bg-element-bg">
-        <span className="text-[10px] text-text-tertiary">{notFoundText}</span>
+      <div className="h-[112px] overflow-hidden rounded border border-border-black bg-gradient-to-b from-element-bg to-panel-bg">
+        <Canvas
+          camera={{ fov: 45, near: 0.001, far: 100, position: [0.5, 0.3, 0.5] }}
+          gl={{ antialias: true, alpha: true }}
+        >
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[2, 3, 2]} intensity={0.8} />
+          <directionalLight position={[-1, -1, -1]} intensity={0.3} />
+          <Suspense fallback={<LoadingFallback />}>
+            <RotatingGroup>
+              <MeshContent
+                meshPath={meshPath}
+                assets={assets}
+                normalizeColladaRoot={normalizeColladaRoot}
+              />
+            </RotatingGroup>
+            <AutoFitCamera />
+          </Suspense>
+        </Canvas>
       </div>
     );
-  }
-
-  return (
-    <div className="h-[112px] overflow-hidden rounded border border-border-black bg-gradient-to-b from-element-bg to-panel-bg">
-      <Canvas
-        camera={{ fov: 45, near: 0.001, far: 100, position: [0.5, 0.3, 0.5] }}
-        gl={{ antialias: true, alpha: true }}
-      >
-        <ambientLight intensity={0.6} />
-        <directionalLight position={[2, 3, 2]} intensity={0.8} />
-        <directionalLight position={[-1, -1, -1]} intensity={0.3} />
-        <Suspense fallback={<LoadingFallback />}>
-          <RotatingGroup>
-            <MeshContent
-              meshPath={meshPath}
-              assets={assets}
-              normalizeColladaRoot={normalizeColladaRoot}
-            />
-          </RotatingGroup>
-          <AutoFitCamera />
-        </Suspense>
-      </Canvas>
-    </div>
-  );
-});
+  },
+);

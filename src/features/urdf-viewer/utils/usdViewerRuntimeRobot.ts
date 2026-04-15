@@ -58,12 +58,7 @@ export function createUsdViewerRuntimeRobot({
           ...joint.limit,
           ...resolvedLimits,
         },
-        angle:
-          joint.type === JointType.CONTINUOUS
-            ? runtimeJointAngle !== undefined
-              ? unwrapContinuousJointAngle(runtimeJointAngle, initialJointAngle)
-              : initialJointAngle
-            : (runtimeJointAngle ?? joint.angle ?? 0),
+        angle: initialJointAngle,
         setJointValue(nextValue: number) {
           const numericValue = Number(nextValue);
           if (!Number.isFinite(numericValue)) {
@@ -104,6 +99,22 @@ export function createUsdViewerRuntimeRobot({
           flushDecorationRefresh?.();
         },
       };
+
+      // Reset runtime pose to initial angle (0) if it was at a different position
+      if (
+        childLinkPath &&
+        joint.type !== JointType.FIXED &&
+        runtimeJointAngle !== undefined &&
+        Math.abs(runtimeJointAngle - initialJointAngle) > 1e-8
+      ) {
+        linkRotationController.setJointAngleForLink(
+          childLinkPath,
+          (initialJointAngle * 180) / Math.PI,
+          { emitSelectionChanged: false },
+        );
+        requestRender?.();
+        scheduleDecorationRefresh?.();
+      }
 
       return [jointId, runtimeJoint];
     }),

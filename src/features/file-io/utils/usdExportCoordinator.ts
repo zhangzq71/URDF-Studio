@@ -13,10 +13,11 @@ import {
   buildUsdRootLayerContent,
   buildUsdSensorLayerContent,
   createUsdArchivePackage,
+  resolveUsdPackageLayoutProfile,
   type UsdLayerFileFormat,
   type UsdPackageLayoutProfile,
 } from './usdPackageLayers.ts';
-import { buildUsdLinkSceneRoot } from './usdLinkSceneBuilder.ts';
+import { buildUsdLinkSceneRoot, flattenUsdLinkSceneHierarchy } from './usdLinkSceneBuilder.ts';
 import { collectUsdExportAssetFiles } from './usdAssetCollection.ts';
 import {
   advanceUsdProgress,
@@ -42,7 +43,8 @@ export interface ExportRobotToUsdProgress {
   label?: string;
 }
 
-type UsdExportProgressTracker<TPhase extends ExportRobotToUsdPhase = ExportRobotToUsdPhase> = UsdProgressTracker<TPhase>;
+type UsdExportProgressTracker<TPhase extends ExportRobotToUsdPhase = ExportRobotToUsdPhase> =
+  UsdProgressTracker<TPhase>;
 
 export interface ExportRobotToUsdOptions {
   robot: RobotState;
@@ -73,14 +75,18 @@ export async function exportRobotToUsd({
   layoutProfile = 'legacy',
   onProgress,
 }: ExportRobotToUsdOptions): Promise<ExportRobotToUsdPayload> {
+  const resolvedLayoutProfile = resolveUsdPackageLayoutProfile(layoutProfile);
   const normalizedExportName = sanitizeUsdIdentifier(exportName || robot.name || 'robot');
-  const configStem = layoutProfile === 'isaacsim'
-    ? normalizedExportName
-    : `${normalizedExportName}${normalizedExportName.includes('description') ? '' : '_description'}`;
+  const configStem =
+    resolvedLayoutProfile === 'isaacsim'
+      ? normalizedExportName
+      : `${normalizedExportName}${normalizedExportName.includes('description') ? '' : '_description'}`;
   const rootPrimName = configStem;
   const downloadExtension = fileFormat === 'usda' ? 'usda' : 'usd';
   const { registry, tempObjectUrls } = createUsdAssetRegistry(assets, extraMeshFiles);
-  const pathMaps = buildUsdLinkPathMaps(robot, rootPrimName);
+  const pathMaps = buildUsdLinkPathMaps(robot, rootPrimName, {
+    layoutProfile: resolvedLayoutProfile,
+  });
   const sceneRoot = new THREE.Group();
   sceneRoot.name = rootPrimName;
   const linkProgressTracker: UsdExportProgressTracker<'links'> = createUsdProgressTracker(
@@ -101,19 +107,22 @@ export async function exportRobotToUsd({
         );
 
         if (
-          linkProgressTracker.completed < linkProgressTracker.total
-          && linkProgressTracker.completed % 4 === 0
+          linkProgressTracker.completed < linkProgressTracker.total &&
+          linkProgressTracker.completed % 4 === 0
         ) {
           await yieldToMainThread();
         }
       },
     });
     sceneRoot.add(linkRoot);
+    if (resolvedLayoutProfile === 'isaacsim') {
+      flattenUsdLinkSceneHierarchy(sceneRoot);
+    }
     sceneRoot.updateMatrixWorld(true);
 
     const rootLayerContent = buildUsdRootLayerContent(rootPrimName, configStem, {
       fileFormat,
-      layoutProfile,
+      layoutProfile: resolvedLayoutProfile,
     });
     await yieldToMainThread();
     const usdContext = await collectUsdSerializationContext(sceneRoot, {
@@ -123,14 +132,24 @@ export async function exportRobotToUsd({
     await yieldToMainThread();
     const baseLayerContent = await buildUsdBaseLayerContent(sceneRoot, usdContext, onProgress);
     await yieldToMainThread();
-    const physicsLayerContent = buildUsdPhysicsLayerContent(robot, pathMaps, rootPrimName, configStem, {
-      fileFormat,
-    });
+    const physicsLayerContent = buildUsdPhysicsLayerContent(
+      robot,
+      pathMaps,
+      rootPrimName,
+      configStem,
+      {
+        fileFormat,
+        layoutProfile: resolvedLayoutProfile,
+      },
+    );
     await yieldToMainThread();
     const sensorLayerContent = buildUsdSensorLayerContent(rootPrimName);
-    const robotLayerContent = layoutProfile === 'isaacsim'
-      ? buildUsdRobotLayerContent(robot, pathMaps, rootPrimName)
-      : undefined;
+    const robotLayerContent =
+      resolvedLayoutProfile === 'isaacsim'
+        ? buildUsdRobotLayerContent(robot, pathMaps, rootPrimName, {
+            layoutProfile: resolvedLayoutProfile,
+          })
+        : undefined;
     await yieldToMainThread();
     const usdAssetFiles = await collectUsdExportAssetFiles({
       sceneRoot,
@@ -152,7 +171,7 @@ export async function exportRobotToUsd({
       usdAssetFiles,
       {
         fileFormat,
-        layoutProfile,
+        layoutProfile: resolvedLayoutProfile,
       },
     );
 

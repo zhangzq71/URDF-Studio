@@ -2,7 +2,7 @@
  * App Layout Component
  * Main application layout with Header and workspace area
  */
-import React, { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useRef, useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
 import { IkToolPanel } from './components/IkToolPanel';
@@ -11,12 +11,20 @@ import { ConnectedDocumentLoadingOverlay } from './components/ConnectedDocumentL
 import { FileDropOverlay } from './components/FileDropOverlay';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import { SnapshotDialog } from './components/SnapshotDialog';
-import { UnifiedViewer } from './components/UnifiedViewer';
 import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
 } from './utils/overlayLoaders';
 import { preloadSourceCodeEditorRuntime } from './utils/sourceCodeEditorLoader';
+
+// Lazy load heavy 3D viewer component
+const UnifiedViewer = lazy(() =>
+  import('./components/UnifiedViewer').then((m) => ({ default: m.UnifiedViewer })),
+);
+
+// Prefetch UnifiedViewer when AppLayout is loaded to reduce perceived latency
+const prefetchUnifiedViewer = () => import('./components/UnifiedViewer');
+
 import type { HeaderAction } from './components/header/types';
 import { setOptionsPanelVisibility } from './components/header/viewMenuState.js';
 import { TreeEditor } from '@/features/robot-tree';
@@ -140,6 +148,12 @@ export function AppLayout({
   importPreparationOverlay = null,
   onExposeLayoutActions,
 }: AppLayoutProps) {
+  useEffect(() => {
+    prefetchUnifiedViewer();
+    // Warm up the code editor too as it's a common next step
+    preloadSourceCodeEditorRuntime();
+  }, []);
+
   // UI Store (grouped with useShallow to reduce subscriptions)
   const {
     appMode,
@@ -147,6 +161,7 @@ export function AppLayout({
     theme,
     sidebar,
     toggleSidebar,
+    setSidebar,
     sidebarTab,
     sourceCodeAutoApply,
     setViewOption,
@@ -157,11 +172,33 @@ export function AppLayout({
       theme: state.theme,
       sidebar: state.sidebar,
       toggleSidebar: state.toggleSidebar,
+      setSidebar: state.setSidebar,
       sidebarTab: state.sidebarTab,
       sourceCodeAutoApply: state.sourceCodeAutoApply,
       setViewOption: state.setViewOption,
     })),
   );
+
+  // Responsive sidebar effect
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      // Use a ref-like approach to only trigger when crossing thresholds
+      // to avoid fighting with user manual toggles on every pixel change
+      if (width < 1024) {
+        if (!sidebar.leftCollapsed) setSidebar('left', true);
+        if (!sidebar.rightCollapsed) setSidebar('right', true);
+      } else if (width < 1200) {
+        if (!sidebar.rightCollapsed) setSidebar('right', true);
+      }
+    };
+
+    // Run once on mount
+    handleResize();
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [setSidebar]); // Minimal dependencies to prevent loops
   const mergedAppMode = normalizeMergedAppMode(appMode);
   const t = translations[lang];
 
@@ -988,65 +1025,71 @@ export function AppLayout({
         {/* Viewer Container — z-0 stacking context keeps floating panels below sidebars (z-20);
             overflow-hidden prevents panels from being dragged outside the 3D view area. */}
         <div className="flex-1 relative z-0 min-w-0 overflow-hidden">
-          <UnifiedViewer
-            robot={viewerRobot}
-            editorRobot={robot}
-            mode={mergedAppMode}
-            onSelect={handleViewerSelectWithBridgePreview}
-            onMeshSelect={handleViewerMeshSelectWithAssemblyClear}
-            onHover={handleHover}
-            onUpdate={handleUpdate}
-            assets={viewerAssets}
-            lang={lang}
-            theme={theme}
-            showVisual={showVisual}
-            setShowVisual={handleSetShowVisual}
-            snapshotAction={snapshotActionRef}
-            showToolbar={viewConfig.showToolbar}
-            setShowToolbar={(show) => setViewConfig((prev) => ({ ...prev, showToolbar: show }))}
-            showOptionsPanel={viewConfig.showOptionsPanel}
-            setShowOptionsPanel={handleSetDetailOptionsPanelVisibility}
-            showJointPanel={viewConfig.showJointPanel && jointPanelAvailable}
-            setShowJointPanel={(show) =>
-              setViewConfig((prev) => ({ ...prev, showJointPanel: show }))
+          <Suspense
+            fallback={
+              <div className="flex-1 h-full bg-google-light-bg dark:bg-app-bg animate-pulse" />
             }
-            availableFiles={availableFiles}
-            urdfContent={urdfContentForViewer}
-            viewerSourceFormat={viewerSourceFormat}
-            sourceFilePath={viewerSourceFilePath}
-            sourceFile={getViewerSourceFile({
-              selectedFile,
-              shouldRenderAssembly,
-              workspaceSourceFile: workspaceViewerMjcfSourceFile,
-            })}
-            onRobotDataResolved={handleRobotDataResolved}
-            onDocumentLoadEvent={handleViewerDocumentLoadEvent}
-            onRuntimeRobotLoaded={handleViewerRuntimeRobotLoaded}
-            onRuntimeSceneReadyForDisplay={handleViewerRuntimeSceneReadyForDisplay}
-            jointAngleState={jointAngleState}
-            jointMotionState={jointMotionState}
-            onJointChange={handleJointChange}
-            syncJointChangesToApp
-            selection={robot.selection}
-            focusTarget={focusTarget}
-            isMeshPreview={selectedFile?.format === 'mesh'}
-            onTransformPendingChange={handleWorkspaceTransformPendingChange}
-            onCollisionTransform={handleCollisionTransform}
-            assemblyState={assemblyState}
-            assemblyWorkspaceActive={shouldRenderAssembly}
-            assemblySelection={assemblySelection}
-            sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
-            onAssemblyTransform={handleAssemblyTransform}
-            onComponentTransform={handleComponentTransform}
-            onBridgeTransform={handleBridgeTransform}
-            filePreview={filePreview}
-            onClosePreview={handleClosePreview}
-            ikDragActive={ikDragActive}
-            pendingViewerToolMode={pendingViewerToolMode}
-            onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
-            viewerReloadKey={viewerReloadKey}
-            documentLoadState={documentLoadLifecycleState}
-          />
+          >
+            <UnifiedViewer
+              robot={viewerRobot}
+              editorRobot={robot}
+              mode={mergedAppMode}
+              onSelect={handleViewerSelectWithBridgePreview}
+              onMeshSelect={handleViewerMeshSelectWithAssemblyClear}
+              onHover={handleHover}
+              onUpdate={handleUpdate}
+              assets={viewerAssets}
+              lang={lang}
+              theme={theme}
+              showVisual={showVisual}
+              setShowVisual={handleSetShowVisual}
+              snapshotAction={snapshotActionRef}
+              showToolbar={viewConfig.showToolbar}
+              setShowToolbar={(show) => setViewConfig((prev) => ({ ...prev, showToolbar: show }))}
+              showOptionsPanel={viewConfig.showOptionsPanel}
+              setShowOptionsPanel={handleSetDetailOptionsPanelVisibility}
+              showJointPanel={viewConfig.showJointPanel && jointPanelAvailable}
+              setShowJointPanel={(show) =>
+                setViewConfig((prev) => ({ ...prev, showJointPanel: show }))
+              }
+              availableFiles={availableFiles}
+              urdfContent={urdfContentForViewer}
+              viewerSourceFormat={viewerSourceFormat}
+              sourceFilePath={viewerSourceFilePath}
+              sourceFile={getViewerSourceFile({
+                selectedFile,
+                shouldRenderAssembly,
+                workspaceSourceFile: workspaceViewerMjcfSourceFile,
+              })}
+              onRobotDataResolved={handleRobotDataResolved}
+              onDocumentLoadEvent={handleViewerDocumentLoadEvent}
+              onRuntimeRobotLoaded={handleViewerRuntimeRobotLoaded}
+              onRuntimeSceneReadyForDisplay={handleViewerRuntimeSceneReadyForDisplay}
+              jointAngleState={jointAngleState}
+              jointMotionState={jointMotionState}
+              onJointChange={handleJointChange}
+              syncJointChangesToApp
+              selection={robot.selection}
+              focusTarget={focusTarget}
+              isMeshPreview={selectedFile?.format === 'mesh'}
+              onTransformPendingChange={handleWorkspaceTransformPendingChange}
+              onCollisionTransform={handleCollisionTransform}
+              assemblyState={assemblyState}
+              assemblyWorkspaceActive={shouldRenderAssembly}
+              assemblySelection={assemblySelection}
+              sourceSceneAssemblyComponentId={sourceSceneAssemblyComponentId}
+              onAssemblyTransform={handleAssemblyTransform}
+              onComponentTransform={handleComponentTransform}
+              onBridgeTransform={handleBridgeTransform}
+              filePreview={filePreview}
+              onClosePreview={handleClosePreview}
+              ikDragActive={ikDragActive}
+              pendingViewerToolMode={pendingViewerToolMode}
+              onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
+              viewerReloadKey={viewerReloadKey}
+              documentLoadState={documentLoadLifecycleState}
+            />
+          </Suspense>
           <ConnectedDocumentLoadingOverlay
             lang={lang}
             targetFileName={resolveDocumentLoadingOverlayTargetFileName({

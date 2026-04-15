@@ -29,6 +29,7 @@ import {
 } from '../utils/interactionMode';
 import {
   isPointerInteractionWithinClickThreshold,
+  shouldFinalizePointerInteraction,
   shouldDeferSelectionUntilPointerUp,
 } from '../utils/clickSelectionPolicy';
 import {
@@ -182,6 +183,7 @@ export function useMouseInteraction({
   const lastRayRef = useRef(new THREE.Ray());
   const selectionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPointerSelectionRef = useRef<PendingPointerSelection | null>(null);
+  const pointerInteractionActiveRef = useRef(false);
   const pointerDownPositionRef = useRef<{ x: number; y: number } | null>(null);
   const pointerExceededClickThresholdRef = useRef(false);
   const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
@@ -815,6 +817,7 @@ export function useMouseInteraction({
       if (!updatePointerFromLocalPoint(e.offsetX, e.offsetY)) {
         return;
       }
+      pointerInteractionActiveRef.current = true;
 
       // IMPORTANT:
       // TransformControls gizmo is not a child of `robot`.
@@ -1069,6 +1072,17 @@ export function useMouseInteraction({
 
     const handleMouseUp = () => {
       pointerButtonsRef.current = 0;
+      const shouldFinalizeInteraction = shouldFinalizePointerInteraction({
+        interactionStarted: pointerInteractionActiveRef.current,
+        dragging: isDraggingJoint.current,
+        hasPendingSelection: pendingPointerSelectionRef.current !== null,
+      });
+
+      if (!shouldFinalizeInteraction) {
+        return;
+      }
+
+      pointerInteractionActiveRef.current = false;
       let shouldResetSelectionMissGuard = justSelectedRef?.current === true;
 
       // Capture empty-click state before the refs below are cleared.
@@ -1146,6 +1160,11 @@ export function useMouseInteraction({
     };
 
     const handleMouseLeave = () => {
+      const shouldFinalizeInteraction = shouldFinalizePointerInteraction({
+        interactionStarted: pointerInteractionActiveRef.current,
+        dragging: isDraggingJoint.current,
+        hasPendingSelection: pendingPointerSelectionRef.current !== null,
+      });
       pointerButtonsRef.current = 0;
       mouseRef.current.set(-1000, -1000);
 
@@ -1167,7 +1186,9 @@ export function useMouseInteraction({
         onHover?.(null, null);
       }
 
-      handleMouseUp();
+      if (shouldFinalizeInteraction) {
+        handleMouseUp();
+      }
     };
 
     const hoverMoveEventName = resolveHoverMoveEventName(

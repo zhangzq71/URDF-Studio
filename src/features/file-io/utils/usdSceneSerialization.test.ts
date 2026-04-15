@@ -57,6 +57,7 @@ test('buildUsdBaseLayerContent serializes scene nodes alongside shared mesh and 
   assert.match(content, /def Xform "demo_robot"/);
   assert.match(content, /def Scope "__MeshLibrary"/);
   assert.match(content, /def Scope "Looks"/);
+  assert.match(content, /def Scope "joints"/);
   assert.match(content, /prepend references = <\/demo_robot\/__MeshLibrary\/Geometry_0>/);
   assert.match(content, /rel material:binding = <\/demo_robot\/Looks\/Material_0>/);
   assert.match(content, /asset inputs:file = @\.\.\/assets\/checker\.png@/);

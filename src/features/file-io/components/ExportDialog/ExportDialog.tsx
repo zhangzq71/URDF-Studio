@@ -70,7 +70,7 @@ const MJCF_SUPPORTS = ['MuJoCo', 'Motphys', 'Genesis'];
 const URDF_SUPPORTS = ['Isaac Sim', 'Isaac Gym', 'Genesis', 'PyBullet', 'ManiSkill', 'Motphys'];
 const XACRO_SUPPORTS = ['Gazebo', 'ROS1', 'ROS2'];
 const SDF_SUPPORTS = ['Gazebo', 'Ignition Gazebo', 'sdformat'];
-const USD_SUPPORTS = ['OpenUSD', 'Isaac Sim', 'Omniverse'];
+const USD_SUPPORTS = ['OpenUSD', 'Isaac Sim', 'Genesis', 'Omniverse'];
 
 const DEFAULT_CONFIG: ExportDialogConfig = {
   format: 'mjcf',
