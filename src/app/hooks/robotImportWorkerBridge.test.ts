@@ -8,8 +8,10 @@ import type { RobotState } from '@/types';
 import type { RobotImportWorkerResponse } from '@/app/utils/robotImportWorker';
 import {
   createRobotImportWorkerClient,
+  generateEditableRobotSourceWithWorker,
   resolveRobotFileDataWithWorker,
 } from './robotImportWorkerBridge.ts';
+import { generateEditableRobotSource } from '@/app/utils/generateEditableRobotSource';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.DOMParser = dom.window.DOMParser as typeof DOMParser;
@@ -157,6 +159,39 @@ test('robot import worker client rejects after worker errors and marks worker un
   assert.equal(fakeWorker.postedMessages.length, 1);
 });
 
+test('robot import worker client keeps the pool alive after request-level resolve failures', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const firstResultPromise = client.resolve(demoUrdfFile);
+  assert.equal(fakeWorker.postedMessages.length, 1);
+
+  fakeWorker.emitMessage({
+    type: 'resolve-robot-file-error',
+    requestId: (fakeWorker.postedMessages[0] as { requestId: number }).requestId,
+    error: 'bad import payload',
+  });
+
+  await assert.rejects(firstResultPromise, /bad import payload/i);
+  assert.equal(fakeWorker.terminated, false);
+
+  const secondResultPromise = client.resolve(demoUrdfFile);
+  assert.equal(fakeWorker.postedMessages.length, 2);
+
+  fakeWorker.emitMessage({
+    type: 'resolve-robot-file-result',
+    requestId: (fakeWorker.postedMessages[1] as { requestId: number }).requestId,
+    result: resolveRobotFileData(demoUrdfFile),
+  });
+
+  const secondResult = await secondResultPromise;
+  assert.equal(secondResult.status, 'ready');
+});
+
 test('robot import worker client resolves editable source parse responses', async () => {
   const fakeWorker = new FakeWorker();
   const client = createRobotImportWorkerClient({
@@ -195,6 +230,46 @@ test('robot import worker client resolves editable source parse responses', asyn
   const result = await resultPromise;
 
   assert.deepEqual(result, parsedRobot);
+});
+
+test('robot import worker client resolves editable source generation responses', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  const resolvedRobot = resolveRobotFileData(demoUrdfFile);
+  assert.equal(resolvedRobot.status, 'ready');
+  if (resolvedRobot.status !== 'ready') {
+    assert.fail('Expected resolved robot to be ready');
+  }
+
+  const robotState: RobotState = {
+    ...resolvedRobot.robotData,
+    selection: { type: null, id: null },
+  };
+  const resultPromise = client.generateEditableSource({
+    format: 'urdf',
+    robotState,
+  });
+
+  assert.equal(fakeWorker.postedMessages.length, 1);
+  const postedRequest = fakeWorker.postedMessages[0] as { requestId: number };
+
+  fakeWorker.emitMessage({
+    type: 'generate-editable-robot-source-result',
+    requestId: postedRequest.requestId,
+    result: generateEditableRobotSource({
+      format: 'urdf',
+      robotState,
+    }),
+  });
+
+  const result = await resultPromise;
+
+  assert.match(result, /<robot\b/i);
 });
 
 test('robot import worker client resolves prepared assembly component responses', async () => {
@@ -308,7 +383,65 @@ test('robot import worker client syncs mesh assets for prepared assembly compone
   });
   assert.equal(postedRequest.type, 'prepare-assembly-component');
   assert.equal(typeof postedRequest.contextId, 'string');
-  assert.equal(postedRequest.options.assets, undefined);
+  assert.deepEqual(postedRequest.options.assets, {
+    'robots/demo/meshes/base.stl': 'solid demo',
+  });
+});
+
+test('robot import worker client keeps MJCF text context on prepare assembly requests', async () => {
+  const fakeWorker = new FakeWorker();
+  const client = createRobotImportWorkerClient({
+    canUseWorker: () => true,
+    createWorker: () => fakeWorker as unknown as Worker,
+    getWorkerCount: () => 1,
+  });
+
+  void client
+    .prepareAssemblyComponent(
+      {
+        name: 'mujoco_menagerie-main/agilex_piper/piper.xml',
+        format: 'mjcf',
+        content: '<mujoco><compiler meshdir="assets" /></mujoco>',
+      },
+      {
+        componentId: 'comp_piper',
+        rootName: 'piper',
+        availableFiles: [
+          {
+            name: 'mujoco_menagerie-main/agilex_piper/piper.xml',
+            format: 'mjcf',
+            content: '<mujoco><compiler meshdir="assets" /></mujoco>',
+          },
+        ],
+        assets: {
+          'mujoco_menagerie-main/agilex_piper/assets/link3_12.obj': 'blob:obj',
+        },
+        allFileContents: {
+          'mujoco_menagerie-main/agilex_piper/assets/link3_12.obj': 'mtllib material.mtl',
+          'mujoco_menagerie-main/agilex_piper/assets/material.mtl': 'newmtl demo\nKd 1 0 0',
+        },
+      },
+    )
+    .catch(() => {});
+
+  assert.equal(fakeWorker.postedMessages.length, 2);
+  const postedRequest = fakeWorker.postedMessages[1] as {
+    type: string;
+    options: {
+      availableFiles?: unknown;
+      assets?: Record<string, string>;
+      allFileContents?: Record<string, string>;
+    };
+  };
+
+  assert.equal(postedRequest.type, 'prepare-assembly-component');
+  assert.deepEqual(postedRequest.options.assets, {
+    'mujoco_menagerie-main/agilex_piper/assets/link3_12.obj': 'blob:obj',
+  });
+  assert.deepEqual(postedRequest.options.allFileContents, {
+    'mujoco_menagerie-main/agilex_piper/assets/link3_12.obj': 'mtllib material.mtl',
+    'mujoco_menagerie-main/agilex_piper/assets/material.mtl': 'newmtl demo\nKd 1 0 0',
+  });
 });
 
 test('robot import worker client rejects editable source parse errors', async () => {
@@ -406,6 +539,41 @@ test('robot import worker client rejects editable source parsing immediately whe
         },
         content: demoUrdfFile.content,
         availableFiles: [demoUrdfFile],
+      }),
+      /Web Worker is not available in this environment/i,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'Worker', {
+      configurable: true,
+      writable: true,
+      value: originalWorker,
+    });
+  }
+});
+
+test('generateEditableRobotSourceWithWorker rejects immediately when Worker is unavailable', async () => {
+  const originalWorker = globalThis.Worker;
+
+  Object.defineProperty(globalThis, 'Worker', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+
+  try {
+    const resolvedRobot = resolveRobotFileData(demoUrdfFile);
+    assert.equal(resolvedRobot.status, 'ready');
+    if (resolvedRobot.status !== 'ready') {
+      assert.fail('Expected resolved robot to be ready');
+    }
+
+    await assert.rejects(
+      generateEditableRobotSourceWithWorker({
+        format: 'urdf',
+        robotState: {
+          ...resolvedRobot.robotData,
+          selection: { type: null, id: null },
+        },
       }),
       /Web Worker is not available in this environment/i,
     );

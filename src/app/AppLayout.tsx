@@ -3,14 +3,17 @@
  * Main application layout with Header and workspace area
  */
 import React, { useRef, useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import type { RootState } from '@react-three/fiber';
 import { useShallow } from 'zustand/react/shallow';
 import { Header } from './components/Header';
 import { IkToolPanel } from './components/IkToolPanel';
 import { AppLayoutOverlays } from './components/AppLayoutOverlays';
 import { ConnectedDocumentLoadingOverlay } from './components/ConnectedDocumentLoadingOverlay';
+import { FilePreviewWindow } from './components/FilePreviewWindow';
 import { FileDropOverlay } from './components/FileDropOverlay';
 import { ImportPreparationOverlay } from './components/ImportPreparationOverlay';
 import { SnapshotDialog } from './components/SnapshotDialog';
+import { resolveSnapshotCaptureAction } from './components/snapshot-preview/resolveSnapshotCaptureAction';
 import {
   loadBridgeCreateModalModule,
   loadCollisionOptimizationDialogModule,
@@ -66,9 +69,12 @@ import {
 } from '@/store';
 import type { BridgeJoint, RobotFile, UrdfJoint, UrdfLink } from '@/types';
 import { translations } from '@/shared/i18n';
-import type { SnapshotCaptureOptions } from '@/shared/components/3d';
+import {
+  captureWorkspaceCameraSnapshot,
+  type SnapshotCaptureAction,
+  type SnapshotCaptureOptions,
+} from '@/shared/components/3d';
 import { normalizeMergedAppMode } from '@/shared/utils/appMode';
-import { hasSingleDofJoints } from '@/shared/utils/jointTypes';
 import { isAssetLibraryOnlyFormat, ROBOT_IMPORT_ACCEPT_ATTRIBUTE } from '@/shared/utils';
 import { toDocumentLoadLifecycleState } from '@/store/assetsStore';
 import { markUnsavedChangesBaselineSaved } from './utils/unsavedChangesBaseline';
@@ -77,6 +83,8 @@ import { resolveDocumentLoadingOverlayTargetFileName } from './utils/documentLoa
 import { clearIkDragHelperSelection } from './utils/ikDragSession';
 import { resolveIkToolSelectionState } from './utils/ikToolSelectionState';
 import { resolveAssemblyRootComponentSelectionAvailability } from './utils/assemblyRootComponentSelection';
+import { buildSimpleModeDraftFile } from './utils/simpleModeDrafts';
+import type { SnapshotPreviewSession } from './components/snapshot-preview/types';
 
 interface ProModeRoundtripSession {
   baselineSnapshot: string;
@@ -103,13 +111,11 @@ interface AppLayoutProps {
   headerSecondaryAction?: HeaderAction;
   // View config
   viewConfig: {
-    showToolbar: boolean;
     showOptionsPanel: boolean;
     showJointPanel: boolean;
   };
   setViewConfig: React.Dispatch<
     React.SetStateAction<{
-      showToolbar: boolean;
       showOptionsPanel: boolean;
       showJointPanel: boolean;
     }>
@@ -165,6 +171,7 @@ export function AppLayout({
     sidebarTab,
     sourceCodeAutoApply,
     setViewOption,
+    groundPlaneOffset,
   } = useUIStore(
     useShallow((state) => ({
       appMode: state.appMode,
@@ -176,6 +183,7 @@ export function AppLayout({
       sidebarTab: state.sidebarTab,
       sourceCodeAutoApply: state.sourceCodeAutoApply,
       setViewOption: state.setViewOption,
+      groundPlaneOffset: state.groundPlaneOffset,
     })),
   );
 
@@ -245,6 +253,7 @@ export function AppLayout({
     renameRobotFolder,
     clearRobotLibrary,
     getUsdPreparedExportCache,
+    usdPreparedExportCaches,
     setDocumentLoadState,
   } = useAssetsStore(
     useShallow((state) => ({
@@ -265,6 +274,7 @@ export function AppLayout({
       renameRobotFolder: state.renameRobotFolder,
       clearRobotLibrary: state.clearRobotLibrary,
       getUsdPreparedExportCache: state.getUsdPreparedExportCache,
+      usdPreparedExportCaches: state.usdPreparedExportCaches,
       setDocumentLoadState: state.setDocumentLoadState,
     })),
   );
@@ -343,6 +353,7 @@ export function AppLayout({
   const snapshotActionRef = useRef<
     ((options?: Partial<SnapshotCaptureOptions>) => Promise<void>) | null
   >(null);
+  const viewerCanvasStateRef = useRef<RootState | null>(null);
   const transformPendingRef = useRef(false);
   const pendingUsdAssemblyFileRef = useRef<RobotFile | null>(null);
   const proModeRoundtripSessionRef = useRef<ProModeRoundtripSession | null>(null);
@@ -353,6 +364,9 @@ export function AppLayout({
   const [isCollisionOptimizerOpen, setIsCollisionOptimizerOpen] = useState(false);
   const [isSnapshotDialogOpen, setIsSnapshotDialogOpen] = useState(false);
   const [isSnapshotCapturing, setIsSnapshotCapturing] = useState(false);
+  const [snapshotPreviewSession, setSnapshotPreviewSession] =
+    useState<SnapshotPreviewSession | null>(null);
+  const snapshotPreviewCaptureActionRef = useRef<SnapshotCaptureAction | null>(null);
   const [isIkToolPanelOpen, setIsIkToolPanelOpen] = useState(false);
   const [shouldRenderBridgeModal, setShouldRenderBridgeModal] = useState(false);
   const [bridgePreview, setBridgePreview] = useState<BridgeJoint | null>(null);
@@ -402,6 +416,8 @@ export function AppLayout({
     viewerSourceFilePath,
     workspaceViewerMjcfSourceFile,
     sourceCodeDocuments,
+    hasSimpleModeSourceEdits,
+    draftUrdfContent,
     filePreview,
     previewRobot,
     previewFileName,
@@ -450,18 +466,37 @@ export function AppLayout({
     },
     selectedFile,
     shouldRenderAssembly,
-    showToast,
     workspaceAssemblyRenderFailureReason,
   });
 
   const previewFile = previewFileName
     ? (availableFiles.find((file) => file.name === previewFileName) ?? null)
     : null;
+  const selectedFileDraftSourceContent = useMemo(() => {
+    if (!selectedFile) {
+      return null;
+    }
+
+    return (
+      sourceCodeDocuments.find((document) => document.filePath === selectedFile.name)?.content ??
+      selectedFile.content
+    );
+  }, [selectedFile, sourceCodeDocuments]);
+
+  const preparedAssetSourceFiles = useMemo(
+    () =>
+      [selectedFile, previewFile].filter((file): file is RobotFile =>
+        Boolean(file && file.format === 'usd'),
+      ),
+    [previewFile, selectedFile],
+  );
 
   const viewerAssets = usePreparedUsdViewerAssets({
     assemblyState,
     assets,
     availableFiles,
+    additionalSourceFiles: preparedAssetSourceFiles,
+    preparedExportCaches: usdPreparedExportCaches,
     getUsdPreparedExportCache,
     shouldRenderAssembly,
   });
@@ -491,7 +526,7 @@ export function AppLayout({
     handleRequestSwitchTreeEditorToStructure,
     handleSwitchTreeEditorToProMode,
   } = useWorkspaceModeTransitions({
-    previewFile,
+    previewFile: null,
     selectedFile,
     availableFiles,
     allFileContents,
@@ -530,7 +565,7 @@ export function AppLayout({
       failedToParseFormat: t.failedToParseFormat,
     },
     pendingUsdAssemblyFileRef,
-    previewFile,
+    previewFile: null,
     selectedFile,
     setDocumentLoadState,
     setRobot,
@@ -541,8 +576,8 @@ export function AppLayout({
 
   // Keep drag-time joint previews scoped to the active viewer runtime. Feeding them
   // through AppLayout forces the tree and property sidebars into high-frequency re-render.
-  const previewContextRobot = previewRobot ?? robot;
-  const isPreviewingWorkspaceSource = Boolean(previewRobot);
+  const previewContextRobot = robot;
+  const isPreviewingWorkspaceSource = false;
   const ikToolSelectionState = useMemo(
     () =>
       resolveIkToolSelectionState({
@@ -637,6 +672,7 @@ export function AppLayout({
     patchEditableSourceAddCollisionBody,
     patchEditableSourceDeleteCollisionBody,
     patchEditableSourceUpdateCollisionBody,
+    patchEditableSourceUpdateJointLimit,
     patchEditableSourceRenameEntities,
   } = useEditableSourcePatches({
     selectedFile,
@@ -647,11 +683,6 @@ export function AppLayout({
     setAllFileContents,
     showToast,
   });
-  const jointPanelAvailable = useMemo(
-    () => hasSingleDofJoints((previewRobot ?? viewerRobot)?.joints),
-    [previewRobot?.joints, viewerRobot?.joints],
-  );
-
   const {
     handleNameChange,
     handleUpdate,
@@ -689,6 +720,7 @@ export function AppLayout({
     patchEditableSourceAddCollisionBody,
     patchEditableSourceDeleteCollisionBody,
     patchEditableSourceUpdateCollisionBody,
+    patchEditableSourceUpdateJointLimit,
     patchEditableSourceRenameEntities,
     setSelection,
     setPendingCollisionTransform,
@@ -745,8 +777,6 @@ export function AppLayout({
     setIsBridgeModalOpen,
     addBridge,
     setIsCollisionOptimizerOpen,
-    setViewConfig,
-    setPendingViewerToolMode,
   });
 
   const {
@@ -791,7 +821,8 @@ export function AppLayout({
         documentFlavor: document.documentFlavor,
         readOnly: document.readOnly,
         validationEnabled: document.validationEnabled,
-        onCodeChange: (newCode: string) => handleCodeChange(newCode, document.changeTarget),
+        onCodeChange: (newCode: string, applyRequest) =>
+          handleCodeChange(newCode, document.changeTarget, applyRequest),
         onDownload: document.readOnly
           ? undefined
           : () => {
@@ -801,9 +832,77 @@ export function AppLayout({
     [handleCodeChange, sourceCodeDocuments],
   );
 
-  const handleSnapshot = useCallback(() => {
-    setIsSnapshotDialogOpen(true);
+  const viewerSourceFile = useMemo(
+    () =>
+      getViewerSourceFile({
+        selectedFile,
+        shouldRenderAssembly,
+        workspaceSourceFile: workspaceViewerMjcfSourceFile,
+      }),
+    [selectedFile, shouldRenderAssembly, workspaceViewerMjcfSourceFile],
+  );
+
+  const handleCloseSnapshotDialog = useCallback(() => {
+    setIsSnapshotDialogOpen(false);
+    setSnapshotPreviewSession(null);
+    snapshotPreviewCaptureActionRef.current = null;
   }, []);
+
+  const handleSnapshotPreviewCaptureActionChange = useCallback(
+    (action: SnapshotCaptureAction | null) => {
+      snapshotPreviewCaptureActionRef.current = action;
+    },
+    [],
+  );
+
+  const handleSnapshot = useCallback(() => {
+    const viewerCanvasState = viewerCanvasStateRef.current;
+    const cameraSnapshot = viewerCanvasState
+      ? captureWorkspaceCameraSnapshot(viewerCanvasState)
+      : null;
+    const viewportAspectRatio =
+      cameraSnapshot?.aspectRatio ??
+      (viewerCanvasState?.size.width && viewerCanvasState.size.height
+        ? viewerCanvasState.size.width / viewerCanvasState.size.height
+        : 16 / 9);
+
+    snapshotPreviewCaptureActionRef.current = null;
+    setSnapshotPreviewSession({
+      theme,
+      cameraSnapshot,
+      viewportAspectRatio,
+      robotName: viewerRobot.name || 'robot',
+      robot: viewerRobot,
+      assets: viewerAssets,
+      availableFiles,
+      urdfContent: urdfContentForViewer,
+      viewerSourceFormat,
+      sourceFilePath: viewerSourceFilePath,
+      sourceFile: viewerSourceFile,
+      jointAngleState,
+      jointMotionState,
+      showVisual,
+      isMeshPreview: selectedFile?.format === 'mesh',
+      viewerReloadKey,
+      groundPlaneOffset,
+    });
+    setIsSnapshotDialogOpen(true);
+  }, [
+    availableFiles,
+    groundPlaneOffset,
+    jointAngleState,
+    jointMotionState,
+    selectedFile?.format,
+    showVisual,
+    theme,
+    urdfContentForViewer,
+    viewerAssets,
+    viewerReloadKey,
+    viewerRobot,
+    viewerSourceFile,
+    viewerSourceFilePath,
+    viewerSourceFormat,
+  ]);
 
   const handleSetIkDragActive = useCallback(
     (active: boolean) => {
@@ -825,10 +924,9 @@ export function AppLayout({
   );
 
   const handleOpenIkTool = useCallback(() => {
-    setViewConfig((prev) => ({ ...prev, showToolbar: true }));
     handleSetIkDragActive(true);
     setIsIkToolPanelOpen(true);
-  }, [handleSetIkDragActive, setViewConfig]);
+  }, [handleSetIkDragActive]);
 
   const { items: toolboxItems, openTool } = useToolItems({
     t,
@@ -856,25 +954,30 @@ export function AppLayout({
 
   const handleIkDragActiveChange = useCallback(
     (active: boolean) => {
-      if (active) {
-        setViewConfig((prev) => ({ ...prev, showToolbar: true }));
-      }
       handleSetIkDragActive(active);
     },
-    [handleSetIkDragActive, setViewConfig],
+    [handleSetIkDragActive],
   );
 
   const handleCaptureSnapshot = useCallback(
     async (options: SnapshotCaptureOptions) => {
-      if (!snapshotActionRef.current) {
+      const captureAction = resolveSnapshotCaptureAction({
+        liveCaptureAction: snapshotActionRef.current,
+        frozenPreviewCaptureAction: snapshotPreviewCaptureActionRef.current,
+        preferFrozenPreviewCapture: Boolean(snapshotPreviewSession),
+      });
+
+      if (!captureAction) {
         showToast(t.snapshotFailed, 'info');
         return;
       }
 
       try {
         setIsSnapshotCapturing(true);
-        await snapshotActionRef.current(options);
-        setIsSnapshotDialogOpen(false);
+        await captureAction({
+          ...options,
+          cameraSnapshot: snapshotPreviewSession?.cameraSnapshot ?? null,
+        });
       } catch (error) {
         console.error('Snapshot failed:', error);
         showToast(t.snapshotFailed, 'info');
@@ -882,7 +985,7 @@ export function AppLayout({
         setIsSnapshotCapturing(false);
       }
     },
-    [showToast, t],
+    [handleCloseSnapshotDialog, showToast, snapshotPreviewSession, t],
   );
 
   const {
@@ -922,12 +1025,97 @@ export function AppLayout({
     labels: {
       failedToParseFormat: t.failedToParseFormat,
       importPackageAssetBundleHint: t.importPackageAssetBundleHint,
+      importPrimitiveGeometryHint: t.importPrimitiveGeometryHint,
       usdPreviewRequiresOpen: t.usdPreviewRequiresOpen,
       xacroSourceOnlyPreviewHint: t.xacroSourceOnlyPreviewHint,
     },
     setDocumentLoadState,
     showToast,
   });
+
+  const handleRequestLoadRobot = useCallback(
+    async (
+      file: RobotFile,
+      intent: 'direct' | 'save-draft' | 'discard',
+    ): Promise<'loaded' | 'needs-draft-confirm' | 'blocked'> => {
+      if (selectedFile?.name === file.name) {
+        return 'loaded';
+      }
+
+      const shouldGuardLibrarySwitch =
+        sidebarTab === 'structure' &&
+        !shouldRenderAssembly &&
+        Boolean(selectedFile) &&
+        hasSimpleModeSourceEdits;
+
+      if (!shouldGuardLibrarySwitch || intent === 'discard') {
+        onLoadRobot(file);
+        return 'loaded';
+      }
+
+      if (intent === 'direct') {
+        return 'needs-draft-confirm';
+      }
+
+      if (!selectedFile) {
+        return 'blocked';
+      }
+
+      const fallbackStandaloneDraftUrdfContent =
+        selectedFile.format === 'mjcf'
+          ? draftUrdfContent
+          : (draftUrdfContent ?? urdfContentForViewer);
+      const draftFile = buildSimpleModeDraftFile({
+        selectedFile,
+        currentSourceContent: selectedFileDraftSourceContent,
+        fallbackUrdfContent: fallbackStandaloneDraftUrdfContent,
+        availableFiles,
+      });
+
+      if (!draftFile) {
+        showToast(t.simpleModeDraftSaveFailed, 'info');
+        return 'blocked';
+      }
+
+      const existingDraftIndex = availableFiles.findIndex((entry) => entry.name === draftFile.name);
+      const nextAvailableFiles =
+        existingDraftIndex === -1
+          ? [...availableFiles, draftFile]
+          : availableFiles.map((entry, index) =>
+              index === existingDraftIndex ? draftFile : entry,
+            );
+      setAvailableFiles(nextAvailableFiles);
+      setAllFileContents({
+        ...allFileContents,
+        [draftFile.name]: draftFile.content,
+      });
+      markUnsavedChangesBaselineSaved('robot');
+      showToast(
+        t.simpleModeDraftSaved.replace('{name}', draftFile.name.split('/').pop() || draftFile.name),
+        'success',
+      );
+
+      onLoadRobot(file);
+      return 'loaded';
+    },
+    [
+      allFileContents,
+      availableFiles,
+      draftUrdfContent,
+      hasSimpleModeSourceEdits,
+      onLoadRobot,
+      selectedFile,
+      selectedFileDraftSourceContent,
+      setAllFileContents,
+      setAvailableFiles,
+      shouldRenderAssembly,
+      showToast,
+      sidebarTab,
+      t.simpleModeDraftSaveFailed,
+      t.simpleModeDraftSaved,
+      urdfContentForViewer,
+    ],
+  );
 
   return (
     <div
@@ -971,7 +1159,7 @@ export function AppLayout({
         secondaryAction={headerSecondaryAction}
         onSnapshot={handleSnapshot}
         viewConfig={viewConfig}
-        viewAvailability={{ jointPanel: jointPanelAvailable }}
+        viewAvailability={{ jointPanel: true }}
         setViewConfig={setViewConfig}
       />
 
@@ -1004,8 +1192,10 @@ export function AppLayout({
           collapsed={sidebar.leftCollapsed}
           onToggle={() => toggleSidebar('left')}
           availableFiles={availableFiles}
-          onLoadRobot={onLoadRobot}
-          currentFileName={previewFileName ?? selectedFile?.name}
+          onLoadRobot={handlePreviewFileWithFeedback}
+          onRequestLoadRobot={handleRequestLoadRobot}
+          currentFileName={selectedFile?.name}
+          sourceFilePath={viewerSourceFilePath}
           assemblyState={assemblyState}
           onAddComponent={handleAddComponent}
           onDeleteLibraryFile={handleDeleteLibraryFile}
@@ -1020,6 +1210,8 @@ export function AppLayout({
           onSwitchToProMode={handleSwitchTreeEditorToProMode}
           onRequestSwitchToStructure={handleRequestSwitchTreeEditorToStructure}
           isReadOnly={isPreviewingWorkspaceSource}
+          showJointPanel={viewConfig.showJointPanel}
+          onJointAngleChange={handleJointChange}
         />
 
         {/* Viewer Container — z-0 stacking context keeps floating panels below sidebars (z-20);
@@ -1039,28 +1231,23 @@ export function AppLayout({
               onHover={handleHover}
               onUpdate={handleUpdate}
               assets={viewerAssets}
+              allFileContents={allFileContents}
               lang={lang}
               theme={theme}
               showVisual={showVisual}
               setShowVisual={handleSetShowVisual}
               snapshotAction={snapshotActionRef}
-              showToolbar={viewConfig.showToolbar}
-              setShowToolbar={(show) => setViewConfig((prev) => ({ ...prev, showToolbar: show }))}
+              onCanvasCreated={(state) => {
+                viewerCanvasStateRef.current = state;
+              }}
               showOptionsPanel={viewConfig.showOptionsPanel}
               setShowOptionsPanel={handleSetDetailOptionsPanelVisibility}
-              showJointPanel={viewConfig.showJointPanel && jointPanelAvailable}
-              setShowJointPanel={(show) =>
-                setViewConfig((prev) => ({ ...prev, showJointPanel: show }))
-              }
+              showJointPanel={false}
               availableFiles={availableFiles}
               urdfContent={urdfContentForViewer}
               viewerSourceFormat={viewerSourceFormat}
               sourceFilePath={viewerSourceFilePath}
-              sourceFile={getViewerSourceFile({
-                selectedFile,
-                shouldRenderAssembly,
-                workspaceSourceFile: workspaceViewerMjcfSourceFile,
-              })}
+              sourceFile={viewerSourceFile}
               onRobotDataResolved={handleRobotDataResolved}
               onDocumentLoadEvent={handleViewerDocumentLoadEvent}
               onRuntimeRobotLoaded={handleViewerRuntimeRobotLoaded}
@@ -1081,8 +1268,6 @@ export function AppLayout({
               onAssemblyTransform={handleAssemblyTransform}
               onComponentTransform={handleComponentTransform}
               onBridgeTransform={handleBridgeTransform}
-              filePreview={filePreview}
-              onClosePreview={handleClosePreview}
               ikDragActive={ikDragActive}
               pendingViewerToolMode={pendingViewerToolMode}
               onConsumePendingViewerToolMode={() => setPendingViewerToolMode(null)}
@@ -1093,7 +1278,7 @@ export function AppLayout({
           <ConnectedDocumentLoadingOverlay
             lang={lang}
             targetFileName={resolveDocumentLoadingOverlayTargetFileName({
-              previewFileName: previewFileName ?? null,
+              previewFileName: null,
               selectedFileName: selectedFile?.name ?? null,
               documentLoadState,
             })}
@@ -1109,6 +1294,19 @@ export function AppLayout({
             />
           ) : null}
         </div>
+        <FilePreviewWindow
+          file={previewFile}
+          previewRobot={previewRobot}
+          previewState={filePreview}
+          assets={viewerAssets}
+          allFileContents={allFileContents}
+          availableFiles={availableFiles}
+          documentLoadState={documentLoadState}
+          lang={lang}
+          theme={theme}
+          onClose={handleClosePreview}
+          onAddComponent={sidebarTab === 'workspace' ? handleAddComponent : undefined}
+        />
 
         <PropertyEditor
           robot={propertyEditorSelectionContext.robot}
@@ -1118,7 +1316,7 @@ export function AppLayout({
           onAddCollisionBody={handleAddCollisionBody}
           onHover={handleHover}
           mode={mergedAppMode}
-          assets={assets}
+          assets={viewerAssets}
           onUploadAsset={handleUploadAsset}
           motorLibrary={motorLibrary}
           lang={lang}
@@ -1127,6 +1325,7 @@ export function AppLayout({
           onToggle={() => toggleSidebar('right')}
           readOnlyMessage={isPreviewingWorkspaceSource ? t.previewReadOnlyHint : undefined}
           jointTypeLocked={Boolean(propertyEditorSelectionContext.selectedClosedLoopBridge)}
+          sourceFilePath={viewerSourceFilePath}
         />
       </div>
 
@@ -1134,7 +1333,9 @@ export function AppLayout({
         isOpen={isSnapshotDialogOpen}
         isCapturing={isSnapshotCapturing}
         lang={lang}
-        onClose={() => setIsSnapshotDialogOpen(false)}
+        previewSession={snapshotPreviewSession}
+        onPreviewCaptureActionChange={handleSnapshotPreviewCaptureActionChange}
+        onClose={handleCloseSnapshotDialog}
         onCapture={handleCaptureSnapshot}
       />
 
@@ -1159,7 +1360,8 @@ export function AppLayout({
         isCollisionOptimizerOpen={isCollisionOptimizerOpen}
         loadingOptimizerLabel={t.loadingOptimizer}
         collisionOptimizationSource={collisionOptimizationSource}
-        assets={assets}
+        assets={viewerAssets}
+        sourceFilePath={viewerSourceFilePath}
         selection={selection}
         onCloseCollisionOptimizer={() => setIsCollisionOptimizerOpen(false)}
         onSelectCollisionTarget={handlePreviewCollisionOptimizationTarget}

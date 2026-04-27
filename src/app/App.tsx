@@ -26,7 +26,11 @@ import {
 } from './utils/documentLoadFlow';
 import { peekPreResolvedRobotImport } from './utils/preResolvedRobotImportCache';
 import { prewarmUsdSelectionInBackground } from './utils/usdSelectionPrewarm';
+import { prewarmUsdViewerRuntimesInBackground } from './utils/usdRuntimeStartupPrewarm';
+import { commitResolvedRobotLoad } from './utils/commitResolvedRobotLoad';
+import { resolveUsdViewerRoundtripSelection } from './utils/usdViewerRoundtripSelection';
 import { resolveAppModeAfterRobotContentChange } from './utils/contentChangeAppMode';
+import { resolveExportErrorMessage } from './utils/exportErrorMessage';
 import {
   mapRobotImportProgressToDocumentLoadPercent,
   resolveBootstrapDocumentLoadPhase,
@@ -34,6 +38,7 @@ import {
 } from './utils/documentLoadProgress';
 import {
   buildStandaloneImportAssetWarning,
+  canProceedWithStandaloneImportAssetWarning,
   collectStandaloneImportSupportAssetPaths,
 } from './utils/importPackageAssetReferences';
 import {
@@ -84,7 +89,7 @@ interface AppContentProps {
 import type { RobotImportResult } from '@/core/parsers/importRobotFile';
 import { resolveMJCFSource } from '@/core/parsers/mjcf/mjcfSourceResolver';
 import { translations, type Language } from '@/shared/i18n';
-import { isAssetLibraryOnlyFormat, isLibraryRobotExportableFormat } from '@/shared/utils';
+import { isLibraryRobotExportableFormat } from '@/shared/utils';
 import type { ExportDialogConfig } from '@/features/file-io/components/ExportDialog/ExportDialog';
 import type { ExportProgressState } from '@/features/file-io/types';
 import { getUsdStageExportHandler } from '@/features/editor';
@@ -479,10 +484,11 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     useState<ImportPreparationOverlayState | null>(null);
 
   // UI Store
-  const { lang, setAppMode, openSettings } = useUIStore(
+  const { lang, setAppMode, setSidebarTab, openSettings } = useUIStore(
     useShallow((state) => ({
       lang: state.lang,
       setAppMode: state.setAppMode,
+      setSidebarTab: state.setSidebarTab,
       openSettings: state.openSettings,
     })),
   );
@@ -531,17 +537,6 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
   const applyResolvedRobotImport = useCallback(
     (file: RobotFile, importResult: RobotImportResult) => {
       if (importResult.status === 'ready' || importResult.status === 'needs_hydration') {
-        if (importResult.status === 'ready') {
-          setRobot(importResult.robotData, {
-            resetHistory: true,
-            label: file.format === 'usd' ? 'Load USD stage' : 'Load imported robot',
-          });
-
-          if (file.format === 'xacro' && importResult.resolvedUrdfContent) {
-            setOriginalUrdfContent(importResult.resolvedUrdfContent);
-          }
-          markUnsavedChangesBaselineSaved('robot');
-        }
         const currentDocumentLoadState = useAssetsStore.getState().documentLoadState;
         setDocumentLoadState(
           preserveDocumentLoadProgressForSameFile({
@@ -595,41 +590,18 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
       });
       showToast(message, 'info');
     },
-    [setDocumentLoadState, setOriginalUrdfContent, setRobot, showToast, t],
-  );
-
-  const commitResolvedFileSelection = useCallback(
-    (file: RobotFile, options?: { reloadViewer?: boolean }) => {
-      const assetLibraryOnlyFile = isAssetLibraryOnlyFormat(file.format);
-      const originalFileFormat =
-        file.format === 'urdf' ||
-        file.format === 'mjcf' ||
-        file.format === 'usd' ||
-        file.format === 'xacro' ||
-        file.format === 'sdf'
-          ? file.format
-          : null;
-      if (options?.reloadViewer !== false) {
-        setViewerReloadKey((value) => value + 1);
-      }
-      setSelectedFile(file);
-      setOriginalUrdfContent(assetLibraryOnlyFile ? '' : file.content);
-      setOriginalFileFormat(originalFileFormat);
-      setSelection({ type: null, id: null });
-      const currentAppMode = useUIStore.getState().appMode;
-      const nextAppMode = resolveAppModeAfterRobotContentChange(currentAppMode);
-      if (nextAppMode !== currentAppMode) {
-        setAppMode(nextAppMode);
-      }
-    },
-    [setAppMode, setOriginalFileFormat, setOriginalUrdfContent, setSelectedFile, setSelection],
+    [setDocumentLoadState, showToast, t],
   );
 
   // Keep one internal loader so debug automation can force a reload of the
   // currently selected file without changing normal click behavior.
   const loadRobotFile = useCallback(
-    async (file: RobotFile, options?: { forceReload?: boolean }) => {
+    async (requestedFile: RobotFile, options?: { forceReload?: boolean }) => {
       const liveAssetsState = useAssetsStore.getState();
+      const file = resolveUsdViewerRoundtripSelection(
+        requestedFile,
+        liveAssetsState.availableFiles,
+      );
       const currentSelectedFile = liveAssetsState.selectedFile;
       const nextLoadSupportContextKey = buildRobotLoadSupportContextKey({
         availableFiles: liveAssetsState.availableFiles,
@@ -674,14 +646,16 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         const message = t.importPackageAssetBundleHint
           .replace('{packages}', assetLabel)
           .replace('{assets}', assetLabel);
-        setDocumentLoadState({
-          status: 'error',
-          fileName: file.name,
-          format: file.format,
-          error: message,
-        });
         showToast(message, 'info');
-        return;
+        if (!canProceedWithStandaloneImportAssetWarning(file)) {
+          setDocumentLoadState({
+            status: 'error',
+            fileName: file.name,
+            format: file.format,
+            error: message,
+          });
+          return;
+        }
       }
 
       const currentResolvedMjcfSource =
@@ -738,7 +712,21 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
 
         if (shouldCommitResolvedRobotSelection(preResolvedImportResult)) {
           lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-          commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
+          commitResolvedRobotLoad({
+            currentAppMode: useUIStore.getState().appMode,
+            file,
+            importResult: preResolvedImportResult,
+            markRobotBaselineSaved: () => markUnsavedChangesBaselineSaved('robot'),
+            onViewerReload: () => setViewerReloadKey((value) => value + 1),
+            reloadViewer: shouldReloadViewer,
+            setAppMode,
+            setOriginalFileFormat,
+            setOriginalUrdfContent,
+            setRobot,
+            setSelectedFile,
+            setSelection,
+            setSidebarTab,
+          });
         }
         applyResolvedRobotImport(file, preResolvedImportResult);
         if (
@@ -767,7 +755,13 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
         {
           availableFiles: liveAssetsState.availableFiles,
           assets: liveAssetsState.assets,
-          usdRobotData: liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null,
+          allFileContents: liveAssetsState.allFileContents,
+          // Fresh USD loads must go through worker hydration instead of short-
+          // circuiting through any previously prepared cache for the same path.
+          usdRobotData:
+            file.format === 'usd'
+              ? null
+              : (liveAssetsState.getUsdPreparedExportCache(file.name)?.robotData ?? null),
         },
         {
           onProgress: (progress) => {
@@ -833,7 +827,21 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
 
       if (shouldCommitResolvedRobotSelection(importResult)) {
         lastLoadSupportContextKeyRef.current = nextLoadSupportContextKey;
-        commitResolvedFileSelection(file, { reloadViewer: shouldReloadViewer });
+        commitResolvedRobotLoad({
+          currentAppMode: useUIStore.getState().appMode,
+          file,
+          importResult,
+          markRobotBaselineSaved: () => markUnsavedChangesBaselineSaved('robot'),
+          onViewerReload: () => setViewerReloadKey((value) => value + 1),
+          reloadViewer: shouldReloadViewer,
+          setAppMode,
+          setOriginalFileFormat,
+          setOriginalUrdfContent,
+          setRobot,
+          setSelectedFile,
+          setSelection,
+          setSidebarTab,
+        });
       }
       applyResolvedRobotImport(file, importResult);
       if (!shouldReloadViewer && importResult.status === 'ready' && file.format === 'mjcf') {
@@ -853,9 +861,15 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     },
     [
       applyResolvedRobotImport,
-      commitResolvedFileSelection,
       setDocumentLoadState,
       setAppMode,
+      setOriginalFileFormat,
+      setOriginalUrdfContent,
+      setRobot,
+      setSelectedFile,
+      setSelection,
+      setSidebarTab,
+      setViewerReloadKey,
       showToast,
       t,
     ],
@@ -875,6 +889,43 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
       return;
     }
 
+    const requestIdle = window.requestIdleCallback?.bind(window);
+    const cancelIdle = window.cancelIdleCallback?.bind(window);
+    let idleHandle: number | null = null;
+    let timeoutHandle: number | null = null;
+
+    const runPrewarm = () => {
+      prewarmUsdViewerRuntimesInBackground();
+    };
+
+    if (requestIdle) {
+      idleHandle = requestIdle(
+        () => {
+          runPrewarm();
+        },
+        { timeout: 1200 },
+      );
+
+      return () => {
+        if (idleHandle !== null && cancelIdle) {
+          cancelIdle(idleHandle);
+        }
+      };
+    }
+
+    timeoutHandle = window.setTimeout(runPrewarm, 16);
+    return () => {
+      if (timeoutHandle !== null) {
+        window.clearTimeout(timeoutHandle);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     const regressionDebugEnabled =
       import.meta.env.DEV ||
       new URLSearchParams(window.location.search).get('regressionDebug') === '1';
@@ -887,6 +938,8 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
     setRegressionAppHandlers({
       getAvailableFiles: () => useAssetsStore.getState().availableFiles,
       getSelectedFile: () => useAssetsStore.getState().selectedFile,
+      getUsdSceneSnapshot: (fileName: string) =>
+        useAssetsStore.getState().getUsdSceneSnapshot(fileName),
       getDocumentLoadState: () => useAssetsStore.getState().documentLoadState,
       getRobotState: () => ({
         name: useRobotStore.getState().name,
@@ -976,10 +1029,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
           showToast(result.warnings[0], 'info');
         }
       } catch (error) {
-        showToast(
-          error instanceof Error && error.message ? error.message : t.exportFailedParse,
-          'error',
-        );
+        showToast(resolveExportErrorMessage(error, t), 'error');
       } finally {
         setProjectExportProgress(null);
         setIsExporting(false);
@@ -1231,10 +1281,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
       }
       setDisconnectedWorkspaceUrdfDialog(null);
     } catch (error) {
-      showToast(
-        error instanceof Error && error.message ? error.message : t.exportFailedParse,
-        'error',
-      );
+      showToast(resolveExportErrorMessage(error, t), 'error');
     } finally {
       setIsDisconnectedWorkspaceUrdfExporting(false);
     }
@@ -1361,10 +1408,7 @@ export function AppContent({ extensions, onExposeActions }: AppContentProps = {}
                 }
                 setIsExportDialogOpen(false);
               } catch (error) {
-                showToast(
-                  error instanceof Error && error.message ? error.message : t.exportFailedParse,
-                  'error',
-                );
+                showToast(resolveExportErrorMessage(error, t), 'error');
               } finally {
                 setIsExporting(false);
               }

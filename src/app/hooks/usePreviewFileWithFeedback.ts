@@ -1,9 +1,12 @@
 import { useCallback, useRef } from 'react';
 import { useAssetsStore } from '@/store';
 import type { DocumentLoadState } from '@/store/assetsStore';
+import { classifyLibraryFileKind } from '@/shared/utils/robotFileSupport';
 import type { RobotData, RobotFile } from '@/types';
 import {
   buildStandaloneImportAssetWarning,
+  buildStandalonePrimitiveGeometryHint,
+  canProceedWithStandaloneImportAssetWarning,
   collectStandaloneImportSupportAssetPaths,
 } from '../utils/importPackageAssetReferences';
 import {
@@ -15,6 +18,7 @@ import { resolveRobotFileDataWithWorker } from './robotImportWorkerBridge';
 interface PreviewFeedbackLabels {
   failedToParseFormat: string;
   importPackageAssetBundleHint: string;
+  importPrimitiveGeometryHint: string;
   usdPreviewRequiresOpen: string;
   xacroSourceOnlyPreviewHint: string;
 }
@@ -45,6 +49,23 @@ export function usePreviewFileWithFeedback({
   const handlePreviewFileWithFeedback = useCallback(
     (file: RobotFile) => {
       const requestId = ++previewRequestIdRef.current;
+      if (classifyLibraryFileKind(file) === 'image') {
+        setDocumentLoadState({
+          status: 'ready',
+          fileName: file.name,
+          format: file.format,
+          error: null,
+          phase: null,
+          message: null,
+          progressMode: 'percent',
+          progressPercent: 100,
+          loadedCount: null,
+          totalCount: null,
+        });
+        handlePreviewFile(file);
+        return;
+      }
+
       const importedAssetPaths = collectStandaloneImportSupportAssetPaths(assets, availableFiles);
       const standaloneImportAssetWarning = buildStandaloneImportAssetWarning(
         file,
@@ -63,19 +84,34 @@ export function usePreviewFileWithFeedback({
           .replace('{packages}', assetLabel)
           .replace('{assets}', assetLabel);
 
-        setDocumentLoadState({
-          status: 'error',
-          fileName: file.name,
-          format: file.format,
-          error: warningMessage,
-          phase: null,
-          message: null,
-          progressPercent: null,
-          loadedCount: null,
-          totalCount: null,
-        });
         showToast(warningMessage, 'info');
-        return;
+        if (!canProceedWithStandaloneImportAssetWarning(file)) {
+          setDocumentLoadState({
+            status: 'error',
+            fileName: file.name,
+            format: file.format,
+            error: warningMessage,
+            phase: null,
+            message: null,
+            progressPercent: null,
+            loadedCount: null,
+            totalCount: null,
+          });
+          return;
+        }
+      }
+
+      const primitiveGeometryHint = buildStandalonePrimitiveGeometryHint(file, importedAssetPaths, {
+        allFileContents,
+        sourcePath: file.name,
+      });
+      if (primitiveGeometryHint) {
+        const assetLabel =
+          primitiveGeometryHint.siblingMeshAssetCount >
+          primitiveGeometryHint.siblingMeshAssetPaths.length
+            ? `${primitiveGeometryHint.siblingMeshAssetPaths.join(', ')}, ...`
+            : primitiveGeometryHint.siblingMeshAssetPaths.join(', ');
+        showToast(labels.importPrimitiveGeometryHint.replace('{assets}', assetLabel), 'info');
       }
 
       setDocumentLoadState({
@@ -139,6 +175,18 @@ export function usePreviewFileWithFeedback({
           }
 
           if (previewResult.status === 'ready') {
+            setDocumentLoadState({
+              status: 'ready',
+              fileName: file.name,
+              format: file.format,
+              error: null,
+              phase: null,
+              message: null,
+              progressMode: 'percent',
+              progressPercent: 100,
+              loadedCount: null,
+              totalCount: null,
+            });
             return;
           }
 
@@ -218,6 +266,7 @@ export function usePreviewFileWithFeedback({
       handlePreviewFile,
       labels.failedToParseFormat,
       labels.importPackageAssetBundleHint,
+      labels.importPrimitiveGeometryHint,
       labels.usdPreviewRequiresOpen,
       labels.xacroSourceOnlyPreviewHint,
       setDocumentLoadState,

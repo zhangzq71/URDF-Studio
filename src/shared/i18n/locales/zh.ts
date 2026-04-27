@@ -138,7 +138,6 @@ export const zh: TranslationKeys = {
   originRelativeParentJoint: '原点 (相对于父 Joint)',
   linkFrame: '连杆',
   parentJointFrame: '父 Joint',
-  childLinkFrameMatchesParentJoint: '对子连杆来说，当前 link 坐标系与父 Joint 坐标系重合。',
   rootLinkOnlyFrameHint: '当前连杆没有父 Joint，所以只能使用连杆坐标系。',
   position: '位置',
   rotation: '旋转',
@@ -306,6 +305,14 @@ export const zh: TranslationKeys = {
   minimize: '最小化',
   maximize: '最大化',
   restore: '还原',
+  inspectionNormalMode: '常规模式',
+  inspectionAdvancedMode: '专业模式',
+  inspectionConfigureChecks: '配置检查项目',
+  inspectionConfigureChecksDescription:
+    '常规模式仅保留勾选操作；如需查看权重、影响程度和完整评分口径，请切换到专业模式。',
+  inspectionSelectedChecksLabel: '已选择检查项',
+  inspectionSelectAll: '全选全部',
+  inspectionClearAll: '清空全部',
   inspectionScopeDescription: '按类别或单项勾选本次需要执行的审阅项。',
   inspectionSelectedChecksSummary: '已选择 {selected}/{total} 项检查',
   inspectionRobotSnapshot: '机器人快照',
@@ -339,7 +346,7 @@ export const zh: TranslationKeys = {
   inspectionNormalizedModel: '当前模型',
   inspectionRegenerateConfirmTitle: '重新生成前先保存当前报告？',
   inspectionRegenerateConfirmMessage:
-    '重新生成会覆盖当前审阅结果。若需要保留这份报告，请先保存；你也可以直接选择重新生成覆盖当前结果。',
+    '重新生成会关闭当前报告并返回常规模式/专业模式选择页。若需要保留这份报告，请先保存；保存后会留在当前结果页，你也可以直接选择重新生成并返回设置页重新运行审阅。',
 
   // Additional UI
   collapseSidebar: '收起侧栏',
@@ -350,6 +357,7 @@ export const zh: TranslationKeys = {
   jointControls: '关节控制',
   joints: '关节',
   jointsPanel: '关节面板',
+  noJointsYet: '当前还没有关节。',
   viewOptions: '细节选项',
   loadingRobot: '加载机器人中...',
   loadingRobotPreparing: '正在准备场景…',
@@ -442,7 +450,7 @@ export const zh: TranslationKeys = {
   dropFilesToImportHint:
     '支持 URDF、MJCF、USD、Xacro、ZIP/RAR/7Z/TAR 压缩包、文件夹、3D 模型和图片',
   simpleMode: '简单模式',
-  proMode: '专业模式',
+  proMode: '高级模式',
   structureTree: '结构树',
   assemblyTree: '组装视图',
   projectName: '项目名称',
@@ -467,22 +475,30 @@ export const zh: TranslationKeys = {
   webglRuntimeErrorMessage:
     '3D 视口在运行过程中遇到了未预期错误。请刷新页面；如果问题持续出现，请打开浏览器控制台检查详细报错。',
   emptyAssemblyHint:
-    '点击上方素材库里的机器人或网格文件即可添加，图片会打开预览；右键可删除或执行更多操作',
-  clickToAddComponent: '点击机器人或网格文件可直接添加，图片会打开预览；右键可删除或执行更多操作',
+    '点击上方素材库里的机器人或网格文件会先打开预览；点右侧“添加”才会加入工作空间；右键可删除或执行更多操作',
+  clickToAddComponent:
+    '点击机器人或网格文件会先打开预览；点右侧“添加”才会加入工作空间；右键可删除或执行更多操作',
   removeFromLibrary: '从素材库删除',
   deleteAllLibraryFiles: '全部删除',
   deleteAllLibraryFilesConfirmTitle: '确认删除全部素材',
   deleteAllLibraryFilesConfirmMessage: '是否删除素材库中的全部文件？此操作不可撤销。',
   rightClickToRename: '右键重命名',
   rightClickForActions: '右键更多操作',
+  simpleModeSwitchDraftConfirmTitle: '打开另一个模型前先处理当前修改？',
+  simpleModeSwitchDraftConfirmMessage:
+    '当前模型还有未保存的编辑。你可以先把当前结果存成草稿到素材库，再打开另一个模型；也可以直接丢弃这些修改。',
+  saveDraftAndOpen: '存草稿并打开',
+  discardAndOpen: '丢弃并打开',
+  simpleModeDraftSaved: '已保存草稿：{name}',
+  simpleModeDraftSaveFailed: '保存当前草稿失败，未切换模型。',
   generateWorkspaceUrdf: '生成 URDF',
   generateWorkspaceUrdfConfirmTitle: '切回简单模式前生成 URDF？',
   generateWorkspaceUrdfConfirmMessage:
-    '专业模式的工作空间有改动。是否先生成一个 URDF 到素材库，再切回简单模式？',
+    '高级模式的工作空间有改动。是否先生成一个 URDF 到素材库，再切回简单模式？',
   generateWorkspaceUrdfSuccess: '已生成 {name}',
   generateWorkspaceUrdfUnavailable: '当前工作空间没有可生成的内容。',
   generateWorkspaceUrdfDisconnected:
-    '当前工作空间包含未拼接的组件。请继续留在专业模式完成连接后，再生成单个 URDF。',
+    '当前工作空间包含未拼接的组件。请继续留在高级模式完成连接后，再生成单个 URDF。',
   generateAndSwitchToSimpleMode: '生成并切回',
   switchToSimpleWithoutGenerate: '不生成直接切回',
 
@@ -542,6 +558,8 @@ export const zh: TranslationKeys = {
     '所有数据仅在您的本地浏览器中处理，\n不会上传到云端服务器，您的数据是安全的。',
   importPackageAssetBundleHint:
     '这个机器人引用了 package 资源（{packages}）。请导入完整文件夹或压缩包，才能正确加载 mesh 和贴图，避免显示为占位方块。',
+  importPrimitiveGeometryHint:
+    '这个 URDF 没有引用同目录的 mesh 文件（{assets}）。URDF Studio 现在显示的是源文件里定义的基础体几何，而不是这些未被引用的 mesh。',
   importUspSuccess: '导入 USP 成功',
   addedFilesToAssetLibrary: '已添加 {count} 个文件到素材库',
   libraryImportSuccessful: '库导入成功！',
@@ -549,6 +567,8 @@ export const zh: TranslationKeys = {
   noDefinitionFilesFound: '未找到 URDF/MJCF/USD 文件。',
   noSupportedImportFilesFound: '未找到可导入的机器人、网格或图片文件。',
   importFailedCheckFiles: '导入失败。请检查文件是否有效。',
+  importBackgroundAssetsStillLoadingFailed:
+    '机器人已经打开，但部分导入资源在后台补齐时失败了。如果仍有占位显示，请重新导入该压缩包。',
   jointName: '关节名称',
   motorType: '电机型号',
   addedComponent: '已添加组件: {name}',
@@ -565,6 +585,8 @@ export const zh: TranslationKeys = {
   exportFailedParse: '导出失败：文件解析失败',
   exportClosedLoopUrdfUnsupported:
     '无法将 {name} 导出为 URDF：检测到 {count} 个闭链约束。核心 URDF 只支持树形拓扑，请改用 MJCF、Xacro、SDF 或 .usp。',
+  exportUrdfBallJointUnsupported:
+    '无法将 {name} 导出为 URDF：检测到 ball 球关节。核心 URDF 不支持球关节，请改用 MJCF、SDF 或 Xacro，或将其改写为可表达的关节组合。',
   exportLibraryParseFailed: '解析素材库文件失败：{file}',
   exportLibraryUnsupportedFormat: '素材库导出不支持该格式：{format}',
   usdExportRequiresLoadedStage: '当前 USD 导出仅支持在当前 3D 场景中导出已加载完成的 USD 模型。',
@@ -617,9 +639,16 @@ export const zh: TranslationKeys = {
   snapshotFormatWebp: 'WebP',
   snapshotCompressionQuality: '图片压缩',
   snapshotCompressionLossless: 'PNG 为无损导出',
-  snapshotHideGrid: '导出时移除参考网格',
+  snapshotHideGrid: '网格',
   snapshotAAMode: '超采样抗锯齿',
   snapshotAdvancedLook: '高级光影',
+  snapshotPreviewTitle: '实时预览',
+  snapshotPreviewAlt: '快照实时预览',
+  snapshotPreviewLoading: '正在生成预览…',
+  snapshotPreviewRefreshing: '正在更新预览…',
+  snapshotPreviewReady: '预览已就绪',
+  snapshotPreviewFailed: '预览更新失败',
+  snapshotPreviewRetryingHint: '继续调整参数会自动再次尝试生成预览。',
   snapshotCapture: '导出快照',
   snapshotCapturing: '正在导出…',
   failedToProcessFiles: '处理文件失败',
@@ -759,10 +788,10 @@ export const zh: TranslationKeys = {
   exportDoExportProject: '导出 .usp',
   exportProjectWorkspaceSummary: '导出当前工作区工程',
   exportProjectWorkspaceSummaryDesc:
-    '会打包当前 workspace 的组件、桥接关系、源文件、资源文件、历史状态以及恢复工程所需的元数据，方便完整回到专业模式继续编辑。',
+    '会打包当前 workspace 的组件、桥接关系、源文件、资源文件、历史状态以及恢复工程所需的元数据，方便完整回到高级模式继续编辑。',
   disconnectedWorkspaceUrdfExportTitle: '导出多个 URDF？',
   disconnectedWorkspaceUrdfExportMessage:
-    '当前专业模式工作空间包含 {componentCount} 个组件，分布在 {connectedGroupCount} 个未连接的组里。直接导出单个 URDF 语义不明确。你可以改为把每个组件分别打包成独立 URDF，或者继续编辑。',
+    '当前高级模式工作空间包含 {componentCount} 个组件，分布在 {connectedGroupCount} 个未连接的组里。直接导出单个 URDF 语义不明确。你可以改为把每个组件分别打包成独立 URDF，或者继续编辑。',
   exportMultipleUrdfs: '导出多个 URDF',
   continueEditing: '继续编辑',
   exportFooterProjectArchive: '.usp 工程包',
@@ -942,9 +971,9 @@ export const zh: TranslationKeys = {
   hardwareInterface: '控制接口',
   hardwareInterfaceDescRos1: '写入每个 transmission 块中的 ROS1 hardware_interface 类型。',
   hardwareInterfaceDescRos2: '写入每个 ros2_control joint 条目中的 ROS2 command_interface 名称。',
-  hardwareInterfaceEffort: '力矩 (effort)',
-  hardwareInterfacePosition: '位置 (position)',
-  hardwareInterfaceVelocity: '速度 (velocity)',
+  hardwareInterfaceEffort: '力矩',
+  hardwareInterfacePosition: '位置',
+  hardwareInterfaceVelocity: '速度',
   exporting: '导出中...',
   collisionOptimizerScope: '优化范围',
   collisionOptimizerScopeAll: '全部候选',

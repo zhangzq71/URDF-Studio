@@ -8,7 +8,6 @@ import {
   hasGeometryMeshMaterialGroups,
   getVisualGeometryEntries,
 } from '@/core/robot';
-import { getCollisionBoxDisplayCylinderTransform } from '@/core/utils/collisionBoxDisplay';
 import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
 import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import {
@@ -145,16 +144,6 @@ function patchGeometryCategory({
   }
 
   if (geometry.type === GeometryType.BOX) {
-    if (isCollision) {
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 30), collisionBaseMaterial);
-      const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dims);
-      mesh.scale.set(...scale);
-      mesh.rotation.set(...rotation);
-      addPrimitive(mesh);
-      applyPrimitiveVisualOverride(mesh);
-      return;
-    }
-
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
       isCollision
@@ -180,6 +169,59 @@ function patchGeometryCategory({
     mesh.scale.set(dims.x || 1, dims.y || 1, 1);
     addPrimitive(mesh);
     applyPrimitiveVisualOverride(mesh);
+
+    // Add overlay meshes for multi-pass Gazebo materials (e.g. alpha-blended
+    // texture layers like field marking lines on a grass carpet).
+    if (!isCollision) {
+      const authoredMaterial = geometry.authoredMaterials?.[0];
+      const overlayPasses =
+        authoredMaterial?.passes?.filter(
+          (pass) => pass.texture && pass.sceneBlend === 'alpha_blend',
+        ) ?? [];
+
+      for (const overlayPass of overlayPasses) {
+        if (!overlayPass.texture) {
+          continue;
+        }
+
+        const overlayMat = createMatteMaterial({
+          color: '#ffffff',
+          opacity: 1,
+          transparent: true,
+          preserveExactColor: true,
+        });
+        overlayMat.side = THREE.DoubleSide;
+        overlayMat.depthWrite = false;
+        overlayMat.polygonOffset = true;
+        overlayMat.polygonOffsetFactor = -1;
+        overlayMat.polygonOffsetUnits = -1;
+
+        const overlayMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), overlayMat);
+        overlayMesh.scale.set(dims.x || 1, dims.y || 1, 1);
+        overlayMesh.renderOrder = 1;
+        addPrimitive(overlayMesh);
+
+        const overlayLoader = new THREE.TextureLoader(
+          createLoadingManager(assets, sourceFileDir ?? ''),
+        );
+        overlayLoader.load(
+          overlayPass.texture,
+          (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            overlayMat.map = texture;
+            overlayMat.needsUpdate = true;
+          },
+          undefined,
+          (error) => {
+            console.error(
+              '[EditorViewer] Failed to load multi-pass overlay texture:',
+              overlayPass.texture,
+              error,
+            );
+          },
+        );
+      }
+    }
   } else if (geometry.type === GeometryType.SPHERE || geometry.type === GeometryType.ELLIPSOID) {
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1, 30, 30),
@@ -550,20 +592,15 @@ function getAuthoredMaterialSignature(geometry: LinkGeometry | undefined): strin
   const authoredMaterials = geometry?.authoredMaterials ?? [];
   return JSON.stringify(
     authoredMaterials.map((material) => ({
-      name: String(material.name || '').trim(),
-      color: String(material.color || '')
-        .trim()
-        .toLowerCase(),
-      texture: String(material.texture || '').trim(),
-      opacity: Number.isFinite(material.opacity) ? Number(material.opacity) : null,
-      roughness: Number.isFinite(material.roughness) ? Number(material.roughness) : null,
-      metalness: Number.isFinite(material.metalness) ? Number(material.metalness) : null,
-      emissive: String(material.emissive || '')
-        .trim()
-        .toLowerCase(),
-      emissiveIntensity: Number.isFinite(material.emissiveIntensity)
-        ? Number(material.emissiveIntensity)
-        : null,
+      name: (material.name || '').trim(),
+      color: (material.color || '').trim().toLowerCase(),
+      colorRgba: material.colorRgba ?? null,
+      texture: (material.texture || '').trim(),
+      opacity: material.opacity ?? null,
+      roughness: material.roughness ?? null,
+      metalness: material.metalness ?? null,
+      emissive: (material.emissive || '').trim().toLowerCase(),
+      emissiveIntensity: material.emissiveIntensity ?? null,
     })),
   );
 }
@@ -572,8 +609,8 @@ function getAuthoredMaterialSlotSignature(geometry: LinkGeometry | undefined): s
   const authoredMaterials = geometry?.authoredMaterials ?? [];
   return JSON.stringify(
     authoredMaterials.map((material) => ({
-      name: String(material.name || '').trim(),
-      texture: String(material.texture || '').trim(),
+      name: (material.name || '').trim(),
+      texture: (material.texture || '').trim(),
     })),
   );
 }
@@ -582,10 +619,10 @@ function getMeshMaterialGroupSignature(geometry: LinkGeometry | undefined): stri
   const meshMaterialGroups = geometry?.meshMaterialGroups ?? [];
   return JSON.stringify(
     meshMaterialGroups.map((group) => ({
-      meshKey: String(group.meshKey || '').trim(),
-      start: Number(group.start),
-      count: Number(group.count),
-      materialIndex: Number(group.materialIndex),
+      meshKey: (group.meshKey || '').trim(),
+      start: group.start,
+      count: group.count,
+      materialIndex: group.materialIndex,
     })),
   );
 }
@@ -645,20 +682,10 @@ function patchPrimitiveDimensionsInPlace(
 
   switch (geometry.type) {
     case GeometryType.BOX:
-      if (isCollision) {
-        if (
-          !(mesh.geometry instanceof THREE.CylinderGeometry) &&
-          mesh.geometry.type !== 'CylinderGeometry'
-        ) {
-          const previousMeshGeometry = mesh.geometry;
-          mesh.geometry = new THREE.CylinderGeometry(1, 1, 1, 30);
-          previousMeshGeometry?.dispose?.();
-        }
-
-        const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dims);
-        mesh.scale.set(...scale);
-        mesh.rotation.set(...rotation);
-        return true;
+      if (!(mesh.geometry instanceof THREE.BoxGeometry) && mesh.geometry.type !== 'BoxGeometry') {
+        const previousMeshGeometry = mesh.geometry;
+        mesh.geometry = new THREE.BoxGeometry(1, 1, 1);
+        previousMeshGeometry?.dispose?.();
       }
 
       mesh.scale.set(dims.x || 0.1, dims.y || 0.1, dims.z || 0.1);
@@ -858,6 +885,22 @@ interface ResolvedPatchTarget {
   usesSyntheticAttachmentMapping: boolean;
 }
 
+function updateRuntimeLinkDisplayName(
+  linkObject: THREE.Object3D,
+  displayName: string | undefined,
+): boolean {
+  const nextDisplayName = displayName?.trim() || linkObject.userData?.linkId || linkObject.name;
+  if (linkObject.userData?.displayName === nextDisplayName) {
+    return false;
+  }
+
+  if (!linkObject.userData) {
+    linkObject.userData = {};
+  }
+  linkObject.userData.displayName = nextDisplayName;
+  return true;
+}
+
 function getSyntheticGeomOrdinal(linkName: string): number | null {
   const match = linkName.trim().match(/^(.*)_geom_(\d+)$/);
   if (!match) {
@@ -947,11 +990,28 @@ export function applyGeometryPatchInPlace({
   invalidate,
   isPatchTargetValid,
 }: ApplyGeometryPatchOptions): boolean {
-  const resolvedPatchTarget = resolvePatchTarget(robotModel, patch.linkName);
+  const linkRuntimeName = patch.linkData.id || patch.previousLinkData.id || patch.linkName;
+  const linkDisplayName = patch.linkDisplayName || patch.linkData.name || linkRuntimeName;
+  const resolvedPatchTarget = resolvePatchTarget(robotModel, linkRuntimeName);
   if (!resolvedPatchTarget) return false;
 
   const { linkObject, visualTargetGroup, collisionTargetGroup, usesSyntheticAttachmentMapping } =
     resolvedPatchTarget;
+  const metadataChanged = patch.linkNameChanged
+    ? updateRuntimeLinkDisplayName(linkObject, linkDisplayName)
+    : false;
+
+  if (
+    !patch.visualChanged &&
+    !patch.visualBodiesChanged &&
+    !patch.collisionChanged &&
+    !patch.collisionBodiesChanged
+  ) {
+    if (metadataChanged) {
+      invalidate();
+    }
+    return true;
+  }
 
   if (patch.visualChanged || patch.visualBodiesChanged) {
     let visualPatched = false;
@@ -960,7 +1020,7 @@ export function applyGeometryPatchInPlace({
       visualPatched = patchVisualEntriesInPlace({
         robotModel,
         linkObject,
-        linkName: patch.linkName,
+        linkName: linkRuntimeName,
         previousLinkData: patch.previousLinkData,
         nextLinkData: patch.linkData,
         assets,
@@ -992,7 +1052,7 @@ export function applyGeometryPatchInPlace({
         patchGeometryCategory({
           robotModel,
           linkObject,
-          linkName: patch.linkName,
+          linkName: linkRuntimeName,
           category: 'visual',
           geometry: patch.linkData.visual,
           assets,
@@ -1026,7 +1086,7 @@ export function applyGeometryPatchInPlace({
         patchGeometryCategory({
           robotModel,
           linkObject,
-          linkName: patch.linkName,
+          linkName: linkRuntimeName,
           category: 'visual',
           geometry: patch.linkData.visual,
           assets,
@@ -1049,7 +1109,7 @@ export function applyGeometryPatchInPlace({
       collisionPatched = patchCollisionEntriesInPlace({
         robotModel,
         linkObject,
-        linkName: patch.linkName,
+        linkName: linkRuntimeName,
         previousLinkData: patch.previousLinkData,
         nextLinkData: patch.linkData,
         assets,
@@ -1081,7 +1141,7 @@ export function applyGeometryPatchInPlace({
         patchGeometryCategory({
           robotModel,
           linkObject,
-          linkName: patch.linkName,
+          linkName: linkRuntimeName,
           category: 'collision',
           geometry: patch.linkData.collision,
           assets,
@@ -1115,7 +1175,7 @@ export function applyGeometryPatchInPlace({
         patchGeometryCategory({
           robotModel,
           linkObject,
-          linkName: patch.linkName,
+          linkName: linkRuntimeName,
           category: 'collision',
           geometry: patch.linkData.collision,
           assets,

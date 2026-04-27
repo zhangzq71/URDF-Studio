@@ -8,7 +8,13 @@
  * - windows\\path\\part.stl
  */
 
-import { GeometryType, type RobotData, type RobotState, type UrdfLink } from '@/types';
+import {
+  GeometryType,
+  type RobotData,
+  type RobotState,
+  type SdfHeightmapTexture,
+  type UrdfLink,
+} from '@/types';
 
 const normalizeRelativePath = (path: string): string => {
   const segments = path.split('/');
@@ -322,19 +328,33 @@ function rewriteGeometryTextureRefsForSource<T extends UrdfLink['visual'] | Urdf
   let materialsChanged = false;
   const nextAuthoredMaterials = authoredMaterials.map((material) => {
     const texturePath = material.texture?.trim();
-    if (!texturePath) {
-      return material;
-    }
+    const resolvedTexturePath = texturePath
+      ? rewriteTexturePathForSource(texturePath, sourceFilePath)
+      : undefined;
+    const textureChanged = texturePath && resolvedTexturePath !== texturePath;
 
-    const resolvedTexturePath = rewriteTexturePathForSource(texturePath, sourceFilePath);
-    if (resolvedTexturePath === texturePath) {
+    let passesChanged = false;
+    const nextPasses = material.passes?.map((pass) => {
+      if (!pass.texture?.trim()) {
+        return pass;
+      }
+      const resolvedPassTexture = rewriteTexturePathForSource(pass.texture, sourceFilePath);
+      if (resolvedPassTexture === pass.texture) {
+        return pass;
+      }
+      passesChanged = true;
+      return { ...pass, texture: resolvedPassTexture };
+    });
+
+    if (!textureChanged && !passesChanged) {
       return material;
     }
 
     materialsChanged = true;
     return {
       ...material,
-      texture: resolvedTexturePath,
+      ...(textureChanged ? { texture: resolvedTexturePath } : {}),
+      ...(passesChanged ? { passes: nextPasses } : {}),
     };
   });
 
@@ -352,7 +372,13 @@ function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['c
   geometry: T,
   sourceFilePath?: string | null,
 ): T {
-  if (!geometry || geometry.type !== GeometryType.MESH || !geometry.meshPath) {
+  if (!geometry || !geometry.meshPath) {
+    return geometry;
+  }
+
+  const isRewritableType =
+    geometry.type === GeometryType.MESH || geometry.type === GeometryType.HFIELD;
+  if (!isRewritableType) {
     return geometry;
   }
 
@@ -361,10 +387,40 @@ function rewriteMeshGeometryForSource<T extends UrdfLink['visual'] | UrdfLink['c
     return geometry;
   }
 
-  return {
+  const result = {
     ...geometry,
     meshPath: resolvedPath,
   };
+
+  if (geometry.type === GeometryType.HFIELD && geometry.sdfHeightmap) {
+    const hfield = geometry.sdfHeightmap;
+    const resolvedUri = resolveImportedAssetPath(hfield.uri, sourceFilePath);
+
+    const resolvedTextures: SdfHeightmapTexture[] = hfield.textures.map((tex) => {
+      const resolvedDiffuse = tex.diffuse
+        ? resolveImportedAssetPath(tex.diffuse, sourceFilePath)
+        : undefined;
+      const resolvedNormal = tex.normal
+        ? resolveImportedAssetPath(tex.normal, sourceFilePath)
+        : undefined;
+      return {
+        ...tex,
+        ...(resolvedDiffuse && resolvedDiffuse !== tex.diffuse ? { diffuse: resolvedDiffuse } : {}),
+        ...(resolvedNormal && resolvedNormal !== tex.normal ? { normal: resolvedNormal } : {}),
+      };
+    });
+
+    return {
+      ...result,
+      sdfHeightmap: {
+        ...hfield,
+        uri: resolvedUri || hfield.uri,
+        textures: resolvedTextures,
+      },
+    } as T;
+  }
+
+  return result as T;
 }
 
 function rewriteGeometryAssetPathsForSource<T extends UrdfLink['visual'] | UrdfLink['collision']>(
@@ -602,6 +658,157 @@ export const normalizeTexturePathForExport = (texturePath: string): string => {
 
   return normalized;
 };
+
+function normalizeTextureSourceKey(texturePath: string): string {
+  const raw = (texturePath || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  if (/^(?:blob:|https?:\/\/|data:)/i.test(raw)) {
+    return raw;
+  }
+
+  let normalized = raw.replace(/\\/g, '/');
+  normalized = stripBlobPrefix(normalized);
+  normalized = stripPackagePrefix(normalized);
+  normalized = normalized.replace(/^[A-Za-z]:\//, '');
+  normalized = normalized.replace(/^\/+/, '');
+  normalized = normalized.replace(/^(\.\/)+/, '');
+  return normalizeRelativePath(normalized);
+}
+
+function buildTextureCollisionFallbackPath(texturePath: string): string {
+  const normalizedSourceKey = normalizeTextureSourceKey(texturePath);
+  if (!normalizedSourceKey || /^(?:blob:|https?:\/\/|data:)/i.test(normalizedSourceKey)) {
+    return normalizedSourceKey;
+  }
+
+  const segments = normalizedSourceKey.split('/').filter(Boolean);
+  if (segments.length === 0) {
+    return normalizedSourceKey;
+  }
+
+  const textureRootIndex = segments.findIndex((segment) => {
+    const lowerSegment = segment.toLowerCase();
+    return lowerSegment === 'texture' || lowerSegment === 'textures';
+  });
+  const materialRootIndex = segments.findIndex((segment) => {
+    const lowerSegment = segment.toLowerCase();
+    return lowerSegment === 'material' || lowerSegment === 'materials';
+  });
+  const boundaryIndex = textureRootIndex >= 0 ? textureRootIndex : materialRootIndex;
+  if (boundaryIndex < 0) {
+    return normalizedSourceKey;
+  }
+
+  const prefixSegments = segments.slice(0, boundaryIndex);
+  while (
+    prefixSegments.length > 0 &&
+    TEXTURE_EXPORT_ROOT_SEGMENTS.has(prefixSegments[prefixSegments.length - 1]!.toLowerCase())
+  ) {
+    prefixSegments.pop();
+  }
+
+  const suffixSegments = segments.slice(boundaryIndex + 1);
+  if (suffixSegments.length === 0) {
+    return normalizedSourceKey;
+  }
+
+  return normalizeRelativePath([...prefixSegments, ...suffixSegments].join('/'));
+}
+
+function dedupeExportPath(path: string, usedPaths: Set<string>): string {
+  const normalized = normalizeRelativePath(path);
+  if (!normalized) {
+    return normalized;
+  }
+
+  const extensionIndex = normalized.lastIndexOf('.');
+  const hasExtension = extensionIndex > normalized.lastIndexOf('/');
+  const base = hasExtension ? normalized.slice(0, extensionIndex) : normalized;
+  const extension = hasExtension ? normalized.slice(extensionIndex) : '';
+
+  let candidate = normalized;
+  let counter = 2;
+  while (usedPaths.has(candidate.toLowerCase())) {
+    candidate = `${base}_${counter}${extension}`;
+    counter += 1;
+  }
+
+  return candidate;
+}
+
+export function buildTextureExportPathOverrides(
+  texturePaths: Iterable<string>,
+): Map<string, string> {
+  const entries = new Map<
+    string,
+    {
+      basePath: string;
+      fallbackPath: string;
+      canonicalPath: string;
+    }
+  >();
+
+  for (const sourcePath of texturePaths) {
+    const canonicalPath = normalizeTextureSourceKey(sourcePath);
+    if (!canonicalPath || entries.has(canonicalPath)) {
+      continue;
+    }
+
+    entries.set(canonicalPath, {
+      basePath: normalizeTexturePathForExport(sourcePath),
+      fallbackPath: buildTextureCollisionFallbackPath(sourcePath),
+      canonicalPath,
+    });
+  }
+
+  const collisionsByBasePath = new Map<string, string[]>();
+  entries.forEach(({ basePath }, canonicalPath) => {
+    const key = basePath.toLowerCase();
+    const paths = collisionsByBasePath.get(key) ?? [];
+    paths.push(canonicalPath);
+    collisionsByBasePath.set(key, paths);
+  });
+
+  const overrides = new Map<string, string>();
+  const usedPaths = new Set<string>();
+
+  const sortedEntries = Array.from(entries.entries()).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+
+  for (const [canonicalPath, entry] of sortedEntries) {
+    const collisionGroup = collisionsByBasePath.get(entry.basePath.toLowerCase()) ?? [];
+    const hasCollision = collisionGroup.length > 1;
+    const candidatePath = hasCollision
+      ? entry.fallbackPath || entry.canonicalPath || entry.basePath
+      : entry.basePath || entry.fallbackPath || entry.canonicalPath;
+    const resolvedPath = dedupeExportPath(candidatePath, usedPaths);
+    if (!resolvedPath) {
+      continue;
+    }
+
+    usedPaths.add(resolvedPath.toLowerCase());
+    overrides.set(canonicalPath, resolvedPath);
+  }
+
+  return overrides;
+}
+
+export function resolveTextureExportPath(
+  texturePath: string,
+  overrides?: ReadonlyMap<string, string> | null,
+): string {
+  const raw = (texturePath || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  const canonicalPath = normalizeTextureSourceKey(raw);
+  return overrides?.get(canonicalPath) ?? normalizeTexturePathForExport(raw);
+}
 
 interface RewriteUrdfAssetPathsForExportOptions {
   exportRobotName: string;

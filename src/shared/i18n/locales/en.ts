@@ -146,8 +146,6 @@ export const en: TranslationKeys = {
   originRelativeParentJoint: 'Origin (Relative to Parent Joint)',
   linkFrame: 'Link',
   parentJointFrame: 'Parent Joint',
-  childLinkFrameMatchesParentJoint:
-    'For child links, the link frame currently matches the parent joint frame.',
   rootLinkOnlyFrameHint: 'This link has no parent joint, so only the link frame is available.',
   position: 'Position',
   rotation: 'Rotation',
@@ -324,6 +322,14 @@ export const en: TranslationKeys = {
   minimize: 'Minimize',
   maximize: 'Maximize',
   restore: 'Restore',
+  inspectionNormalMode: 'Normal Mode',
+  inspectionAdvancedMode: 'Professional Mode',
+  inspectionConfigureChecks: 'Configure Inspection Checks',
+  inspectionConfigureChecksDescription:
+    'Normal mode keeps setup focused on selection only. Switch to professional mode to review weights, impact labels, and detailed scoring guidance.',
+  inspectionSelectedChecksLabel: 'Selected Checks',
+  inspectionSelectAll: 'Select All',
+  inspectionClearAll: 'Clear All',
   inspectionScopeDescription: 'Choose the categories and individual checks to include in this run.',
   inspectionSelectedChecksSummary: '{selected} of {total} checks selected',
   inspectionRobotSnapshot: 'Robot Snapshot',
@@ -360,7 +366,7 @@ export const en: TranslationKeys = {
   inspectionNormalizedModel: 'Normalized Model',
   inspectionRegenerateConfirmTitle: 'Save the current report before regenerating?',
   inspectionRegenerateConfirmMessage:
-    'Regenerating will replace the current inspection result. Save this report first if you need to keep it; after saving you will return to the current result view, or you can regenerate now and overwrite it.',
+    'Regenerating will close the current report and return you to the Normal/Professional mode setup page. Save this report first if you need to keep it; after saving you will stay on the current result view, or you can regenerate now and go back to setup before running again.',
 
   // Additional UI
   collapseSidebar: 'Collapse sidebar',
@@ -371,6 +377,7 @@ export const en: TranslationKeys = {
   jointControls: 'Joint Controls',
   joints: 'Joints',
   jointsPanel: 'Joints Panel',
+  noJointsYet: 'No joints yet.',
   viewOptions: 'View Options',
   loadingRobot: 'Loading robot...',
   loadingRobotPreparing: 'Preparing scene...',
@@ -465,7 +472,7 @@ export const en: TranslationKeys = {
   dropFilesToImportHint:
     'Supports URDF, MJCF, USD, Xacro, ZIP/RAR/7Z/TAR archives, folders, 3D meshes, and images',
   simpleMode: 'Simple',
-  proMode: 'Pro',
+  proMode: 'Advanced',
   structureTree: 'Structure Tree',
   assemblyTree: 'Assembly View',
   projectName: 'Project Name',
@@ -490,9 +497,9 @@ export const en: TranslationKeys = {
   webglRuntimeErrorMessage:
     'The 3D viewport stopped rendering because an unexpected runtime error occurred. Refresh the page and check the browser console if the problem persists.',
   emptyAssemblyHint:
-    'Click robot or mesh files in the asset library above to add them. Image files open in preview; right-click for more actions',
+    'Click robot or mesh files in the asset library above to open a preview first. Use the Add button on the right to insert them into the workspace; right-click for more actions',
   clickToAddComponent:
-    'Click robot and mesh files to add them immediately. Images open in preview; right-click for more actions',
+    'Click robot and mesh files to open a preview first. Use the Add button on the right to insert them into the workspace; right-click for more actions',
   removeFromLibrary: 'Remove from Library',
   deleteAllLibraryFiles: 'Delete All',
   deleteAllLibraryFilesConfirmTitle: 'Delete all library files',
@@ -500,14 +507,21 @@ export const en: TranslationKeys = {
     'Delete all files in the asset library? This action cannot be undone.',
   rightClickToRename: 'Right-click to rename',
   rightClickForActions: 'Right-click for actions',
+  simpleModeSwitchDraftConfirmTitle: 'Save current edits before opening another model?',
+  simpleModeSwitchDraftConfirmMessage:
+    'The current model has unsaved edits. Save a draft into the asset library before opening the other model, or discard the current changes.',
+  saveDraftAndOpen: 'Save draft and open',
+  discardAndOpen: 'Discard and open',
+  simpleModeDraftSaved: 'Saved draft: {name}',
+  simpleModeDraftSaveFailed: 'Failed to save the current draft. The active model was not changed.',
   generateWorkspaceUrdf: 'Generate URDF',
-  generateWorkspaceUrdfConfirmTitle: 'Generate a URDF before leaving Pro mode?',
+  generateWorkspaceUrdfConfirmTitle: 'Generate a URDF before leaving Advanced mode?',
   generateWorkspaceUrdfConfirmMessage:
-    'The workspace changed in Pro mode. Generate a URDF into the asset library before switching back to Simple mode?',
+    'The workspace changed in Advanced mode. Generate a URDF into the asset library before switching back to Simple mode?',
   generateWorkspaceUrdfSuccess: 'Generated {name}',
   generateWorkspaceUrdfUnavailable: 'There is no workspace content to generate right now.',
   generateWorkspaceUrdfDisconnected:
-    'This workspace contains unconnected components. Stay in Pro mode and connect them before generating a single URDF.',
+    'This workspace contains unconnected components. Stay in Advanced mode and connect them before generating a single URDF.',
   generateAndSwitchToSimpleMode: 'Generate and switch',
   switchToSimpleWithoutGenerate: 'Switch without generating',
 
@@ -567,6 +581,8 @@ export const en: TranslationKeys = {
     'All data is processed locally in your browser.\nIt will not be uploaded to any cloud server. Your data is safe.',
   importPackageAssetBundleHint:
     'This robot references package assets ({packages}). Import the full folder or archive so meshes and textures are available instead of placeholders.',
+  importPrimitiveGeometryHint:
+    'This URDF does not reference the sibling mesh files ({assets}). URDF Studio is showing the primitive geometry authored in the source file.',
   importUspSuccess: 'USP imported successfully',
   addedFilesToAssetLibrary: 'Added {count} file(s) to asset library',
   libraryImportSuccessful: 'Library imported successfully!',
@@ -575,6 +591,8 @@ export const en: TranslationKeys = {
   noDefinitionFilesFound: 'No URDF/MJCF/USD file found.',
   noSupportedImportFilesFound: 'No supported robot, mesh, or image files were found to import.',
   importFailedCheckFiles: 'Failed to import. Please check if the file(s) are valid.',
+  importBackgroundAssetsStillLoadingFailed:
+    'The robot opened, but some imported support assets failed to finish loading in the background. Re-import the archive if placeholders remain.',
   jointName: 'Joint Name',
   motorType: 'Motor Type',
   addedComponent: 'Added component: {name}',
@@ -591,6 +609,8 @@ export const en: TranslationKeys = {
   exportFailedParse: 'Export failed: file parse error',
   exportClosedLoopUrdfUnsupported:
     'URDF export is unavailable for {name}: detected {count} closed-loop constraint(s). Core URDF only supports tree topologies. Use MJCF, Xacro, SDF, or .usp instead.',
+  exportUrdfBallJointUnsupported:
+    'URDF export is unavailable for {name}: detected a ball joint. Core URDF does not support ball joints. Use MJCF, SDF, or Xacro instead, or replace it with an equivalent supported joint chain.',
   exportLibraryParseFailed: 'Failed to parse library file: {file}',
   exportLibraryUnsupportedFormat: 'Library export does not support format: {format}',
   usdExportRequiresLoadedStage:
@@ -649,9 +669,16 @@ export const en: TranslationKeys = {
   snapshotFormatWebp: 'WebP',
   snapshotCompressionQuality: 'Image Compression',
   snapshotCompressionLossless: 'PNG exports stay lossless',
-  snapshotHideGrid: 'Remove reference grid from the snapshot',
+  snapshotHideGrid: 'Grid',
   snapshotAAMode: 'Supersampled AA',
   snapshotAdvancedLook: 'Advanced Look',
+  snapshotPreviewTitle: 'Live Preview',
+  snapshotPreviewAlt: 'Snapshot live preview',
+  snapshotPreviewLoading: 'Generating preview…',
+  snapshotPreviewRefreshing: 'Updating preview…',
+  snapshotPreviewReady: 'Preview ready',
+  snapshotPreviewFailed: 'Preview update failed',
+  snapshotPreviewRetryingHint: 'Adjusting options will trigger another preview attempt.',
   snapshotCapture: 'Export Snapshot',
   snapshotCapturing: 'Capturing…',
   failedToProcessFiles: 'Failed to process files',
@@ -794,10 +821,10 @@ export const en: TranslationKeys = {
   exportDoExportProject: 'Export .usp',
   exportProjectWorkspaceSummary: 'Export the current workspace project',
   exportProjectWorkspaceSummaryDesc:
-    'Packages the current workspace components, bridge joints, source files, asset blobs, history state, and the metadata needed to restore the full pro-mode editing session.',
+    'Packages the current workspace components, bridge joints, source files, asset blobs, history state, and the metadata needed to restore the full Advanced mode editing session.',
   disconnectedWorkspaceUrdfExportTitle: 'Export Multiple URDFs?',
   disconnectedWorkspaceUrdfExportMessage:
-    'This Pro mode workspace contains {componentCount} components across {connectedGroupCount} unconnected groups. A single URDF export would be ambiguous. Export each component as its own URDF package instead, or continue editing.',
+    'This Advanced mode workspace contains {componentCount} components across {connectedGroupCount} unconnected groups. A single URDF export would be ambiguous. Export each component as its own URDF package instead, or continue editing.',
   exportMultipleUrdfs: 'Export Multiple URDFs',
   continueEditing: 'Continue Editing',
   exportFooterProjectArchive: '.usp project archive',

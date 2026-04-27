@@ -317,6 +317,61 @@ test('buildRobotMetadataSnapshotForStage reconstructs robot metadata from export
     }
 });
 
+test('buildRobotMetadataSnapshotForStage reuses cached stage-only fallback metadata for repeated isaacsim roundtrip imports', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = createFallbackMetadataDelegate();
+        const firstSnapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot.usd', null);
+        const secondSnapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/two_link_robot.usd', null);
+
+        assert.ok(firstSnapshot);
+        assert.strictEqual(
+            secondSnapshot,
+            firstSnapshot,
+            'expected repeated isaacsim roundtrip imports without driver truth to reuse cached stage metadata',
+        );
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('getStageMetadataLayerTexts stops reopening identical relative-path layer texts before recursion blows the stack', () => {
+    const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+    delegate.safeExportLayerText = (layer) => layer?.ExportToString?.() || '';
+    delegate.safeOpenUsdStage = (stagePath) => ({
+        GetRootLayer() {
+            return {
+                identifier: stagePath,
+                ExportToString() {
+                    return exportedRootLayerText;
+                },
+            };
+        },
+    });
+
+    const stage = {
+        GetRootLayer() {
+            return {
+                identifier: 'unitree_model/B2/usd/b2.usd',
+                ExportToString() {
+                    return exportedRootLayerText;
+                },
+            };
+        },
+        GetUsedLayers() {
+            return [];
+        },
+    };
+
+    assert.doesNotThrow(() => {
+        const layerTexts = delegate.getStageMetadataLayerTexts(stage, 'unitree_model/B2/usd/b2.usd');
+        assert.deepEqual(layerTexts, [exportedRootLayerText.trim()]);
+    });
+});
+
 test('buildRobotMetadataSnapshotForStage preserves tiny explicit link dynamics from stage layers', () => {
     const previousWindow = globalThis.window;
     globalThis.window = { driver: null };
@@ -711,6 +766,81 @@ def Scope "colliders"
                 visualMeshCount: 0,
                 collisionMeshCount: 1,
                 collisionPrimitiveCounts: { mesh: 1 },
+            },
+        });
+    }
+    finally {
+        globalThis.window = previousWindow;
+    }
+});
+
+test('buildRobotMetadataSnapshotForStage keeps visual_0-style roundtrip container scopes on the owning link', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { driver: null };
+
+    try {
+        const delegate = Object.create(ThreeRenderDelegateCore.prototype);
+        delegate.meshes = {
+            '/Robot/base_link/visuals.proto_mesh_id0': {},
+            '/Robot/base_link/collisions.proto_box_id0': {},
+        };
+        delegate._protoMeshMetadataByMeshId = new Map();
+        delegate._robotMetadataSnapshotByStageSource = new Map();
+        delegate._robotMetadataBuildPromisesByStageSource = new Map();
+        delegate._nowPerfMs = () => 1234;
+        delegate.getNormalizedStageSourcePath = () => '/robots/base_link_roundtrip.usd';
+        delegate.getResolvedVisualTransformPrimPathForMeshId = () => '/Robot/base_link/visuals/visual_0/mesh';
+        delegate.getResolvedPrimPathForMeshId = () => '/Robot/base_link/collisions/collision_0/cube';
+        delegate.getStage = () => ({
+            GetRootLayer() {
+                return createLayer(`#usda 1.0
+(
+    defaultPrim = "Robot"
+)
+
+def Xform "Robot"
+{
+    def Xform "base_link"
+    {
+        def Xform "visuals"
+        {
+            def Xform "visual_0"
+            {
+                def Mesh "mesh"
+                {
+                }
+            }
+        }
+
+        def Xform "collisions"
+        {
+            def Xform "collision_0"
+            {
+                def Cube "cube"
+                {
+                    uniform token purpose = "guide"
+                }
+            }
+        }
+    }
+}
+`);
+            },
+            GetUsedLayers() {
+                return [];
+            },
+        });
+
+        const snapshot = delegate.buildRobotMetadataSnapshotForStage('/robots/base_link_roundtrip.usd', null);
+
+        assert.ok(snapshot);
+        assert.deepEqual(snapshot.linkParentPairs, []);
+        assert.equal(snapshot.meshCountsByLinkPath['/Robot/visual_0'], undefined);
+        assert.deepEqual(snapshot.meshCountsByLinkPath, {
+            '/Robot/base_link': {
+                visualMeshCount: 1,
+                collisionMeshCount: 1,
+                collisionPrimitiveCounts: { box: 1 },
             },
         });
     }

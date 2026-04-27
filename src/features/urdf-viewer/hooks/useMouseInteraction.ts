@@ -13,7 +13,7 @@ import type {
   ViewerSceneMode,
 } from '../types';
 import { isSingleDofJoint } from '../utils/jointTypes';
-import { collectGizmoRaycastTargets, isGizmoObject } from '../utils/raycast';
+import { collectGizmoRaycastTargets, isGizmoObject, resolveGizmoHoverAxis } from '../utils/raycast';
 import {
   collectPickTargets,
   collectSelectableHelperTargets,
@@ -29,6 +29,7 @@ import {
 } from '../utils/interactionMode';
 import {
   isPointerInteractionWithinClickThreshold,
+  resolveDeferredSelectionHoverState,
   shouldFinalizePointerInteraction,
   shouldDeferSelectionUntilPointerUp,
 } from '../utils/clickSelectionPolicy';
@@ -51,12 +52,14 @@ import { hasEffectivelyFiniteJointLimits } from '@/shared/utils/jointUnits';
 import type { ViewerHelperKind } from '../types';
 import { resolveDirectHelperInteraction } from '../utils/directHelperInteraction';
 import { resolveHelperSelectionIdentity } from '../utils/helperSelectionIdentity';
+import { resolveSelectionCommitHoverAction } from '../utils/selectionCommitHoverPolicy';
 import {
   armSelectionMissGuard,
   disarmSelectionMissGuard,
   clearSelectionMissGuardTimer,
   scheduleSelectionMissGuardReset,
   shouldDisarmSelectionMissGuardOnPointerMove,
+  shouldTreatPointerUpAsBackgroundMiss,
 } from '../utils/selectionMissGuard';
 
 const JOINT_DRAG_EPSILON = 1e-5;
@@ -184,8 +187,10 @@ export function useMouseInteraction({
   const selectionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingPointerSelectionRef = useRef<PendingPointerSelection | null>(null);
   const pointerInteractionActiveRef = useRef(false);
+  const pointerInteractionHitTargetRef = useRef(false);
   const pointerDownPositionRef = useRef<{ x: number; y: number } | null>(null);
   const pointerExceededClickThresholdRef = useRef(false);
+  const gizmoPointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const gizmoTargetsRef = useRef<THREE.Object3D[]>([]);
   const gizmoTargetsCacheKeyRef = useRef('');
   const gizmoTargetsUpdatedAtRef = useRef(0);
@@ -416,6 +421,25 @@ export function useMouseInteraction({
       onHover?.(null, null);
     };
 
+    const applyHoveredState = (
+      hoveredSelection: InteractionSelection,
+      highlightTarget?: THREE.Object3D | null,
+    ) => {
+      hoveredLinkRef.current =
+        hoveredSelection.type === 'link' && hoveredSelection.id ? hoveredSelection.id : null;
+      (hoveredLinkRef as any).currentMesh = highlightTarget ?? null;
+      (hoveredLinkRef as any).currentObjectIndex = hoveredSelection.objectIndex ?? null;
+      (hoveredLinkRef as any).currentSubType = hoveredSelection.subType ?? null;
+      onHover?.(
+        hoveredSelection.type,
+        hoveredSelection.id,
+        hoveredSelection.subType,
+        hoveredSelection.objectIndex,
+        hoveredSelection.helperKind,
+        hoveredSelection.highlightObjectId,
+      );
+    };
+
     const shouldBlockOrbitForPointer = (localX: number, localY: number) => {
       if (!robot) return false;
 
@@ -442,7 +466,13 @@ export function useMouseInteraction({
           ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
           : undefined;
       if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
-        return true;
+        // Only block orbit when a visible gizmo handle is actually targeted.
+        // The TransformControls picker meshes extend far beyond the visible
+        // handles; blocking orbit for those would prevent camera rotation in
+        // a large area around the gizmo.
+        if (resolveGizmoHoverAxis(nearestSceneHit.object) !== null) {
+          return true;
+        }
       }
 
       const pickTargets = getPickTargets('all');
@@ -555,6 +585,11 @@ export function useMouseInteraction({
       clickedJoint,
     }: PendingPointerSelection) => {
       armSelectionMissGuard(justSelectedRef);
+      const committedHoverAction = resolveSelectionCommitHoverAction(resolvedHit);
+
+      if (committedHoverAction.mode === 'preserve') {
+        applyHoveredState(committedHoverAction.hoveredSelection, resolvedHit.highlightTarget);
+      }
 
       if (onSelect || onMeshSelect) {
         if (resolvedHit.targetKind === 'helper') {
@@ -597,8 +632,10 @@ export function useMouseInteraction({
             subType: resolvedSubType,
             preferredIkHandleLinkId,
           });
+          const shouldDispatchMeshSelection =
+            selectionPlan.shouldSyncMeshSelection && typeof onMeshSelect === 'function';
 
-          if (onSelect) {
+          if (onSelect && !shouldDispatchMeshSelection) {
             const selectTarget = selectionPlan.selectTarget;
             if (selectTarget.type === 'joint') {
               onSelect('joint', selectTarget.id);
@@ -607,7 +644,7 @@ export function useMouseInteraction({
             }
           }
 
-          if (onMeshSelect && selectionPlan.shouldSyncMeshSelection) {
+          if (shouldDispatchMeshSelection) {
             onMeshSelect(
               resolvedHit.linkId ?? resolvedHit.id,
               clickedJoint ? clickedJoint.name : null,
@@ -617,8 +654,6 @@ export function useMouseInteraction({
           }
 
           if (selectionPlan.shouldApplyImmediateGeometryHighlight && resolvedHit.linkId) {
-            // Clear all stale highlights first, then apply only the specific body.
-            highlightGeometry(resolvedHit.linkId, true, resolvedSubType);
             highlightGeometry(
               resolvedHit.linkId,
               false,
@@ -630,7 +665,9 @@ export function useMouseInteraction({
           onSelect?.('tendon', resolvedHit.id);
         }
 
-        clearHoveredState();
+        if (committedHoverAction.mode === 'clear') {
+          clearHoveredState();
+        }
       }
     };
 
@@ -776,12 +813,20 @@ export function useMouseInteraction({
         pointerDownPositionRef.current &&
         !pointerExceededClickThresholdRef.current
       ) {
-        pointerExceededClickThresholdRef.current = !isPointerInteractionWithinClickThreshold({
+        const deferredHoverState = resolveDeferredSelectionHoverState({
+          hasPendingSelection: true,
+          alreadyExceededClickThreshold: pointerExceededClickThresholdRef.current,
           startX: pointerDownPositionRef.current.x,
           startY: pointerDownPositionRef.current.y,
           endX: e.clientX,
           endY: e.clientY,
         });
+
+        pointerExceededClickThresholdRef.current = deferredHoverState.pointerExceededClickThreshold;
+
+        if (deferredHoverState.shouldClearHover) {
+          clearHoveredState();
+        }
       }
       if (isDraggingJoint.current && dragJoint.current) {
         // Drag math updates the live joint model and can become expensive on
@@ -818,6 +863,10 @@ export function useMouseInteraction({
         return;
       }
       pointerInteractionActiveRef.current = true;
+      pointerInteractionHitTargetRef.current = false;
+      pointerDownPositionRef.current = { x: e.clientX, y: e.clientY };
+      pointerExceededClickThresholdRef.current = false;
+      lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
       // IMPORTANT:
       // TransformControls gizmo is not a child of `robot`.
@@ -831,10 +880,21 @@ export function useMouseInteraction({
           ? raycasterRef.current.intersectObjects(gizmoTargets, false)[0]
           : undefined;
       if (nearestSceneHit && isGizmoObject(nearestSceneHit.object)) {
+        pointerInteractionHitTargetRef.current = true;
         // TransformControls lives outside the robot pick tree, so R3F can still
         // emit pointer-missed for a valid gizmo click. Keep the current joint
         // selection alive through this interaction instead of clearing it.
-        armSelectionMissGuard(justSelectedRef);
+        // When the click lands on an invisible picker mesh (not a visible
+        // handle), arm the selection-miss guard so the selection is preserved on
+        // mouseup.  Picker meshes extend far beyond the visible handles, so
+        // without this guard clicking anywhere near the gizmo would clear the
+        // selection.  Clicks on visible handles are handled by the
+        // TransformControls drag lifecycle, which arms the guard through
+        // handleCollisionTransformDragging.
+        gizmoPointerDownRef.current = { x: e.clientX, y: e.clientY };
+        if (resolveGizmoHoverAxis(nearestSceneHit.object) === null) {
+          armSelectionMissGuard(justSelectedRef);
+        }
         syncActiveJointFromCurrentSelection();
         return;
       }
@@ -852,12 +912,8 @@ export function useMouseInteraction({
           helperTargets,
           interactionLayerPriority,
         });
-        if (helperInteraction) {
-          return helperInteraction;
-        }
-
         const canvasRect = gl.domElement.getBoundingClientRect();
-        helperInteraction = resolveScreenSpaceHelperInteraction({
+        const projectedHelperInteraction = resolveScreenSpaceHelperInteraction({
           pointerClientX: e.clientX,
           pointerClientY: e.clientY,
           projectedHelpers: collectProjectedHelperInteractionTargets({
@@ -867,6 +923,14 @@ export function useMouseInteraction({
           }),
           interactionLayerPriority,
         });
+        const helperCandidates = [helperInteraction, projectedHelperInteraction].filter(
+          (candidate): candidate is ResolvedHoverInteractionCandidate => candidate !== null,
+        );
+        helperInteraction =
+          helperCandidates.length > 0
+            ? resolveHoverInteractionResolution(helperCandidates, interactionLayerPriority)
+                .primaryInteraction
+            : null;
         return helperInteraction;
       };
 
@@ -941,6 +1005,7 @@ export function useMouseInteraction({
             mesh: paintIntersection.object,
             faceIndex: paintIntersection.faceIndex as number,
           });
+          pointerInteractionHitTargetRef.current = true;
           clearHoveredState();
           e.preventDefault();
           e.stopPropagation();
@@ -952,6 +1017,8 @@ export function useMouseInteraction({
         disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
         return;
       }
+
+      pointerInteractionHitTargetRef.current = true;
 
       const resolvedLinkObject = resolvedHit.linkObject ?? null;
       const resolvedSubType = resolvedHit.subType;
@@ -1033,7 +1100,6 @@ export function useMouseInteraction({
         pendingPointerSelectionRef.current = pendingSelection;
         pointerDownPositionRef.current = { x: e.clientX, y: e.clientY };
         pointerExceededClickThresholdRef.current = false;
-        clearHoveredState();
         return;
       }
 
@@ -1084,18 +1150,46 @@ export function useMouseInteraction({
 
       pointerInteractionActiveRef.current = false;
       let shouldResetSelectionMissGuard = justSelectedRef?.current === true;
+      const interactionHitTarget = pointerInteractionHitTargetRef.current;
+      pointerInteractionHitTargetRef.current = false;
 
       // Capture empty-click state before the refs below are cleared.
       // An empty click is one where no gizmo, mesh, or helper was hit,
       // no deferred selection is pending, and no joint drag is active.
-      const wasEmptyClick =
-        !pendingPointerSelectionRef.current &&
-        !isDraggingJoint.current &&
-        !justSelectedRef?.current;
+      // Additionally, if the pointer landed on a gizmo (invisible picker)
+      // but the user dragged to orbit instead of clicking, the movement
+      // threshold prevents accidental deselection.
+      const gizmoDown = gizmoPointerDownRef.current;
+      gizmoPointerDownRef.current = null;
+      const wasGizmoDrag =
+        gizmoDown !== null &&
+        !isPointerInteractionWithinClickThreshold({
+          startX: gizmoDown.x,
+          startY: gizmoDown.y,
+          endX: lastMousePosRef.current.x,
+          endY: lastMousePosRef.current.y,
+        });
+      const pointerDownPosition = pointerDownPositionRef.current;
+      const pointerMovedBeyondClickThreshold =
+        pointerExceededClickThresholdRef.current ||
+        (pointerDownPosition !== null &&
+          !isPointerInteractionWithinClickThreshold({
+            startX: pointerDownPosition.x,
+            startY: pointerDownPosition.y,
+            endX: lastMousePosRef.current.x,
+            endY: lastMousePosRef.current.y,
+          }));
+      const wasEmptyClick = shouldTreatPointerUpAsBackgroundMiss({
+        hasPendingSelection: pendingPointerSelectionRef.current !== null,
+        dragging: isDraggingJoint.current,
+        interactionHitTarget,
+        wasGizmoDrag,
+        pointerMovedBeyondClickThreshold,
+      });
 
       if (pendingPointerSelectionRef.current) {
         const pendingSelection = pendingPointerSelectionRef.current;
-        const shouldCommitPendingSelection = !pointerExceededClickThresholdRef.current;
+        const shouldCommitPendingSelection = !pointerMovedBeyondClickThreshold;
         clearPendingPointerSelection();
 
         if (shouldCommitPendingSelection) {
@@ -1118,6 +1212,11 @@ export function useMouseInteraction({
         isDraggingJoint.current = false;
         dragJoint.current = null;
         setIsDraggingRef.current?.(false);
+      }
+
+      if (wasEmptyClick) {
+        shouldResetSelectionMissGuard = false;
+        disarmSelectionMissGuard(justSelectedRef, selectionResetTimerRef);
       }
 
       if (shouldResetSelectionMissGuard && justSelectedRef?.current) {
@@ -1143,6 +1242,8 @@ export function useMouseInteraction({
         onSelect?.('link', '');
       }
 
+      pointerDownPositionRef.current = null;
+      pointerExceededClickThresholdRef.current = false;
       setOrbitControlsEnabled(true);
       needsRaycastRef.current = true;
       invalidateRef.current();

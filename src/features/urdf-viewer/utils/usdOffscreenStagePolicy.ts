@@ -2,7 +2,6 @@ import type { RobotFile } from '@/types';
 import type { ToolMode, ViewerProps } from '../types';
 import { supportsUsdWorkerRenderer } from './usdWorkerRendererSupport.ts';
 import { collectUsdStageOpenRelevantVirtualPaths, toVirtualUsdPath } from './usdPreloadSources.ts';
-import { hasBlobBackedLargeUsdaInStageScope } from './usdBlobBackedUsda.ts';
 
 type OffscreenUsdFileLike = Pick<RobotFile, 'name' | 'content' | 'format' | 'blobUrl'>;
 
@@ -22,7 +21,14 @@ interface ShouldUseUsdOffscreenStageOptions {
 
 const HAND_ARTICULATION_TOKEN_PATTERN =
   /\b(?:[LR]_(?:thumb|index|middle|ring|pinky)(?:_|\b)|(?:left|right)_(?:thumb|index|middle|ring|pinky)(?:_|\b))/i;
-const KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS = [/(?:^|\/)h1_2(?:\/|$)/i];
+const KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_TOKENS = new Set([
+  'b2',
+  'b2_description',
+  'b2w',
+  'b2w_description',
+  'h1_2',
+  'h1_2_handless',
+]);
 const EMPTY_OFFSCREEN_USD_FILES: OffscreenUsdFileLike[] = [];
 const handArticulationSupportCache = new WeakMap<
   OffscreenUsdFileLike,
@@ -39,12 +45,63 @@ function isUsdFileLike(file: OffscreenUsdFileLike | null | undefined): boolean {
   return Boolean(file && (file.format === 'usd' || /\.usd[a-z]?$/i.test(file.name)));
 }
 
-function isPureUsdRootFile(file: OffscreenUsdFileLike | null | undefined): boolean {
-  if (!isUsdFileLike(file)) {
+function getUsdFileStem(name: string | null | undefined): string {
+  const normalizedName = normalizeUsdFileName(name);
+  const fileName = normalizedName.split('/').pop() || '';
+  return fileName.replace(/\.usd[a-z]?$/i, '').toLowerCase();
+}
+
+function isTextUsdLayerName(name: string | null | undefined): boolean {
+  return normalizeUsdFileName(name).toLowerCase().endsWith('.usda');
+}
+
+function collectUsdStageScopeTokens(name: string | null | undefined): Set<string> {
+  const normalizedName = normalizeUsdFileName(name).toLowerCase();
+  const stageScopeTokens = new Set<string>();
+  if (!normalizedName) {
+    return stageScopeTokens;
+  }
+
+  const normalizedSegments = normalizedName
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  normalizedSegments.forEach((segment) => {
+    stageScopeTokens.add(segment);
+  });
+  const fileStem = getUsdFileStem(normalizedName);
+  if (fileStem) {
+    stageScopeTokens.add(fileStem);
+  }
+
+  return stageScopeTokens;
+}
+
+function hasStageScopeToken(name: string | null | undefined, tokens: ReadonlySet<string>): boolean {
+  const stageScopeTokens = collectUsdStageScopeTokens(name);
+  if (stageScopeTokens.size === 0) {
     return false;
   }
 
-  return /\.usd$/i.test(normalizeUsdFileName(file.name));
+  for (const token of tokens) {
+    if (
+      Array.from(stageScopeTokens).some(
+        (stageScopeToken) =>
+          stageScopeToken === token ||
+          stageScopeToken.startsWith(`${token}_`) ||
+          stageScopeToken.startsWith(`${token}.`) ||
+          stageScopeToken.startsWith(`${token}-`),
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasKnownUnsupportedOffscreenBundleToken(name: string | null | undefined): boolean {
+  return hasStageScopeToken(name, KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_TOKENS);
 }
 
 function hasUnsupportedHandArticulation({
@@ -78,8 +135,8 @@ function hasUnsupportedHandArticulation({
   const candidateFileNames = candidateFiles
     .map((file) => normalizeUsdFileName(file?.name))
     .filter((name) => name.length > 0);
-  const hasUnsupportedBundlePattern = candidateFileNames.some((name) =>
-    KNOWN_UNSUPPORTED_OFFSCREEN_BUNDLE_PATTERNS.some((pattern) => pattern.test(name)),
+  const hasUnsupportedBundlePattern = candidateFileNames.some(
+    (name) => !isTextUsdLayerName(name) && hasKnownUnsupportedOffscreenBundleToken(name),
   );
   const hasUnsupportedToken =
     !hasUnsupportedBundlePattern &&
@@ -116,6 +173,7 @@ export function shouldUseUsdOffscreenStage({
 }: ShouldUseUsdOffscreenStageOptions): boolean {
   void selection;
   void hoveredSelection;
+  void focusTarget;
 
   if (!workerRendererSupported) {
     return false;
@@ -125,34 +183,11 @@ export function shouldUseUsdOffscreenStage({
     return false;
   }
 
-  if (showOrigins || showJointAxes || showCenterOfMass || showInertia) {
+  if (showJointAxes || showCenterOfMass || showInertia) {
     return false;
   }
 
   if (hasUnsupportedHandArticulation({ sourceFile, availableFiles })) {
-    return false;
-  }
-
-  // Imported Unitree ROS USDA bundles keep very large base/configuration sidecars
-  // as blob-backed text placeholders. The current offscreen worker stage-open
-  // path can resolve metadata for those bundles, but stage composition still
-  // fails to materialize the renderable scene. Keep those imports on the proven
-  // main-thread USD stage until the offscreen loader can reliably compose them.
-  if (hasBlobBackedLargeUsdaInStageScope(sourceFile, availableFiles)) {
-    return false;
-  }
-
-  // The current offscreen worker renderer lives in a fullscreen overlay canvas
-  // outside the shared WorkspaceCanvas R3F scene. Pure `.usd` robot bundles
-  // therefore orbit against a different presentation stack than the workspace
-  // ground/grid, which makes models like Unitree B2 feel screen-locked while
-  // navigating. Keep `.usd` roots on the proven main-thread stage until the
-  // offscreen path participates in the same scene camera/ground presentation.
-  if (isPureUsdRootFile(sourceFile)) {
-    return false;
-  }
-
-  if (typeof focusTarget === 'string' && focusTarget.trim() !== '') {
     return false;
   }
 
@@ -164,19 +199,19 @@ export function shouldBootstrapUsdOffscreenStage({
   selection,
   hoveredSelection,
   focusTarget,
+  sourceFile,
+  availableFiles,
   workerRendererSupported = supportsUsdWorkerRenderer(),
 }: ShouldUseUsdOffscreenStageOptions): boolean {
   void toolMode;
   void selection;
   void hoveredSelection;
   void focusTarget;
+  void sourceFile;
+  void availableFiles;
   void workerRendererSupported;
 
-  // The offscreen bootstrap path opens the same USD stage twice during the
-  // default interactive load: once in the worker bootstrap renderer and again
-  // in the main-thread interactive renderer. That duplicate stage-open work
-  // increases USDA load time and can expose transient scene swaps. Keep select
-  // mode on the single proven interactive path until the bootstrap handoff is
-  // reworked around shared stage-open data and a stable first-frame policy.
+  // Keep the bootstrap handoff disabled until a user-facing model can prove
+  // the final presentation matches the original main-thread viewer path.
   return false;
 }

@@ -4,7 +4,7 @@ import { Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 
 import type { Theme } from '@/types';
-import { translations, type Language } from '@/shared/i18n';
+import type { Language } from '@/shared/i18n';
 import { attachContextMenuBlocker } from '@/shared/utils';
 
 import { UsageGuide } from '../UsageGuide';
@@ -17,6 +17,7 @@ import {
   SceneLighting,
   SnapshotManager,
   type SnapshotCaptureAction,
+  type SnapshotPreviewAction,
   useAdaptiveInteractionQuality,
   WorkspaceCanvasInteractionStateProvider,
   WorkspaceOrbitControls,
@@ -31,14 +32,15 @@ import {
   type WorkspaceCanvasEnvironmentIntensityByTheme,
   useWorkspaceCanvasTheme,
 } from './workspaceCanvasConfig';
+import type { WorkspaceCameraSnapshot } from './workspaceCameraSnapshot';
 import { WorkspaceCanvasErrorBoundary } from './WorkspaceCanvasErrorBoundary';
-import { WorkspaceCanvasErrorNotice } from './WorkspaceCanvasErrorNotice';
 import {
   getWorkspaceCanvasErrorDetail,
   probeWorkspaceCanvasWebglSupport,
   type WorkspaceCanvasWebglSupportState,
 } from './workspaceCanvasWebgl';
 import { cleanupWorkspaceCanvasRenderer } from './workspaceCanvasRendererCleanup';
+import { shouldSuppressWorkspacePointerMissAfterDrag } from './workspacePointerMissPolicy';
 
 interface WorkspaceCanvasProps {
   theme: Theme;
@@ -48,6 +50,9 @@ interface WorkspaceCanvasProps {
   containerRef?: React.RefObject<HTMLDivElement>;
   sceneRef?: React.RefObject<THREE.Scene | null>;
   snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
+  onSnapshotActionChange?: (action: SnapshotCaptureAction | null) => void;
+  previewAction?: React.RefObject<SnapshotPreviewAction | null>;
+  onPreviewActionChange?: (action: SnapshotPreviewAction | null) => void;
   children: React.ReactNode;
   overlays?: React.ReactNode;
   onPointerMissed?: () => void;
@@ -73,6 +78,15 @@ interface WorkspaceCanvasProps {
   showWorldOriginAxes?: boolean;
   showUsageGuide?: boolean;
   renderKey?: string;
+  initialCameraSnapshot?: WorkspaceCameraSnapshot | null;
+}
+
+interface PointerMissGesture {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
 }
 
 function CanvasRenderKeyInvalidator({ renderKey }: { renderKey: string }) {
@@ -93,6 +107,9 @@ export const WorkspaceCanvas = ({
   containerRef,
   sceneRef,
   snapshotAction,
+  onSnapshotActionChange,
+  previewAction,
+  onPreviewActionChange,
   children,
   overlays,
   onPointerMissed,
@@ -111,25 +128,22 @@ export const WorkspaceCanvas = ({
   orbitControlsProps,
   controlLayerKey = 'default',
   background = WORKSPACE_CANVAS_BACKGROUND,
-  contextLostMessage,
   showWorldOriginAxes = true,
   showUsageGuide = true,
   renderKey = 'default',
+  initialCameraSnapshot = null,
 }: WorkspaceCanvasProps) => {
   const effectiveTheme = useWorkspaceCanvasTheme(theme);
-  const t = translations[lang ?? 'en'];
-  const [contextLost, setContextLost] = useState(false);
   const [contextEpoch, setContextEpoch] = useState(0);
-  const [canvasFailure, setCanvasFailure] = useState<{
-    kind: 'unsupported' | 'initialization' | 'runtime';
-    detail?: string;
-  } | null>(null);
+  const [canvasFailure, setCanvasFailure] = useState(false);
   const [webglSupport, setWebglSupport] = useState<WorkspaceCanvasWebglSupportState | null>(null);
   const [snapshotRenderActive, setSnapshotRenderActive] = useState(false);
   const contextMenuCleanupRef = useRef<(() => void) | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const canvasReadyRef = useRef(false);
   const contextLossInFlightRef = useRef(false);
+  const pointerMissGestureRef = useRef<PointerMissGesture | null>(null);
+  const suppressNextPointerMissRef = useRef(false);
   const { dpr, isInteracting, beginInteraction, endInteraction, pulseInteraction } =
     useAdaptiveInteractionQuality();
 
@@ -189,11 +203,19 @@ export const WorkspaceCanvas = ({
   }, [canvasResetKey]);
 
   useEffect(() => {
-    setCanvasFailure(null);
+    setCanvasFailure(false);
   }, [failureResetKey]);
 
   useEffect(() => {
-    setWebglSupport(probeWorkspaceCanvasWebglSupport());
+    const support = probeWorkspaceCanvasWebglSupport();
+    setWebglSupport(support);
+
+    if (!support.supported) {
+      console.error(
+        '[WorkspaceCanvas] WebGL is unavailable; skipping 3D canvas rendering.',
+        support.detail ?? support.reason ?? 'Unknown WebGL support failure.',
+      );
+    }
   }, []);
 
   const handleCreated = useCallback(
@@ -205,8 +227,7 @@ export const WorkspaceCanvas = ({
       }
 
       canvasReadyRef.current = true;
-      setCanvasFailure(null);
-      setContextLost(false);
+      setCanvasFailure(false);
       contextLossInFlightRef.current = false;
       rendererRef.current = state.gl;
 
@@ -233,11 +254,10 @@ export const WorkspaceCanvas = ({
 
       const handleContextLost = (event: Event) => {
         event.preventDefault();
-        setContextLost(true);
+        console.error('[WorkspaceCanvas] WebGL context lost; rebuilding 3D canvas renderer.');
         if (!contextLossInFlightRef.current) {
           contextLossInFlightRef.current = true;
-          // Force a full renderer rebuild. This is intentionally explicit and user-visible:
-          // we keep the overlay until the new canvas finishes creating.
+          // Force a full renderer rebuild instead of leaving the canvas in a stale state.
           setContextEpoch((value) => value + 1);
         }
       };
@@ -245,7 +265,6 @@ export const WorkspaceCanvas = ({
       const handleContextRestored = () => {
         // If the browser restored the context without us remounting, schedule a redraw.
         // In practice, the epoch-based remount above is the more reliable recovery path.
-        setContextLost(false);
         contextLossInFlightRef.current = false;
         state.invalidate();
       };
@@ -280,7 +299,11 @@ export const WorkspaceCanvas = ({
       error,
     );
 
-    setCanvasFailure({ kind, detail });
+    if (detail) {
+      console.error('[WorkspaceCanvas] Canvas error detail:', detail);
+    }
+
+    setCanvasFailure(true);
   }, []);
 
   useEffect(() => {
@@ -294,10 +317,68 @@ export const WorkspaceCanvas = ({
   const handlePointerDownCapture = useCallback<React.PointerEventHandler<HTMLDivElement>>(
     (event) => {
       beginInteraction();
+      if (event.button === 0) {
+        pointerMissGestureRef.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          endX: event.clientX,
+          endY: event.clientY,
+        };
+        suppressNextPointerMissRef.current = false;
+      }
       onPointerDownCapture?.(event);
     },
     [beginInteraction, onPointerDownCapture],
   );
+
+  const updatePointerMissGesture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const gesture = pointerMissGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+    gesture.endX = event.clientX;
+    gesture.endY = event.clientY;
+  }, []);
+
+  const handlePointerMoveCapture = useCallback<React.PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      updatePointerMissGesture(event);
+    },
+    [updatePointerMissGesture],
+  );
+
+  const handlePointerUpCapture = useCallback<React.PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      updatePointerMissGesture(event);
+
+      const gesture = pointerMissGestureRef.current;
+      if (gesture && gesture.pointerId === event.pointerId) {
+        suppressNextPointerMissRef.current = shouldSuppressWorkspacePointerMissAfterDrag(gesture);
+        pointerMissGestureRef.current = null;
+      }
+
+      endInteraction();
+    },
+    [endInteraction, updatePointerMissGesture],
+  );
+
+  const handlePointerLeave = useCallback<React.PointerEventHandler<HTMLDivElement>>(
+    (event) => {
+      updatePointerMissGesture(event);
+      pointerMissGestureRef.current = null;
+      endInteraction(0);
+    },
+    [endInteraction, updatePointerMissGesture],
+  );
+
+  const handlePointerMissed = useCallback(() => {
+    if (suppressNextPointerMissRef.current) {
+      suppressNextPointerMissRef.current = false;
+      return;
+    }
+
+    onPointerMissed?.();
+  }, [onPointerMissed]);
 
   const handleMouseMove = useCallback<React.MouseEventHandler<HTMLDivElement>>(
     (event) => {
@@ -325,29 +406,7 @@ export const WorkspaceCanvas = ({
     [endInteraction, onMouseLeave],
   );
 
-  const activeCanvasFailure = canvasFailure
-    ? canvasFailure
-    : webglSupport && !webglSupport.supported
-      ? {
-          kind: 'unsupported' as const,
-          detail: webglSupport.detail,
-        }
-      : null;
-  const shouldRenderCanvas = webglSupport?.supported === true && !activeCanvasFailure;
-  const canvasErrorTitle =
-    activeCanvasFailure?.kind === 'runtime' ? t.webglRuntimeErrorTitle : t.webglUnsupportedTitle;
-  const canvasErrorMessage =
-    activeCanvasFailure?.kind === 'runtime'
-      ? t.webglRuntimeErrorMessage
-      : t.webglUnsupportedMessage;
-  const canvasErrorDetail = import.meta.env.DEV ? activeCanvasFailure?.detail : undefined;
-  const canvasErrorNotice = (
-    <WorkspaceCanvasErrorNotice
-      title={canvasErrorTitle}
-      message={canvasErrorMessage}
-      detail={canvasErrorDetail}
-    />
-  );
+  const shouldRenderCanvas = webglSupport?.supported === true && !canvasFailure;
 
   return (
     <div
@@ -359,8 +418,9 @@ export const WorkspaceCanvas = ({
         backgroundColor: activeBackgroundColor,
       }}
       onPointerDownCapture={handlePointerDownCapture}
-      onPointerUpCapture={() => endInteraction()}
-      onPointerLeave={() => endInteraction(0)}
+      onPointerMoveCapture={handlePointerMoveCapture}
+      onPointerUpCapture={handlePointerUpCapture}
+      onPointerLeave={handlePointerLeave}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
@@ -368,11 +428,9 @@ export const WorkspaceCanvas = ({
       onContextMenuCapture={(event) => event.preventDefault()}
     >
       {overlays}
-      {activeCanvasFailure ? (
-        canvasErrorNotice
-      ) : shouldRenderCanvas ? (
+      {shouldRenderCanvas ? (
         <WorkspaceCanvasErrorBoundary
-          fallback={canvasErrorNotice}
+          fallback={null}
           onError={handleCanvasError}
           resetKey={failureResetKey}
         >
@@ -384,7 +442,7 @@ export const WorkspaceCanvas = ({
             camera={canvasCamera}
             gl={canvasGl}
             onCreated={handleCreated}
-            onPointerMissed={onPointerMissed}
+            onPointerMissed={handlePointerMissed}
             translate="no"
           >
             <WorkspaceCanvasInteractionStateProvider isInteracting={isInteracting}>
@@ -415,6 +473,9 @@ export const WorkspaceCanvas = ({
                 />
                 <SnapshotManager
                   actionRef={snapshotAction}
+                  onSnapshotActionChange={onSnapshotActionChange}
+                  previewActionRef={previewAction}
+                  onPreviewActionChange={onPreviewActionChange}
                   robotName={robotName}
                   theme={effectiveTheme}
                   groundOffset={groundOffset}
@@ -428,6 +489,7 @@ export const WorkspaceCanvas = ({
                 {showWorldOriginAxes && !snapshotRenderActive && <WorldOriginAxes />}
                 <WorkspaceOrbitControls
                   key={`orbit-${controlLayerKey}`}
+                  initialCameraSnapshot={initialCameraSnapshot}
                   {...finalOrbitControlsProps}
                 />
                 {!snapshotRenderActive && (
@@ -451,15 +513,6 @@ export const WorkspaceCanvas = ({
       ) : null}
 
       {lang && showUsageGuide && shouldRenderCanvas ? <UsageGuide lang={lang} /> : null}
-
-      {shouldRenderCanvas && contextLost && contextLostMessage && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="rounded-lg border border-border-black bg-panel-bg p-6 text-center shadow-xl">
-            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-4 border-system-blue border-t-transparent" />
-            <p className="text-text-secondary">{contextLostMessage}</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

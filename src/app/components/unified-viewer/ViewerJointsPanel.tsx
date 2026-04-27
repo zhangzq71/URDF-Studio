@@ -10,11 +10,13 @@ export function ViewerJointsPanel({
   showJointPanel,
   setShowJointPanel,
   lang,
+  onUpdate,
 }: {
   controller: ViewerController;
   showJointPanel: boolean;
   setShowJointPanel?: (show: boolean) => void;
   lang: Language;
+  onUpdate?: (type: 'link' | 'joint', id: string, data: unknown) => void;
 }) {
   const t = translations[lang];
   const { jointsDefaultPosition, jointsPanelMaxHeight } = useResponsivePanelLayout({
@@ -23,7 +25,6 @@ export function ViewerJointsPanel({
     jointPanelRef: controller.jointPanelRef,
     showOptionsPanel: false,
     showJointPanel,
-    showToolbar: false,
     preferEdgeDockedJointPanel: true,
   });
 
@@ -49,6 +50,7 @@ export function ViewerJointsPanel({
       handleJointChangeCommit={controller.handleJointChangeCommit}
       onSelect={controller.handleSelectWrapper}
       onHover={controller.handleHoverWrapper}
+      onUpdate={onUpdate}
     />
   );
 }

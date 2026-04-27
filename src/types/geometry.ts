@@ -15,20 +15,32 @@ export enum GeometryType {
   ELLIPSOID = 'ellipsoid',
   CAPSULE = 'capsule',
   HFIELD = 'hfield',
+  POLYLINE = 'polyline',
   SDF = 'sdf',
   MESH = 'mesh',
   NONE = 'none',
 }
 
+export interface GazeboMaterialPass {
+  texture?: string;
+  sceneBlend?: 'alpha_blend' | 'add' | 'modulate';
+  depthWrite?: boolean;
+  lighting?: boolean;
+}
+
 export interface UrdfVisualMaterial {
   name?: string;
   color?: string;
+  colorRgba?: [number, number, number, number];
   texture?: string;
+  textureRotation?: number;
   opacity?: number;
   roughness?: number;
   metalness?: number;
   emissive?: string;
   emissiveIntensity?: number;
+  alphaTest?: number;
+  passes?: GazeboMaterialPass[];
 }
 
 export interface UrdfVisualMeshMaterialGroup {
@@ -55,6 +67,25 @@ export interface MjcfHfieldAsset {
   elevation?: number[];
 }
 
+export interface SdfHeightmapTexture {
+  diffuse?: string;
+  normal?: string;
+  size?: number;
+}
+
+export interface SdfHeightmapBlend {
+  minHeight: number;
+  fadeDist: number;
+}
+
+export interface SdfHeightmap {
+  uri: string;
+  size: Vector3;
+  pos: Vector3;
+  textures: SdfHeightmapTexture[];
+  blends: SdfHeightmapBlend[];
+}
+
 export interface MjcfMeshAsset {
   name?: string;
   file?: string;
@@ -73,9 +104,14 @@ export interface UrdfVisual {
   authoredMaterials?: UrdfVisualMaterial[];
   meshMaterialGroups?: UrdfVisualMeshMaterialGroup[];
   meshPath?: string; // For later detailed design
+  submeshName?: string; // SDF submesh name to select a specific named group from a shared mesh file
+  submeshCenter?: boolean; // SDF submesh center flag — when true, re-center the extracted submesh to its own origin
   assetRef?: string; // MJCF-only asset reference (e.g. hfield name or sdf mesh asset)
   mjcfMesh?: MjcfMeshAsset;
   mjcfHfield?: MjcfHfieldAsset;
+  sdfHeightmap?: SdfHeightmap;
+  polylinePoints?: { x: number; y: number }[];
+  polylineHeight?: number;
   origin: UrdfOrigin; // Offset relative to link frame
   verbose?: string;
   visible?: boolean;

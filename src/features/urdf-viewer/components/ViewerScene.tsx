@@ -16,6 +16,7 @@ import {
   shouldBootstrapUsdOffscreenStage,
   shouldUseUsdOffscreenStage,
 } from '../utils/usdOffscreenStagePolicy';
+import { normalizeUsdBootstrapDocumentLoadEvent } from '../utils/usdBootstrapDocumentLoadEvent';
 import { getViewerRobotSourceFormat } from '../utils/sourceFormat';
 import type { ViewerSceneBaseProps } from '../utils/viewerSceneProps';
 
@@ -37,6 +38,7 @@ export const ViewerScene = ({
   active = true,
   sourceFile,
   sourceFormat,
+  allowUrdfXmlFallback = true,
   availableFiles,
   urdfContent,
   assets,
@@ -102,6 +104,8 @@ export const ViewerScene = ({
         selection,
         hoveredSelection,
         focusTarget,
+        sourceFile: usdSourceFile,
+        availableFiles,
       })
     : false;
   const effectiveHoverSelectionEnabled =
@@ -214,11 +218,17 @@ export const ViewerScene = ({
     (event: ViewerDocumentLoadEvent) => {
       if (event.status === 'ready') {
         setOffscreenBootstrapReady(true);
-        scheduleSceneReadyForDisplay();
+        if (!useUsdOffscreenBootstrap) {
+          scheduleSceneReadyForDisplay();
+        }
       }
-      onDocumentLoadEvent?.(event);
+      onDocumentLoadEvent?.(
+        normalizeUsdBootstrapDocumentLoadEvent(event, {
+          useUsdOffscreenBootstrap,
+        }),
+      );
     },
-    [onDocumentLoadEvent, scheduleSceneReadyForDisplay],
+    [onDocumentLoadEvent, scheduleSceneReadyForDisplay, useUsdOffscreenBootstrap],
   );
   const handleUsdWasmDocumentLoadEvent = useCallback(
     (event: ViewerDocumentLoadEvent) => {
@@ -230,8 +240,9 @@ export const ViewerScene = ({
         if (event.status === 'ready') {
           setInteractiveUsdStageReady(true);
           scheduleSceneReadyForDisplay();
-          // The worker-rendered bootstrap stage is already visible at this point.
-          // Keep the hidden main-thread handoff from reopening the global loading HUD.
+          // Ignore hidden handoff loading churn, but publish the final ready
+          // event so the app-level USD lifecycle can leave its hydrating state.
+          onDocumentLoadEvent?.(event);
           return;
         }
 
@@ -306,6 +317,9 @@ export const ViewerScene = ({
               showVisual={controller.showVisual}
               showCollision={controller.showCollision}
               showCollisionAlwaysOnTop={controller.showCollisionAlwaysOnTop}
+              showOrigins={controller.showOrigins}
+              showOriginsOverlay={controller.showOriginsOverlay}
+              originSize={controller.originSize}
               loadingLabel={t.loadingRobot}
               loadingDetailLabel={t.loadingRobotPreparing}
               loadingPhaseLabels={usdLoadingPhaseLabels}
@@ -378,6 +392,7 @@ export const ViewerScene = ({
             urdfContent={urdfContent}
             assets={assets}
             sourceFormat={sourceFormat ?? getViewerRobotSourceFormat(sourceFile?.format)}
+            allowUrdfXmlFallback={allowUrdfXmlFallback}
             reloadToken={runtimeInstanceKey}
             initialRobot={retainedRobot}
             sourceFilePath={sourceFilePath}

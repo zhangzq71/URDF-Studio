@@ -10,6 +10,7 @@ import {
   WORKSPACE_DEFAULT_CAMERA_POSITION,
   WORKSPACE_DEFAULT_CAMERA_UP,
 } from '@/shared/components/3d/scene/constants.ts';
+import { LinkAxesController } from '../runtime/viewer/link-axes.js';
 import { LinkRotationController } from '../runtime/viewer/link-rotation.js';
 import type { PreparedUsdPreloadFile } from '../utils/usdStageOpenPreparation.ts';
 import { preloadUsdStageEntries } from '../utils/usdStagePreloadExecution.ts';
@@ -52,6 +53,11 @@ import { resolveUsdVisualMeshObjectOrder } from '../utils/usdRuntimeMeshObjectOr
 import { prepareUsdVisualMesh } from '../utils/usdVisualRendering.ts';
 import { createEmbeddedUsdViewerLoadParams } from '../utils/usdViewerRenderParams.ts';
 import {
+  collectUsdSceneSnapshotTransferables,
+  hasUsdSceneSnapshotHeavyBuffers,
+  stripTransferHeavyUsdSceneSnapshotBuffers,
+} from '../utils/usdSceneSnapshotWorkerTransfer.ts';
+import {
   applyUsdWorkerOrbitPointerDelta,
   applyUsdWorkerOrbitToCamera,
   applyUsdWorkerOrbitZoomDelta,
@@ -68,6 +74,7 @@ import {
   type UsdOffscreenLightRig,
   type UsdOffscreenStudioEnvironmentHandle,
 } from '../utils/usdOffscreenLighting.ts';
+import { resolveUsdOffscreenCanvasPresentation } from '../utils/usdOffscreenCanvasPresentation.ts';
 import { resolveCameraFollowLightingStyle } from '@/shared/components/3d/scene/constants.ts';
 import {
   computeCameraFrame,
@@ -178,6 +185,9 @@ let hoverSelectionEnabled = true;
 let showVisual = true;
 let showCollision = true;
 let showCollisionAlwaysOnTop = true;
+let showOrigins = false;
+let showOriginsOverlay = false;
+let originSize = 1;
 let groundPlaneOffset = 0;
 let currentSourceFileName = '';
 let shouldSettleGroundAlignmentAfterLoad = true;
@@ -194,6 +204,7 @@ let runtimeHelperTargets: THREE.Object3D[] = [];
 let highlightedMeshes = new Map<THREE.Mesh, HighlightedMeshSnapshot>();
 const runtimeRaycaster = new THREE.Raycaster();
 const runtimePointer = new THREE.Vector2();
+let linkAxesController: InstanceType<typeof LinkAxesController> | null = null;
 let linkRotationController: InstanceType<typeof LinkRotationController> | null = null;
 const stageOpenContextSnapshots = new Map<
   string,
@@ -205,6 +216,11 @@ const preparedStageOpenCacheKeys = new Set<string>();
 const preparedStageOpenCacheKeyOrder: string[] = [];
 const PREPARED_STAGE_OPEN_CACHE_LIMIT = 8;
 let useCollisionVisualProxyMode = false;
+
+interface PublishedWorkerRobotData {
+  resolution: ViewerRobotDataResolution;
+  fullSceneSnapshot: ViewerRobotDataResolution['usdSceneSnapshot'];
+}
 
 function clearScheduledAutoFrame(): void {
   if (!disposeAutoFrame) {
@@ -251,7 +267,15 @@ function scheduleGroundAlignmentSettlePasses(
   });
 }
 
-function postWorkerMessage(message: UsdOffscreenViewerWorkerResponse): void {
+function postWorkerMessage(
+  message: UsdOffscreenViewerWorkerResponse,
+  transferables?: Transferable[],
+): void {
+  if (transferables && transferables.length > 0) {
+    workerScope.postMessage(message, transferables);
+    return;
+  }
+
   workerScope.postMessage(message);
 }
 
@@ -1001,6 +1025,14 @@ function syncInteractionHighlights(): void {
   renderScene();
 }
 
+function ensureLinkAxesController(): InstanceType<typeof LinkAxesController> {
+  if (!linkAxesController) {
+    linkAxesController = new LinkAxesController();
+  }
+
+  return linkAxesController;
+}
+
 function ensureLinkRotationController(): InstanceType<typeof LinkRotationController> {
   if (!linkRotationController) {
     linkRotationController = new LinkRotationController();
@@ -1206,6 +1238,9 @@ function disposeStageResources(): void {
   runtimePickMeshes = [];
   runtimeHelperTargets = [];
   revertInteractionHighlights();
+  if (usdRoot) {
+    linkAxesController?.clear(usdRoot);
+  }
   linkRotationController?.setEnabled(false);
   linkRotationController?.setRenderInterface(null);
 
@@ -1235,10 +1270,11 @@ function createWorkerRenderer(
   canvas: OffscreenCanvas,
   theme: 'light' | 'dark',
 ): THREE.WebGLRenderer {
+  const presentation = resolveUsdOffscreenCanvasPresentation(theme);
   const nextRenderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
-    alpha: true,
+    alpha: presentation.alpha,
     powerPreference: 'high-performance',
   });
 
@@ -1250,13 +1286,15 @@ function createWorkerRenderer(
   nextRenderer.shadowMap.enabled = true;
   nextRenderer.shadowMap.autoUpdate = true;
   nextRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  nextRenderer.setClearColor(0x000000, 0);
+  nextRenderer.setClearColor(presentation.backgroundColor, presentation.clearAlpha);
 
   return nextRenderer;
 }
 
 function initializeSceneGraph(canvas: OffscreenCanvas, theme: 'light' | 'dark'): void {
+  const presentation = resolveUsdOffscreenCanvasPresentation(theme);
   scene = new THREE.Scene();
+  scene.background = new THREE.Color(presentation.backgroundColor);
   camera = new THREE.PerspectiveCamera(
     WORKSPACE_DEFAULT_CAMERA_FOV,
     runtimeWindow.innerWidth / runtimeWindow.innerHeight,
@@ -1436,6 +1474,25 @@ function applyGroundAlignment(): void {
   syncUsdOffscreenGroundShadowPlane(offscreenGroundShadowPlane, groundPlaneOffset);
 }
 
+function refreshOriginAxes(): void {
+  if (!usdRoot || !runtimeWindow.renderInterface) {
+    return;
+  }
+
+  const controller = ensureLinkAxesController();
+  controller.rebuild(usdRoot, runtimeWindow.renderInterface, {
+    showLinkAxes: showOrigins,
+    axisSize: originSize,
+    overlay: showOrigins && showOriginsOverlay,
+    linkFrameResolver: (linkPath: string) =>
+      linkRotationController?.getCurrentLinkFrameMatrix(linkPath) ?? null,
+  });
+}
+
+function refreshRuntimeHelperTargets(): void {
+  runtimeHelperTargets = usdRoot ? collectSelectableHelperTargets(usdRoot) : [];
+}
+
 function applyRuntimeVisibility(): void {
   if (!runtime?.applyMeshVisibilityFilters || !runtimeWindow.renderInterface) {
     return;
@@ -1457,6 +1514,8 @@ function applyRuntimeVisibility(): void {
     });
   }
 
+  refreshOriginAxes();
+  refreshRuntimeHelperTargets();
   syncInteractionHighlights();
 }
 
@@ -1699,7 +1758,52 @@ async function ensureCriticalUsdDependenciesLoaded(
   }
 }
 
-async function publishResolvedRobotData(): Promise<ViewerRobotDataResolution> {
+function publishDeferredSceneSnapshot(
+  snapshot: ViewerRobotDataResolution['usdSceneSnapshot'],
+  sourceFileName: string,
+): void {
+  if (!snapshot || !hasUsdSceneSnapshotHeavyBuffers(snapshot)) {
+    return;
+  }
+
+  const transferables = collectUsdSceneSnapshotTransferables(snapshot);
+  const stageSourcePath = snapshot.stageSourcePath ?? currentSourceFileName ?? null;
+
+  try {
+    postWorkerMessage(
+      {
+        type: 'scene-snapshot',
+        stageSourcePath,
+        snapshot,
+      },
+      transferables,
+    );
+    emitLoadDebugEntry({
+      sourceFileName,
+      step: 'publish-scene-snapshot',
+      status: 'resolved',
+      timestamp: Date.now(),
+      detail: {
+        stageSourcePath,
+        transferableBufferCount: transferables.length,
+      },
+    });
+  } catch (error) {
+    emitLoadDebugEntry({
+      sourceFileName,
+      step: 'publish-scene-snapshot',
+      status: 'rejected',
+      timestamp: Date.now(),
+      detail: {
+        stageSourcePath,
+        transferableBufferCount: transferables.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
+}
+
+async function publishResolvedRobotData(): Promise<PublishedWorkerRobotData> {
   if (!runtimeWindow.renderInterface) {
     throw new Error(
       'USD offscreen worker cannot publish RobotData before the render interface is ready.',
@@ -1720,10 +1824,11 @@ async function publishResolvedRobotData(): Promise<ViewerRobotDataResolution> {
       snapshot,
       runtimeWindow.renderInterface,
     ) || initialRobotResolution;
+  const lightweightSnapshot = stripTransferHeavyUsdSceneSnapshotBuffers(snapshot);
 
   const resolutionWithSnapshot: ViewerRobotDataResolution = {
     ...resolvedViewerRobotData,
-    usdSceneSnapshot: snapshot,
+    usdSceneSnapshot: lightweightSnapshot,
   };
   resolvedRobotData = resolutionWithSnapshot;
   rebuildRuntimeMeshIndex();
@@ -1732,6 +1837,7 @@ async function publishResolvedRobotData(): Promise<ViewerRobotDataResolution> {
     shouldUseUsdCollisionVisualProxy(snapshot) &&
     runtimeMeshRoleCounts.visualMeshCount === 0 &&
     runtimeMeshRoleCounts.collisionMeshCount > 0;
+  refreshRuntimeHelperTargets();
   syncInteractionHighlights();
 
   postWorkerMessage({
@@ -1740,7 +1846,10 @@ async function publishResolvedRobotData(): Promise<ViewerRobotDataResolution> {
   });
   emitCurrentJointAngles();
 
-  return resolutionWithSnapshot;
+  return {
+    resolution: resolutionWithSnapshot,
+    fullSceneSnapshot: snapshot,
+  };
 }
 
 async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): Promise<void> {
@@ -1750,6 +1859,9 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
   showVisual = message.showVisual;
   showCollision = message.showCollision;
   showCollisionAlwaysOnTop = message.showCollisionAlwaysOnTop;
+  showOrigins = message.showOrigins;
+  showOriginsOverlay = message.showOriginsOverlay;
+  originSize = message.originSize;
   groundPlaneOffset = message.groundPlaneOffset;
 
   emitDocumentLoadEvent({
@@ -1990,10 +2102,10 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
       resolveDetail: (result) => ({
         resolutionSource: 'worker-bootstrap',
         rendererMode: 'offscreen-worker',
-        stageSourcePath: result.stageSourcePath,
-        linkCount: Object.keys(result.robotData.links || {}).length,
-        jointCount: Object.keys(result.robotData.joints || {}).length,
-        metadataSource: result.usdSceneSnapshot?.robotMetadataSnapshot?.source ?? null,
+        stageSourcePath: result.resolution.stageSourcePath,
+        linkCount: Object.keys(result.resolution.robotData.links || {}).length,
+        jointCount: Object.keys(result.resolution.robotData.joints || {}).length,
+        metadataSource: result.resolution.usdSceneSnapshot?.robotMetadataSnapshot?.source ?? null,
         stageOpenSource,
         stageOpenCacheHit: stageOpenContext.cacheHit,
         stageOpenContextCacheHit: stageOpenContext.cacheHit,
@@ -2021,12 +2133,13 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
       timestamp: Date.now(),
       detail: {
         rendererMode: 'offscreen-worker',
-        stageSourcePath: workerResolvedRobotData.stageSourcePath,
+        stageSourcePath: workerResolvedRobotData.resolution.stageSourcePath,
         metadataSource:
-          workerResolvedRobotData.usdSceneSnapshot?.robotMetadataSnapshot?.source ?? null,
+          workerResolvedRobotData.resolution.usdSceneSnapshot?.robotMetadataSnapshot?.source ??
+          null,
         rootChildrenCount: usdRoot?.children.length ?? 0,
-        linkCount: Object.keys(workerResolvedRobotData.robotData.links || {}).length,
-        jointCount: Object.keys(workerResolvedRobotData.robotData.joints || {}).length,
+        linkCount: Object.keys(workerResolvedRobotData.resolution.robotData.links || {}).length,
+        jointCount: Object.keys(workerResolvedRobotData.resolution.robotData.joints || {}).length,
         stageOpenSource,
         stageOpenCacheHit: stageOpenContext.cacheHit,
         stageOpenContextCacheHit: stageOpenContext.cacheHit,
@@ -2046,6 +2159,11 @@ async function loadUsdStageIntoWorker(message: UsdOffscreenViewerInitRequest): P
         loadedCount: null,
         totalCount: null,
       }),
+    );
+
+    publishDeferredSceneSnapshot(
+      workerResolvedRobotData.fullSceneSnapshot,
+      message.sourceFile.name,
     );
   } catch (error) {
     disposeStageResources();
@@ -2268,8 +2386,21 @@ function handleSetJointAngle(
     emitSelectionChanged: false,
   });
   controller.apply(runtimeWindow.renderInterface, { force: true });
-  renderScene();
+  refreshOriginAxes();
+  refreshRuntimeHelperTargets();
+  syncInteractionHighlights();
   emitCurrentJointAngles();
+}
+
+function handleSetDecorationState(
+  message: Extract<UsdOffscreenViewerWorkerRequest, { type: 'set-decoration-state' }>,
+): void {
+  showOrigins = message.showOrigins;
+  showOriginsOverlay = message.showOriginsOverlay;
+  originSize = message.originSize;
+  refreshOriginAxes();
+  refreshRuntimeHelperTargets();
+  syncInteractionHighlights();
 }
 
 function disposeWorkerStage(): void {
@@ -2409,6 +2540,10 @@ workerScope.addEventListener('message', (event: MessageEvent<UsdOffscreenViewerW
       applyRuntimeVisibility();
       return;
     }
+    case 'set-decoration-state': {
+      handleSetDecorationState(message);
+      return;
+    }
     case 'set-ground-offset': {
       groundPlaneOffset = message.groundPlaneOffset;
       syncUsdOffscreenGroundShadowPlane(offscreenGroundShadowPlane, groundPlaneOffset);
@@ -2455,7 +2590,6 @@ workerScope.addEventListener('message', (event: MessageEvent<UsdOffscreenViewerW
             error: detail,
           },
         });
-        console.warn('[usd-offscreen-worker] Failed to prewarm runtime.', error);
       });
       return;
     }

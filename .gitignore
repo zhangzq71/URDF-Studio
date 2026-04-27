@@ -14,7 +14,9 @@ scripts/*
 scripts/regression/*
 !scripts/regression/validate_sdf_cli_truth.ts
 !scripts/regression/run_shadow_hand_hover_regression.mjs
+!scripts/regression/run_default_link_click_hover_regression.mjs
 !scripts/regression/validate_unitree_ros_usd_export_benchmark.mjs
+!scripts/regression/benchmark_import_pre_resolve.ts
 !scripts/mujoco/
 scripts/mujoco/*
 !scripts/mujoco/mjcf_compare.ts
@@ -59,4 +61,8 @@ __pycache__/
 !scripts/regression/validate_unitree_ros_usda_browser_smoke.mjs
 !scripts/regression/validate_unitree_selected_browser.mjs
 !scripts/regression/validate_unitree_ros_usda_selected_browser.mjs
+!scripts/regression/validate_source_editor_mjcf_browser.mjs
+!scripts/regression/validate_source_editor_unitree_browser.mjs
 snapshot-default-page.png
+
+.omx/

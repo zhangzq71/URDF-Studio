@@ -7,6 +7,9 @@ function resetSelectionStore() {
   const state = useSelectionStore.getState();
   state.setInteractionGuard(null);
   state.setHoverFrozen(false);
+  while (useSelectionStore.getState().hoverBlockCount > 0) {
+    useSelectionStore.getState().endHoverBlock();
+  }
   state.clearHover();
   state.setSelection({ type: null, id: null });
   state.setHoveredSelection({ type: null, id: null });
@@ -65,6 +68,90 @@ test('clearHover during a frozen drag clears the deferred hover so release does 
 
   nextState.setHoverFrozen(false);
   assert.deepEqual(useSelectionStore.getState().hoveredSelection, { type: null, id: null });
+});
+
+test('setHoverFrozen(false) preserves the current hover when hover is already unfrozen', () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.setHoveredSelection({
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+
+  state.setHoverFrozen(false);
+
+  const nextState = useSelectionStore.getState();
+  assert.equal(nextState.hoverFrozen, false);
+  assert.deepEqual(nextState.hoveredSelection, {
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+  assert.deepEqual(nextState.deferredHoveredSelection, { type: null, id: null });
+});
+
+test('hover blocks preserve the existing hover intent and do not let new hover updates replace it before release', () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.setHoveredSelection({ type: 'link', id: 'base_link' });
+  state.beginHoverBlock();
+
+  let nextState = useSelectionStore.getState();
+  assert.equal(nextState.hoverFrozen, true);
+  assert.deepEqual(nextState.hoveredSelection, { type: null, id: null });
+  assert.deepEqual(nextState.deferredHoveredSelection, { type: 'link', id: 'base_link' });
+
+  nextState.setHoveredSelection({ type: 'link', id: 'arm_link' });
+
+  nextState = useSelectionStore.getState();
+  assert.equal(nextState.hoverFrozen, true);
+  assert.deepEqual(nextState.deferredHoveredSelection, { type: 'link', id: 'base_link' });
+
+  nextState.endHoverBlock();
+  nextState = useSelectionStore.getState();
+  assert.equal(nextState.hoverFrozen, false);
+  assert.deepEqual(nextState.hoveredSelection, { type: 'link', id: 'base_link' });
+});
+
+test('beginHoverBlock preserves the current hover as deferred intent so quick blank clicks do not flash the highlight away', () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.setHoveredSelection({
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+
+  state.beginHoverBlock();
+
+  let nextState = useSelectionStore.getState();
+  assert.equal(nextState.hoverFrozen, true);
+  assert.deepEqual(nextState.hoveredSelection, { type: null, id: null });
+  assert.deepEqual(nextState.deferredHoveredSelection, {
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+
+  nextState.endHoverBlock();
+  nextState = useSelectionStore.getState();
+
+  assert.equal(nextState.hoverFrozen, false);
+  assert.deepEqual(nextState.hoveredSelection, {
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+  assert.deepEqual(nextState.deferredHoveredSelection, { type: null, id: null });
 });
 
 test('interaction guard blocks invalid selections without preventing clearing', () => {
@@ -137,6 +224,30 @@ test('hover state updates when the highlighted object changes on the same link',
     subType: 'visual',
     objectIndex: 0,
     highlightObjectId: 202,
+  });
+});
+
+test('selection state preserves an explicit primary geometry objectIndex after a generic geometry select', () => {
+  resetSelectionStore();
+
+  const state = useSelectionStore.getState();
+  state.setSelection({
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+  });
+  state.setSelection({
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
+  });
+
+  assert.deepEqual(useSelectionStore.getState().selection, {
+    type: 'link',
+    id: 'base_link',
+    subType: 'visual',
+    objectIndex: 0,
   });
 });
 

@@ -16,7 +16,27 @@ const EMBEDDED_USD_VIEWER_SAFE_LOAD_FLAGS = {
 
 export interface CreateEmbeddedUsdViewerLoadParamsOptions {
   preferWorkerResolvedRobotData?: boolean;
+  preferSlicedMainThreadLoadForLargePureUsd?: boolean;
   dependenciesPreloadedToVirtualFs?: boolean;
+}
+
+export type EmbeddedUsdViewerLoadProfile =
+  | 'default-embedded'
+  | 'worker-bootstrap'
+  | 'large-pure-usd-sliced';
+
+export function resolveEmbeddedUsdViewerLoadProfile(
+  options: CreateEmbeddedUsdViewerLoadParamsOptions = {},
+): EmbeddedUsdViewerLoadProfile {
+  if (options.preferWorkerResolvedRobotData) {
+    return 'worker-bootstrap';
+  }
+
+  if (options.preferSlicedMainThreadLoadForLargePureUsd) {
+    return 'large-pure-usd-sliced';
+  }
+
+  return 'default-embedded';
 }
 
 export function createEmbeddedUsdViewerLoadParams(
@@ -28,7 +48,9 @@ export function createEmbeddedUsdViewerLoadParams(
     ...EMBEDDED_USD_VIEWER_SAFE_LOAD_FLAGS,
   };
 
-  if (options.preferWorkerResolvedRobotData) {
+  const loadProfile = resolveEmbeddedUsdViewerLoadProfile(options);
+
+  if (loadProfile === 'worker-bootstrap') {
     // Once the stage-open bundle and RobotData bootstrap are already running in
     // workers, prefer an interactive load profile so the renderer yields during
     // mesh hydration instead of monopolizing the main thread until one-shot
@@ -36,6 +58,20 @@ export function createEmbeddedUsdViewerLoadParams(
     safeLoadFlags.nonBlockingLoad = '1';
     safeLoadFlags.aggressiveInitialDraw = '0';
     safeLoadFlags.strictOneShot = '0';
+    safeLoadFlags.yieldDuringLoad = '1';
+    safeLoadFlags.resolveRobotMetadataBeforeReady = '0';
+    safeLoadFlags.requireCompleteRobotMetadata = '0';
+  }
+
+  if (loadProfile === 'large-pure-usd-sliced') {
+    // Folder-imported pure `.usd` roots such as `unitree_model/*/usd/*.usd`
+    // should reveal the first drawable scene as early as possible, then keep
+    // hydrating remaining meshes/dependencies in the background. This improves
+    // perceived responsiveness during large vendor bundle imports.
+    safeLoadFlags.nonBlockingLoad = '1';
+    safeLoadFlags.aggressiveInitialDraw = '0';
+    safeLoadFlags.strictOneShot = '0';
+    safeLoadFlags.yieldDuringLoad = '1';
     safeLoadFlags.resolveRobotMetadataBeforeReady = '0';
     safeLoadFlags.requireCompleteRobotMetadata = '0';
   }

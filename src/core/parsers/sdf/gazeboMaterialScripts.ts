@@ -1,4 +1,4 @@
-import type { UrdfVisualMaterial } from '@/types';
+import type { GazeboMaterialPass, UrdfVisualMaterial } from '@/types';
 import { resolveImportedAssetPath } from '@/core/parsers/meshPathUtils';
 
 export interface GazeboScriptMaterialDefinition extends UrdfVisualMaterial {}
@@ -104,6 +104,53 @@ function readMaterialBlock(
   return null;
 }
 
+function parsePassesFromBlock(block: string): GazeboMaterialPass[] {
+  const passes: GazeboMaterialPass[] = [];
+  const passPattern = /\bpass\b/gi;
+  let passMatch = passPattern.exec(block);
+
+  while (passMatch) {
+    const passOpeningBrace = block.indexOf('{', passMatch.index);
+    if (passOpeningBrace < 0) {
+      break;
+    }
+
+    const passResult = readMaterialBlock(block, passOpeningBrace);
+    if (!passResult) {
+      break;
+    }
+
+    const passBlock = passResult.block;
+    const textureMatch = passBlock.match(/\btexture\s+([^\s{}]+)/i);
+    const blendMatch = passBlock.match(/\bscene_blend\s+(\w+)/i);
+    const depthWriteMatch = passBlock.match(/\bdepth_write\s+(\w+)/i);
+    const lightingMatch = passBlock.match(/\blighting\s+(\w+)/i);
+
+    const pass: GazeboMaterialPass = {};
+    if (textureMatch) {
+      pass.texture = textureMatch[1]?.trim();
+    }
+    if (blendMatch) {
+      const mode = blendMatch[1]?.trim();
+      if (mode === 'alpha_blend' || mode === 'add' || mode === 'modulate') {
+        pass.sceneBlend = mode;
+      }
+    }
+    if (depthWriteMatch) {
+      pass.depthWrite = depthWriteMatch[1]?.trim() !== 'off';
+    }
+    if (lightingMatch) {
+      pass.lighting = lightingMatch[1]?.trim() !== 'off';
+    }
+
+    passes.push(pass);
+    passPattern.lastIndex = passResult.endIndex;
+    passMatch = passPattern.exec(block);
+  }
+
+  return passes;
+}
+
 function parseMaterialScript(text: string): Record<string, GazeboScriptMaterialDefinition> {
   const cached = materialScriptCache.get(text);
   if (cached) {
@@ -132,10 +179,21 @@ function parseMaterialScript(text: string): Record<string, GazeboScriptMaterialD
     const diffuse = toHexColor(block.match(/\bdiffuse\s+([^\r\n{}]+)/i)?.[1] || '');
     const ambient = toHexColor(block.match(/\bambient\s+([^\r\n{}]+)/i)?.[1] || '');
 
+    const alphaRejectionMatch = block.match(
+      /\balpha_rejection\s+(?:greater|greater_equal|less|less_equal|not_equal)\s+(\d+)/i,
+    );
+    const alphaTest = alphaRejectionMatch
+      ? Math.min(1, Math.max(0, Number.parseFloat(alphaRejectionMatch[1]) / 255))
+      : undefined;
+
+    const passes = parsePassesFromBlock(block);
+
     definitions[materialName] = {
       name: materialName,
       ...(diffuse || ambient ? { color: diffuse || ambient } : {}),
       ...(texture ? { texture } : {}),
+      ...(alphaTest !== undefined ? { alphaTest } : {}),
+      ...(passes.length > 1 ? { passes } : {}),
     };
 
     materialHeaderPattern.lastIndex = blockResult.endIndex;
@@ -191,7 +249,35 @@ function resolveTexturePath(
     return normalizePath(resolveImportedAssetPath(trimmed, sourcePath));
   }
 
-  const sortedRoots = [...searchRoots].sort((left, right) => {
+  // Expand search roots with derived texture directories.
+  // Gazebo models typically place textures in materials/textures/ while
+  // the SDF <uri> points to materials/scripts/. Ogre3D's resource system
+  // searches all registered paths, so we must mimic this by adding sibling
+  // texture directories as candidates.
+  const expandedRoots = [...searchRoots];
+
+  for (const root of searchRoots) {
+    const normalizedRoot = normalizePath(root);
+    if (!normalizedRoot) {
+      continue;
+    }
+
+    const lastSlash = normalizedRoot.lastIndexOf('/');
+    if (lastSlash > 0) {
+      const parentDir = normalizedRoot.slice(0, lastSlash);
+      expandedRoots.push(`${parentDir}/textures`);
+      expandedRoots.push(`${parentDir}/texture`);
+    }
+
+    const firstSlash = normalizedRoot.indexOf('/');
+    if (firstSlash > 0) {
+      const modelRoot = normalizedRoot.slice(0, firstSlash);
+      expandedRoots.push(`${modelRoot}/materials/textures`);
+      expandedRoots.push(`${modelRoot}/textures`);
+    }
+  }
+
+  const sortedRoots = [...new Set(expandedRoots)].sort((left, right) => {
     const leftScore = TEXTURE_DIRECTORY_PATTERN.test(left) ? 0 : 1;
     const rightScore = TEXTURE_DIRECTORY_PATTERN.test(right) ? 0 : 1;
     return leftScore - rightScore;
@@ -241,6 +327,19 @@ export function resolveGazeboScriptMaterial({
             texture:
               resolveTexturePath(matchedDefinition.texture, searchRoots, sourcePath) ||
               matchedDefinition.texture,
+          }
+        : {}),
+      ...(matchedDefinition.passes
+        ? {
+            passes: matchedDefinition.passes.map((pass) => ({
+              ...pass,
+              ...(pass.texture
+                ? {
+                    texture:
+                      resolveTexturePath(pass.texture, searchRoots, sourcePath) || pass.texture,
+                  }
+                : {}),
+            })),
           }
         : {}),
     };

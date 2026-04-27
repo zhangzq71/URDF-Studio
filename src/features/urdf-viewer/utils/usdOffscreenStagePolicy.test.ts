@@ -6,7 +6,7 @@ import {
   shouldUseUsdOffscreenStage,
 } from './usdOffscreenStagePolicy.ts';
 
-test('uses offscreen USD stage for worker-capable view and select modes', () => {
+test('uses offscreen USD stage for worker-capable view and select modes by default', () => {
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'view',
@@ -17,6 +17,22 @@ test('uses offscreen USD stage for worker-capable view and select modes', () => 
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'select',
+      workerRendererSupported: true,
+    }),
+    true,
+  );
+});
+
+test('keeps worker-capable USD loads on the offscreen stage even when focusTarget is set', () => {
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      focusTarget: 'base',
+      sourceFile: {
+        name: 'unitree_model/Go2/usd/go2.viewer_roundtrip.usd',
+        format: 'usd',
+        content: '',
+      },
       workerRendererSupported: true,
     }),
     true,
@@ -42,6 +58,14 @@ test('keeps transform-heavy USD modes on the main-thread stage', () => {
     shouldUseUsdOffscreenStage({
       toolMode: 'select',
       showOrigins: true,
+      workerRendererSupported: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      showJointAxes: true,
       workerRendererSupported: true,
     }),
     false,
@@ -70,7 +94,7 @@ test('keeps articulated hand USD bundles on the main-thread stage', () => {
   );
 });
 
-test('keeps blob-backed large USDA sidecars on the main-thread stage', () => {
+test('allows blob-backed large USDA sidecars on the offscreen worker stage', () => {
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'select',
@@ -96,16 +120,40 @@ test('keeps blob-backed large USDA sidecars on the main-thread stage', () => {
       ],
       workerRendererSupported: true,
     }),
-    false,
+    true,
   );
 });
 
-test('keeps pure .usd roots on the main-thread stage while the overlay renderer is scene-decoupled', () => {
+test('keeps B2 pure .usd roots on the stable main-thread path while generic USD roots stay on the worker stage', () => {
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'view',
+      sourceFile: {
+        name: 'B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'select',
       sourceFile: {
         name: 'B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'unitree_model/B2/usd/b2.usd',
         format: 'usd',
         content: '',
       },
@@ -124,6 +172,95 @@ test('keeps pure .usd roots on the main-thread stage while the overlay renderer 
       workerRendererSupported: true,
     }),
     true,
+  );
+});
+
+test('allows Unitree ROS text USDA B2 bundles on the offscreen worker stage', () => {
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'b2_description/urdf/b2_description.usda',
+        format: 'usd',
+        content: '#usda 1.0',
+      },
+      workerRendererSupported: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'b2w_description/urdf/b2w_description.usda',
+        format: 'usd',
+        content: '#usda 1.0',
+      },
+      workerRendererSupported: true,
+    }),
+    true,
+  );
+});
+
+test('keeps exported B2 roundtrip .usd roots on the stable main-thread path too', () => {
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'view',
+      sourceFile: {
+        name: 'b2_description/b2_description.usd',
+        format: 'usd',
+        content: '',
+        blobUrl: 'blob:b2-roundtrip-root',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'unitree_model/B2/usd/b2.viewer_roundtrip.usd',
+        format: 'usd',
+        content: '',
+        blobUrl: 'blob:b2-fixture-roundtrip',
+      },
+      availableFiles: [
+        {
+          name: 'unitree_model/B2/usd/configuration/b2_description_base.usd',
+          format: 'usd',
+          content: '',
+        },
+      ],
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'b2_description/b2_description.usd',
+        format: 'usd',
+        content: '',
+        blobUrl: 'blob:b2-roundtrip-root',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldUseUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'b2_description.usd',
+        format: 'usd',
+        content: '',
+        blobUrl: 'blob:b2-roundtrip-flat',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
   );
 });
 
@@ -234,6 +371,50 @@ test('keeps default select-mode USD loads on the single interactive stage path',
   assert.equal(
     shouldBootstrapUsdOffscreenStage({
       toolMode: 'select',
+      sourceFile: {
+        name: 'unitree_model/Go2/usd/go2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+});
+
+test('keeps default B2 select-mode USD loads off the bootstrap handoff path', () => {
+  assert.equal(
+    shouldBootstrapUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBootstrapUsdOffscreenStage({
+      toolMode: 'select',
+      sourceFile: {
+        name: 'unitree_model/B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
+      workerRendererSupported: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBootstrapUsdOffscreenStage({
+      toolMode: 'view',
+      sourceFile: {
+        name: 'unitree_model/B2/usd/b2.usd',
+        format: 'usd',
+        content: '',
+      },
       workerRendererSupported: true,
     }),
     false,
@@ -274,7 +455,7 @@ test('keeps explicit selection, hover, focus and non-select tools off the bootst
   );
 });
 
-test('keeps focus flows on the main-thread stage but allows normal select state inside offscreen mode', () => {
+test('keeps normal selection, hover and focus state inside the offscreen-only USD path', () => {
   assert.equal(
     shouldUseUsdOffscreenStage({
       toolMode: 'view',
@@ -297,7 +478,7 @@ test('keeps focus flows on the main-thread stage but allows normal select state 
       focusTarget: 'hip_joint',
       workerRendererSupported: true,
     }),
-    false,
+    true,
   );
 });
 

@@ -14,6 +14,7 @@ import {
 } from '@/types';
 import { mergeAssembly } from '@/core/robot/assemblyMerger';
 import {
+  collectGeometryTexturePaths,
   getEffectiveGeometryAuthoredMaterials,
   getVisualGeometryEntries,
   resolveVisualMaterialOverride,
@@ -23,21 +24,18 @@ import {
   MAX_PROPERTY_DECIMALS,
   formatNumberWithMaxDecimals,
 } from '@/core/utils/numberPrecision';
-import { normalizeMeshPathForExport, normalizeTexturePathForExport } from '../meshPathUtils';
+import {
+  buildTextureExportPathOverrides,
+  normalizeMeshPathForExport,
+  resolveTextureExportPath,
+} from '../meshPathUtils';
 import { formatUrdfMeshScaleAttribute } from './meshScale';
+import { createUnsupportedUrdfJointError, findUnsupportedUrdfJoint } from './urdfExportSupport';
 
 const AXIS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic', 'planar']);
 const FULL_LIMIT_EXPORT_TYPES = new Set(['revolute', 'prismatic']);
 const EFFORT_VELOCITY_LIMIT_EXPORT_TYPES = new Set(['continuous']);
 const DYNAMICS_EXPORT_TYPES = new Set(['revolute', 'continuous', 'prismatic']);
-const SUPPORTED_URDF_JOINT_TYPES = new Set([
-  'fixed',
-  'revolute',
-  'continuous',
-  'prismatic',
-  'floating',
-  'planar',
-]);
 // Geometry types with dedicated URDF export handling.
 // Types NOT in this set are downgraded to a thin bounding box.
 const EXACT_URDF_GEOMETRY_TYPES = new Set([
@@ -125,6 +123,7 @@ function generateUrdfMaterialXml(
   exportRobotName: string,
   useRelativePaths: boolean,
   preserveMeshPaths: boolean,
+  texturePathOverrides?: ReadonlyMap<string, string>,
 ): string {
   const nameAttr = material.name ? ` name="${material.name}"` : '';
   let xml = `${indent}<material${nameAttr}>\n`;
@@ -136,7 +135,7 @@ function generateUrdfMaterialXml(
   if (material.texture) {
     const texturePath = preserveMeshPaths
       ? material.texture.replace(/\\/g, '/')
-      : normalizeTexturePathForExport(material.texture);
+      : resolveTextureExportPath(material.texture, texturePathOverrides);
     const textureFilename = preserveMeshPaths
       ? texturePath
       : useRelativePaths
@@ -407,6 +406,18 @@ export const generateURDF = (
     : null;
   const { name, version, links, joints } = robot;
   const exportRobotName = name?.trim() ? name : 'robot';
+  const texturePathOverrides = buildTextureExportPathOverrides([
+    ...Object.values(links).flatMap((link) => [
+      ...getVisualGeometryEntries(link).flatMap((entry) =>
+        collectGeometryTexturePaths(entry.geometry),
+      ),
+      ...collectGeometryTexturePaths(link.collision),
+      ...(link.collisionBodies || []).flatMap((body) => collectGeometryTexturePaths(body)),
+    ]),
+    ...Object.values(robot.materials || {})
+      .map((material) => material.texture)
+      .filter((texture): texture is string => Boolean(texture)),
+  ]);
 
   const robotVersionAttr = version ? ` version="${version}"` : '';
   let xml = `<?xml version="1.0"?>\n<robot name="${name}"${robotVersionAttr}>\n\n`;
@@ -479,6 +490,7 @@ export const generateURDF = (
             exportRobotName,
             useRelativePaths,
             preserveMeshPaths,
+            texturePathOverrides,
           );
         });
       } else if ((shouldEmitVisualColor && visualMaterial.color) || visualMaterial.texture) {
@@ -492,6 +504,7 @@ export const generateURDF = (
           exportRobotName,
           useRelativePaths,
           preserveMeshPaths,
+          texturePathOverrides,
         );
       }
       xml += `    </visual>\n`;
@@ -546,8 +559,9 @@ export const generateURDF = (
     const child = links[joint.childLinkId];
     if (!parent || !child) return;
     const jointType = String(joint.type).toLowerCase();
-    if (!SUPPORTED_URDF_JOINT_TYPES.has(jointType)) {
-      throw new Error(`[URDF export] Joint "${joint.name}" uses unsupported ${joint.type} type.`);
+    const unsupportedJoint = findUnsupportedUrdfJoint({ joints: { [joint.id]: joint } });
+    if (unsupportedJoint) {
+      throw createUnsupportedUrdfJointError(unsupportedJoint.jointName, unsupportedJoint.jointType);
     }
 
     xml += `  <joint name="${joint.name}" type="${joint.type}">\n`;

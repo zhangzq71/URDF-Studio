@@ -376,12 +376,11 @@ export function useHoverDetection({
   }, [clearRaycastTargetCaches, clearTransientHoverState, needsRaycastRef, robot, robotVersion]);
 
   useEffect(() => {
-    clearTransientHoverState();
+    setHighlightedFace((current) => (current ? null : current));
     clearRaycastTargetCaches();
     needsRaycastRef.current = true;
   }, [
     clearRaycastTargetCaches,
-    clearTransientHoverState,
     interactionLayerPriority,
     needsRaycastRef,
     showCollision,
@@ -592,7 +591,9 @@ export function useHoverDetection({
       hoverFrozen || isDraggingJoint.current || Boolean(isOrbitDragging?.current);
     if (hoverSuppressedByDrag) {
       if (!hoverSuppressedByDragRef.current) {
-        clearTransientHoverState();
+        if (!justSelectedRef?.current) {
+          clearTransientHoverState();
+        }
         needsRaycastRef.current = false;
         hoverSuppressedByDragRef.current = true;
       }
@@ -654,16 +655,20 @@ export function useHoverDetection({
         helperTargets: getHelperTargets(),
         interactionLayerPriority,
       });
-      if (helperInteraction) {
-        return helperInteraction;
-      }
-
-      helperInteraction = resolveScreenSpaceHelperInteraction({
+      const projectedHelperInteraction = resolveScreenSpaceHelperInteraction({
         pointerClientX,
         pointerClientY,
         projectedHelpers: getProjectedHelperTargets(cameraMoved || cameraRotated),
         interactionLayerPriority,
       });
+      const helperCandidates = [helperInteraction, projectedHelperInteraction].filter(
+        (candidate): candidate is ResolvedHoverInteractionCandidate => candidate !== null,
+      );
+      helperInteraction =
+        helperCandidates.length > 0
+          ? resolveHoverInteractionResolution(helperCandidates, interactionLayerPriority)
+              .primaryInteraction
+          : null;
       return helperInteraction;
     };
     const applyHelperHoverInteraction = (helperInteraction: ResolvedHoverInteractionCandidate) => {

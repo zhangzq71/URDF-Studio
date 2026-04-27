@@ -17,6 +17,7 @@ import {
   type UrdfVisualMaterial,
   type RobotFile,
   type Vector3,
+  type SdfHeightmap,
 } from '@/types';
 import { resolveGazeboScriptMaterial } from './gazeboMaterialScripts';
 import { resolveSdfIncludeSource } from './sdfIncludeResolution';
@@ -30,6 +31,9 @@ const IDENTITY_POSE: Pose = { xyz: ZERO_VECTOR, rpy: ZERO_EULER };
 const IDENTITY_SCALE = new THREE.Vector3(1, 1, 1);
 const MODEL_FRAME = '__model__';
 const WORLD_FRAME = 'world';
+const XML_DECLARATION_PATTERN = /<\?xml[^>]*\?>/gi;
+const XML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const BARE_XML_ATTRIBUTE_PATTERN = /(\s[\w:.-]+)=([^\s"'=<>`]+)/g;
 
 const GAZEBO_COLORS: Record<string, string> = {
   'Gazebo/Black': '#000000',
@@ -49,6 +53,7 @@ const GAZEBO_COLORS: Record<string, string> = {
   'Gazebo/SkyBlue': '#87CEEB',
   'Gazebo/Wood': '#8B4513',
   'Gazebo/FlatBlack': '#000000',
+  'Gazebo/ZincYellow': '#9B9B00',
 };
 
 interface ParsedMaterialDefinition {
@@ -62,6 +67,11 @@ interface ParsedSdfGeometry {
   type: GeometryType;
   dimensions: Vector3;
   meshPath?: string;
+  submeshName?: string;
+  submeshCenter?: boolean;
+  sdfHeightmap?: SdfHeightmap;
+  polylinePoints?: { x: number; y: number }[];
+  polylineHeight?: number;
 }
 
 interface ParsedSdfVisual {
@@ -102,12 +112,16 @@ export interface ParseSDFOptions {
   allFileContents?: Record<string, string>;
   availableFiles?: readonly Pick<RobotFile, 'name'>[];
   sourcePath?: string | null;
+  /** SDF spec version (e.g. "1.5", "1.6"). Affects axis-frame defaults. */
+  sdfVersion?: string;
 }
 
 interface ParseSdfModelOptions extends ParseSDFOptions {
   parentMatrix?: THREE.Matrix4;
   namespacePrefix?: string;
   includeStack?: Set<string>;
+  /** SDF spec version string (e.g. "1.5"). Affects axis-frame defaults. */
+  sdfVersion?: string;
 }
 
 const AXIS_IMPORT_TYPES = new Set<JointType>([
@@ -125,6 +139,20 @@ const LIMIT_IMPORT_TYPES = new Set<JointType>([
 
 function isElementNode(node: Node | null | undefined): node is Element {
   return !!node && node.nodeType === 1;
+}
+
+function normalizeSdfXmlForBrowserParser(xmlString: string): string {
+  return xmlString
+    .replace(XML_DECLARATION_PATTERN, '')
+    .replace(XML_COMMENT_PATTERN, '')
+    .replace(/<[^!?][^>]*>/g, (tag) => tag.replace(BARE_XML_ATTRIBUTE_PATTERN, '$1="$2"'))
+    .trim();
+}
+
+function parseSdfXmlDocument(xmlString: string): Document | null {
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(normalizeSdfXmlForBrowserParser(xmlString), 'text/xml');
+  return xmlDoc.querySelector('parsererror') ? null : xmlDoc;
 }
 
 function getDirectChildElements(parent: Element, tagName?: string): Element[] {
@@ -390,6 +418,19 @@ function parseSdfGeometry(
     };
   }
 
+  const planeEl = getFirstDirectChild(geometryEl, 'plane');
+  if (planeEl) {
+    const size = parseVec3(getFirstDirectChild(planeEl, 'size')?.textContent);
+    return {
+      type: GeometryType.PLANE,
+      dimensions: {
+        x: size.x || 1,
+        y: size.y || 1,
+        z: 0,
+      },
+    };
+  }
+
   const meshEl = getFirstDirectChild(geometryEl, 'mesh');
   if (meshEl) {
     const scale = parseVec3(getFirstDirectChild(meshEl, 'scale')?.textContent);
@@ -397,10 +438,68 @@ function parseSdfGeometry(
       ? { x: 1, y: 1, z: 1 }
       : scale;
 
+    const submeshEl = getFirstDirectChild(meshEl, 'submesh');
+    const submeshName =
+      getFirstDirectChild(submeshEl ?? meshEl, 'name')?.textContent?.trim() || undefined;
+    const submeshCenterText = getFirstDirectChild(submeshEl ?? meshEl, 'center')
+      ?.textContent?.trim()
+      .toLowerCase();
+    const submeshCenter = submeshCenterText === 'true';
+
     return {
       type: GeometryType.MESH,
       dimensions: normalizedScale,
       meshPath: getFirstDirectChild(meshEl, 'uri')?.textContent?.trim() || '',
+      ...(submeshName ? { submeshName, submeshCenter } : {}),
+    };
+  }
+
+  const heightmapEl = getFirstDirectChild(geometryEl, 'heightmap');
+  if (heightmapEl) {
+    const uri = getFirstDirectChild(heightmapEl, 'uri')?.textContent?.trim() || '';
+    const size = parseVec3(getFirstDirectChild(heightmapEl, 'size')?.textContent);
+    const pos = parseVec3(getFirstDirectChild(heightmapEl, 'pos')?.textContent);
+
+    const textures = getDirectChildElements(heightmapEl, 'texture').map((texEl) => ({
+      diffuse: getFirstDirectChild(texEl, 'diffuse')?.textContent?.trim() || undefined,
+      normal: getFirstDirectChild(texEl, 'normal')?.textContent?.trim() || undefined,
+      size: parseFloatSafe(getFirstDirectChild(texEl, 'size')?.textContent, 0) || undefined,
+    }));
+
+    const blends = getDirectChildElements(heightmapEl, 'blend').map((blendEl) => ({
+      minHeight: parseFloatSafe(getFirstDirectChild(blendEl, 'min_height')?.textContent, 0) || 0,
+      fadeDist: parseFloatSafe(getFirstDirectChild(blendEl, 'fade_dist')?.textContent, 0) || 0,
+    }));
+
+    return {
+      type: GeometryType.HFIELD,
+      dimensions: { x: size.x || 1, y: size.y || 1, z: size.z || 1 },
+      meshPath: uri,
+      sdfHeightmap: {
+        uri,
+        size: { x: size.x || 1, y: size.y || 1, z: size.z || 1 },
+        pos,
+        textures,
+        blends,
+      },
+    };
+  }
+
+  const polylineEl = getFirstDirectChild(geometryEl, 'polyline');
+  if (polylineEl) {
+    const points = getDirectChildElements(polylineEl, 'point')
+      .map((pointEl) => {
+        const [x = 0, y = 0] = parseNumberTuple(pointEl.textContent);
+        return { x, y };
+      })
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const height = parseFloatSafe(getFirstDirectChild(polylineEl, 'height')?.textContent, 0);
+
+    return {
+      type: GeometryType.POLYLINE,
+      dimensions: { x: 0, y: 0, z: 0 },
+      polylinePoints: points,
+      polylineHeight: height,
     };
   }
 
@@ -505,6 +604,43 @@ function createEmptyLink(id: string, name = id): UrdfLink {
       mass: 0,
       origin: IDENTITY_POSE,
     },
+  };
+}
+
+function deriveSdfFallbackName(sourcePath?: string | null): string {
+  const normalized = String(sourcePath || '')
+    .trim()
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.[^.]+$/, '');
+  return normalized || 'imported_sdf_model';
+}
+
+function sanitizeSdfSyntheticId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'imported_sdf_model';
+  }
+
+  return trimmed.replace(/[^A-Za-z0-9_.:-]+/g, '_');
+}
+
+function createPlaceholderRobotFromLight(
+  lightEl: Element,
+  { sourcePath }: ParseSDFOptions = {},
+): RobotState {
+  const lightName = lightEl.getAttribute('name')?.trim() || deriveSdfFallbackName(sourcePath);
+  const rootLinkId = `${sanitizeSdfSyntheticId(lightName)}__light_anchor`;
+
+  return {
+    name: lightName,
+    links: {
+      [rootLinkId]: createEmptyLink(rootLinkId, lightName),
+    },
+    joints: {},
+    rootLinkId,
+    selection: { type: 'link', id: rootLinkId },
   };
 }
 
@@ -745,8 +881,8 @@ function parseIncludedModelGraph(
     return;
   }
 
-  const includeDoc = new DOMParser().parseFromString(resolvedInclude.content.trim(), 'text/xml');
-  if (includeDoc.querySelector('parsererror')) {
+  const includeDoc = parseSdfXmlDocument(resolvedInclude.content);
+  if (!includeDoc) {
     return;
   }
 
@@ -779,6 +915,38 @@ function parseIncludedModelGraph(
   }
 }
 
+function parseNestedModelGraph(
+  nestedModelEl: Element,
+  parentGraph: ParsedSdfGraph,
+  {
+    allFileContents = {},
+    availableFiles = [],
+    sourcePath,
+    parentMatrix = new THREE.Matrix4().identity(),
+    namespacePrefix,
+    includeStack = new Set<string>(),
+    sdfVersion,
+  }: ParseSdfModelOptions,
+): void {
+  const nestedModelName = nestedModelEl.getAttribute('name')?.trim() || 'nested_model';
+  const nestedModelPose = parsePoseElement(nestedModelEl);
+  const nestedModelMatrix = parentMatrix.clone().multiply(poseToMatrix(nestedModelPose.pose));
+  const nestedNamespacePrefix = qualifyScopedName(nestedModelName, namespacePrefix);
+  const nestedGraph = parseSdfModel(nestedModelEl, {
+    allFileContents,
+    availableFiles,
+    sourcePath,
+    parentMatrix: nestedModelMatrix,
+    namespacePrefix: nestedNamespacePrefix,
+    includeStack,
+    sdfVersion,
+  });
+
+  if (nestedGraph) {
+    mergeParsedSdfGraph(parentGraph, nestedGraph);
+  }
+}
+
 function parseSdfModel(
   modelEl: Element,
   {
@@ -788,6 +956,7 @@ function parseSdfModel(
     parentMatrix = new THREE.Matrix4().identity(),
     namespacePrefix,
     includeStack = new Set<string>(),
+    sdfVersion,
   }: ParseSdfModelOptions = {},
 ): ParsedSdfGraph | null {
   const modelPose = parsePoseElement(modelEl);
@@ -929,6 +1098,27 @@ function parseSdfModel(
               sourcePath,
             });
 
+        const heightmapTextures = geometry.sdfHeightmap?.textures;
+        const heightmapMaterial =
+          heightmapTextures && heightmapTextures.length === 1 && heightmapTextures[0].diffuse
+            ? { texture: heightmapTextures[0].diffuse }
+            : {};
+
+        // OGRE/Gazebo box UV convention differs from Three.js BoxGeometry by a
+        // 90° rotation on the major faces. When a Gazebo material with a texture
+        // is applied to a box primitive, rotate the texture to match the expected
+        // orientation.
+        const needsBoxTextureRotation =
+          geometry.type === GeometryType.BOX &&
+          explicitMaterial.materialSource === 'gazebo' &&
+          explicitMaterial.authoredMaterials?.some((m) => m.texture);
+
+        const authoredMaterials = needsBoxTextureRotation
+          ? explicitMaterial.authoredMaterials?.map((m) =>
+              m.texture ? { ...m, textureRotation: -Math.PI / 2 } : m,
+            )
+          : explicitMaterial.authoredMaterials;
+
         return {
           name: visualEl.getAttribute('name')?.trim() || `${linkId}_visual_${index}`,
           geometry,
@@ -938,8 +1128,10 @@ function parseSdfModel(
             linkId,
             resolveFrameWorldMatrix,
           ),
+          ...heightmapMaterial,
           ...meshMaterial,
           ...explicitMaterial,
+          ...(authoredMaterials ? { authoredMaterials } : {}),
         };
       },
     );
@@ -1011,6 +1203,18 @@ function parseSdfModel(
     });
   }
 
+  for (const nestedModelEl of getDirectChildElements(modelEl, 'model')) {
+    parseNestedModelGraph(nestedModelEl, graph, {
+      allFileContents,
+      availableFiles,
+      sourcePath,
+      parentMatrix: modelMatrix,
+      namespacePrefix,
+      includeStack,
+      sdfVersion,
+    });
+  }
+
   for (const jointEl of getDirectChildElements(modelEl, 'joint')) {
     const jointName = jointEl.getAttribute('name')?.trim();
     const jointId = qualifyScopedName(jointName, namespacePrefix);
@@ -1050,6 +1254,37 @@ function parseSdfModel(
     const limitEl = getFirstDirectChild(axisEl ?? jointEl, 'limit');
     const dynamicsEl = getFirstDirectChild(axisEl ?? jointEl, 'dynamics');
 
+    // Resolve the axis direction.
+    // SDF <use_parent_model_frame> determines whether the xyz vector is
+    // expressed in the model frame (true) or the joint frame (false).
+    // Per the SDF 1.5 spec the default is false (joint frame); models
+    // authored for Gazebo (e.g. cart_soft_suspension) rely on this default.
+    // Our internal representation (like URDF) stores the axis in the joint
+    // frame, so we must transform when the source is the model frame.
+    let axis: Vector3 | undefined;
+    if (AXIS_IMPORT_TYPES.has(jointType)) {
+      const rawAxis = parseVec3(
+        getFirstDirectChild(axisEl ?? jointEl, 'xyz')?.textContent || '0 0 1',
+      );
+      const useParentModelFrameText = axisEl
+        ? getFirstDirectChild(axisEl, 'use_parent_model_frame')?.textContent?.trim().toLowerCase()
+        : undefined;
+      const useParentModelFrame =
+        useParentModelFrameText !== undefined ? useParentModelFrameText === 'true' : false; // SDF spec: use_parent_model_frame defaults to false
+
+      if (useParentModelFrame) {
+        // Transform axis from model frame to joint frame:
+        // axis_joint = R(jointWorld)^-1 · axis_model
+        const jointRotation = new THREE.Quaternion();
+        jointWorldMatrix.decompose(new THREE.Vector3(), jointRotation, new THREE.Vector3());
+        const axisVec = new THREE.Vector3(rawAxis.x, rawAxis.y, rawAxis.z);
+        axisVec.applyQuaternion(jointRotation.invert());
+        axis = { x: axisVec.x, y: axisVec.y, z: axisVec.z };
+      } else {
+        axis = rawAxis;
+      }
+    }
+
     const joint: UrdfJoint = {
       ...DEFAULT_JOINT,
       id: jointId,
@@ -1058,26 +1293,24 @@ function parseSdfModel(
       parentLinkId,
       childLinkId,
       origin,
-      axis: AXIS_IMPORT_TYPES.has(jointType)
-        ? parseVec3(getFirstDirectChild(axisEl ?? jointEl, 'xyz')?.textContent || '0 0 1')
-        : undefined,
+      axis,
       limit: LIMIT_IMPORT_TYPES.has(jointType)
         ? {
             lower: parseFloatSafe(
               getFirstDirectChild(limitEl ?? jointEl, 'lower')?.textContent,
-              Number.NaN,
+              -Infinity,
             ),
             upper: parseFloatSafe(
               getFirstDirectChild(limitEl ?? jointEl, 'upper')?.textContent,
-              Number.NaN,
+              Infinity,
             ),
             effort: parseFloatSafe(
               getFirstDirectChild(limitEl ?? jointEl, 'effort')?.textContent,
-              Number.NaN,
+              0,
             ),
             velocity: parseFloatSafe(
               getFirstDirectChild(limitEl ?? jointEl, 'velocity')?.textContent,
-              Number.NaN,
+              0,
             ),
           }
         : undefined,
@@ -1100,6 +1333,40 @@ function parseSdfModel(
       },
     };
     graph.joints[jointId] = joint;
+
+    // When the joint has a non-identity <pose>, the joint frame is offset from
+    // the child link frame.  In URDF the child link is placed at the joint
+    // frame, but in SDF the link visuals/collisions are authored relative to
+    // the link frame.  To compensate, bake the inverse joint-pose into the
+    // child link's geometry origins so they render at the correct SDF link
+    // position even though the link Object3D sits at the joint frame.
+    const jointParsedPose = parsePoseElement(jointEl);
+    if (jointParsedPose.specified && !isIdentityPose(jointParsedPose.pose)) {
+      const inverseJointPose = poseToMatrix(jointParsedPose.pose).invert();
+      const childLink = graph.links[childLinkId];
+      if (childLink) {
+        const applyOffset = (origin: Pose): Pose =>
+          matrixToPose(inverseJointPose.clone().multiply(poseToMatrix(origin)));
+        childLink.visual = { ...childLink.visual, origin: applyOffset(childLink.visual.origin) };
+        childLink.collision = {
+          ...childLink.collision,
+          origin: applyOffset(childLink.collision.origin),
+        };
+        if (childLink.visualBodies) {
+          childLink.visualBodies = childLink.visualBodies.map((v) => ({
+            ...v,
+            origin: applyOffset(v.origin),
+          }));
+        }
+        if (childLink.collisionBodies) {
+          childLink.collisionBodies = childLink.collisionBodies.map((c) => ({
+            ...c,
+            origin: applyOffset(c.origin),
+          }));
+        }
+      }
+    }
+
     graph.jointRecords.set(jointId, {
       joint,
       worldMatrix: jointWorldMatrix.clone(),
@@ -1171,19 +1438,22 @@ export function isSDF(content: string): boolean {
 }
 
 export function parseSDF(xmlString: string, options: ParseSDFOptions = {}): RobotState | null {
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlString.trim(), 'text/xml');
-  if (xmlDoc.querySelector('parsererror')) {
+  const xmlDoc = parseSdfXmlDocument(xmlString);
+  if (!xmlDoc) {
     return null;
   }
 
   const modelEl = xmlDoc.querySelector('sdf > model, model');
   if (!modelEl) {
-    return null;
+    const lightEl = xmlDoc.querySelector('sdf > light, light');
+    return lightEl ? createPlaceholderRobotFromLight(lightEl, options) : null;
   }
 
+  const sdfEl = xmlDoc.querySelector('sdf');
+  const sdfVersion = sdfEl?.getAttribute('version') || undefined;
+
   const modelName = modelEl.getAttribute('name')?.trim() || 'imported_sdf_model';
-  const parsedGraph = parseSdfModel(modelEl, options);
+  const parsedGraph = parseSdfModel(modelEl, { ...options, sdfVersion });
   if (!parsedGraph) {
     return null;
   }

@@ -62,6 +62,7 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     urdfContent,
     assets,
     sourceFormat = 'auto',
+    allowUrdfXmlFallback = true,
     reloadToken = 0,
     initialRobot = null,
     sourceFilePath,
@@ -163,26 +164,26 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     // ============================================================
     // HOOK: Robot Loading
     // ============================================================
-    const { robot, error, isLoading, loadingProgress, robotVersion, linkMeshMapRef } =
-      useRobotLoader({
-        urdfContent,
-        assets,
-        sourceFormat,
-        reloadToken,
-        initialRobot,
-        sourceFilePath,
-        showCollision,
-        showVisual,
-        showCollisionAlwaysOnTop,
-        isMeshPreview,
-        robotLinks,
-        robotJoints,
-        initialJointAngles,
-        onRobotLoaded,
-        onDocumentLoadEvent,
-        groundPlaneOffset,
-        showMjcfWorldLink,
-      });
+    const { robot, isLoading, loadingProgress, robotVersion, linkMeshMapRef } = useRobotLoader({
+      urdfContent,
+      assets,
+      sourceFormat,
+      allowUrdfXmlFallback,
+      reloadToken,
+      initialRobot,
+      sourceFilePath,
+      showCollision,
+      showVisual,
+      showCollisionAlwaysOnTop,
+      isMeshPreview,
+      robotLinks,
+      robotJoints,
+      initialJointAngles,
+      onRobotLoaded,
+      onDocumentLoadEvent,
+      groundPlaneOffset,
+      showMjcfWorldLink,
+    });
 
     // Keep scene metadata pinned to the currently mounted runtime robot while a
     // different source file is still streaming in. This prevents the old scene
@@ -523,13 +524,21 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
 
     const handleCollisionTransformDragging = useCallback(
       (dragging: boolean) => {
+        if (dragging) {
+          // Arm the selection-miss guard during collision transform drags so
+          // that R3F's onPointerMissed does not clear the selection while the
+          // user is actively dragging the gizmo.
+          if (justSelectedRef) {
+            justSelectedRef.current = true;
+          }
+        }
         setIsDraggingRef.current?.(dragging);
         if (!dragging) {
           needsRaycastRef.current = true;
           invalidate();
         }
       },
-      [invalidate, needsRaycastRef],
+      [invalidate, needsRaycastRef, justSelectedRef],
     );
 
     // ============================================================
@@ -684,14 +693,6 @@ export const RobotModel: React.FC<RobotModelProps> = memo(
     const handleSourceSceneComponentRootRef = useCallback((node: Group | null) => {
       setSourceSceneComponentRoot((current) => (current === node ? current : node));
     }, []);
-
-    if (error) {
-      return (
-        <Html center>
-          <div className="bg-red-900/80 text-red-200 px-4 py-2 rounded text-sm">Error: {error}</div>
-        </Html>
-      );
-    }
 
     return (
       <>

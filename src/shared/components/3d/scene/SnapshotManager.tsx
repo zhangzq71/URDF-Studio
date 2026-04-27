@@ -11,7 +11,10 @@ import {
   normalizeSnapshotCaptureOptions,
   SNAPSHOT_DETAIL_SUPERSAMPLE_SCALE,
   type SnapshotCaptureAction,
+  type SnapshotCaptureOptions,
+  type SnapshotPreviewAction,
 } from './snapshotConfig';
+import { resolveSnapshotPreviewCaptureOptions } from './snapshotPreviewConfig';
 import {
   applySnapshotBackgroundStyle,
   applySnapshotLightingPreset,
@@ -27,6 +30,7 @@ import {
   resolveSnapshotRenderTargetSamples,
 } from './snapshotResolution';
 import { renderSceneWithDofToCanvas, resolveSnapshotDofSettings } from './snapshotPostprocessing';
+import { applyWorkspaceCameraSnapshot } from '../workspace/workspaceCameraSnapshot';
 
 const SNAPSHOT_RENDER_TARGET_SAMPLES = {
   viewport: 4,
@@ -58,6 +62,9 @@ function ensureSnapshotHdrPreloaded(): Promise<void> {
 
 interface SnapshotManagerProps {
   actionRef?: RefObject<SnapshotCaptureAction | null>;
+  onSnapshotActionChange?: (action: SnapshotCaptureAction | null) => void;
+  previewActionRef?: RefObject<SnapshotPreviewAction | null>;
+  onPreviewActionChange?: (action: SnapshotPreviewAction | null) => void;
   robotName: string;
   theme: Theme;
   groundOffset?: number;
@@ -65,6 +72,9 @@ interface SnapshotManagerProps {
 
 export const SnapshotManager = ({
   actionRef,
+  onSnapshotActionChange,
+  previewActionRef,
+  onPreviewActionChange,
   robotName,
   theme,
   groundOffset = 0,
@@ -77,7 +87,9 @@ export const SnapshotManager = ({
   const { setSnapshotRenderActive } = useSnapshotRenderContext();
 
   useEffect(() => {
-    if (!actionRef) return;
+    if (!actionRef && !onSnapshotActionChange && !previewActionRef && !onPreviewActionChange) {
+      return;
+    }
 
     const cloneSnapshotCamera = (camera: THREE.Camera) => {
       const snapshotCamera = camera.clone();
@@ -151,11 +163,40 @@ export const SnapshotManager = ({
       return Math.max(12_000_000, Math.floor(baseBudget * SNAPSHOT_DOF_PIXEL_BUDGET_MULTIPLIER));
     };
 
-    const downloadCanvas = async (
-      canvas: HTMLCanvasElement,
-      requestedOptions?: Parameters<SnapshotCaptureAction>[0],
-    ) => {
-      const options = normalizeSnapshotCaptureOptions(requestedOptions);
+    const canvasToBlob = async (canvas: HTMLCanvasElement, options: SnapshotCaptureOptions) => {
+      const mimeType = getSnapshotMimeType(options.imageFormat);
+      const quality =
+        mimeType === 'image/png'
+          ? undefined
+          : Math.min(1, Math.max(0.6, options.imageQuality / 100));
+
+      if (canvas.toBlob) {
+        return await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(
+                  new Error(
+                    `[Snapshot] Failed to generate ${options.imageFormat.toUpperCase()} blob.`,
+                  ),
+                );
+                return;
+              }
+
+              resolve(blob);
+            },
+            mimeType,
+            quality,
+          );
+        });
+      }
+
+      const dataUrl = canvas.toDataURL(mimeType, quality);
+      const response = await fetch(dataUrl);
+      return response.blob();
+    };
+
+    const downloadCanvas = async (canvas: HTMLCanvasElement, options: SnapshotCaptureOptions) => {
       const safeRobotName = (robotName || 'robot').replace(/[\\/:*?"<>|]/g, '_');
       const now = new Date();
       const timestamp = [
@@ -168,11 +209,6 @@ export const SnapshotManager = ({
         String(now.getSeconds()).padStart(2, '0'),
       ].join('');
       const filename = `${safeRobotName}_snapshot_${timestamp}.${getSnapshotFileExtension(options.imageFormat)}`;
-      const mimeType = getSnapshotMimeType(options.imageFormat);
-      const quality =
-        mimeType === 'image/png'
-          ? undefined
-          : Math.min(1, Math.max(0.6, options.imageQuality / 100));
 
       const triggerDownload = (href: string) => {
         const link = document.createElement('a');
@@ -183,32 +219,10 @@ export const SnapshotManager = ({
         document.body.removeChild(link);
       };
 
-      if (canvas.toBlob) {
-        await new Promise<void>((resolve, reject) => {
-          canvas.toBlob(
-            (blob) => {
-              if (!blob) {
-                reject(
-                  new Error(
-                    `[Snapshot] Failed to generate ${options.imageFormat.toUpperCase()} blob.`,
-                  ),
-                );
-                return;
-              }
-
-              const url = URL.createObjectURL(blob);
-              triggerDownload(url);
-              URL.revokeObjectURL(url);
-              resolve();
-            },
-            mimeType,
-            quality,
-          );
-        });
-        return;
-      }
-
-      triggerDownload(canvas.toDataURL(mimeType, quality));
+      const blob = await canvasToBlob(canvas, options);
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url);
+      URL.revokeObjectURL(url);
     };
 
     const buildCanvasFromPixelBuffer = (pixelBuffer: Uint8Array, width: number, height: number) => {
@@ -327,11 +341,10 @@ export const SnapshotManager = ({
       return exportCanvas;
     };
 
-    const renderAndDownloadHighRes = async (
-      requestedOptions?: Parameters<SnapshotCaptureAction>[0],
+    const renderSnapshotCanvas = async (
+      snapshotOptions: SnapshotCaptureOptions,
       frozenCamera?: THREE.Camera,
     ) => {
-      const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
       const outputPlan = resolveSnapshotSize(snapshotOptions.longEdgePx);
       const supersampleScale = SNAPSHOT_DETAIL_SUPERSAMPLE_SCALE[snapshotOptions.detailLevel];
       const renderPlan = clampSnapshotRenderPlanToPixelBudget(
@@ -348,6 +361,9 @@ export const SnapshotManager = ({
       try {
         const { scene: latestScene, camera: liveCamera } = get();
         const captureCamera = frozenCamera ?? cloneSnapshotCamera(liveCamera);
+        if (snapshotOptions.cameraSnapshot) {
+          applyWorkspaceCameraSnapshot(captureCamera, undefined, snapshotOptions.cameraSnapshot);
+        }
         const backgroundState = applySnapshotBackgroundStyle(
           latestScene,
           gl,
@@ -433,8 +449,13 @@ export const SnapshotManager = ({
           outputPlan.targetHeight,
           backgroundFill,
         );
-        await downloadCanvas(capturedCanvas, snapshotOptions);
         invalidate();
+        return {
+          canvas: capturedCanvas,
+          width: outputPlan.targetWidth,
+          height: outputPlan.targetHeight,
+          options: snapshotOptions,
+        };
       } catch (error) {
         restoreBackgroundStyle?.();
         restoreShadowQuality?.();
@@ -446,8 +467,11 @@ export const SnapshotManager = ({
       }
     };
 
-    actionRef.current = async (requestedOptions) => {
-      const snapshotOptions = normalizeSnapshotCaptureOptions(requestedOptions);
+    const runSnapshotCapture = async (
+      requestedOptions: Parameters<SnapshotCaptureAction>[0],
+      resolveOptions: (options?: Partial<SnapshotCaptureOptions> | null) => SnapshotCaptureOptions,
+    ) => {
+      const snapshotOptions = resolveOptions(requestedOptions);
       const frozenCamera = cloneSnapshotCamera(get().camera);
       await ensureSnapshotHdrPreloaded();
       clearPendingFrames();
@@ -457,7 +481,7 @@ export const SnapshotManager = ({
 
       try {
         await waitFrames(resolveSnapshotWarmupFrameCount(snapshotOptions));
-        await renderAndDownloadHighRes(snapshotOptions, frozenCamera);
+        return await renderSnapshotCanvas(snapshotOptions, frozenCamera);
       } finally {
         setActiveSnapshotOptions(null);
         setSnapshotRenderActive(false);
@@ -465,12 +489,57 @@ export const SnapshotManager = ({
       }
     };
 
+    const captureAction: SnapshotCaptureAction = async (requestedOptions) => {
+      const capture = await runSnapshotCapture(requestedOptions, normalizeSnapshotCaptureOptions);
+      await downloadCanvas(capture.canvas, capture.options);
+    };
+
+    if (actionRef) {
+      actionRef.current = captureAction;
+    }
+    onSnapshotActionChange?.(captureAction);
+
+    const previewAction: SnapshotPreviewAction = async (requestedOptions) => {
+      const capture = await runSnapshotCapture(
+        requestedOptions,
+        resolveSnapshotPreviewCaptureOptions,
+      );
+      return {
+        blob: await canvasToBlob(capture.canvas, capture.options),
+        width: capture.width,
+        height: capture.height,
+        options: capture.options,
+      };
+    };
+
+    if (previewActionRef) {
+      previewActionRef.current = previewAction;
+    }
+    onPreviewActionChange?.(previewAction);
+
     return () => {
       clearPendingFrames();
       setSnapshotRenderActive(false);
-      actionRef.current = null;
+      if (actionRef) {
+        actionRef.current = null;
+      }
+      onSnapshotActionChange?.(null);
+      if (previewActionRef) {
+        previewActionRef.current = null;
+      }
+      onPreviewActionChange?.(null);
     };
-  }, [actionRef, get, gl, invalidate, robotName, setSnapshotRenderActive]);
+  }, [
+    actionRef,
+    get,
+    gl,
+    invalidate,
+    onSnapshotActionChange,
+    onPreviewActionChange,
+    previewActionRef,
+    robotName,
+    setSnapshotRenderActive,
+  ]);
 
   return activeSnapshotOptions ? (
     <SnapshotExportLook options={activeSnapshotOptions} theme={theme} groundOffset={groundOffset} />

@@ -7,11 +7,13 @@ import type { UrdfVisual } from '@/types';
 export interface VisualMaterialOverride {
   color?: string;
   texture?: string;
+  textureRotation?: number;
   opacity?: number;
   roughness?: number;
   metalness?: number;
   emissive?: string;
   emissiveIntensity?: number;
+  alphaTest?: number;
 }
 
 function normalizeMaterialValue(value: string | null | undefined): string | undefined {
@@ -67,7 +69,8 @@ export function hasExplicitGeometryMaterialOverride(
         normalizeUnitIntervalValue(material?.roughness) !== undefined ||
         normalizeUnitIntervalValue(material?.metalness) !== undefined ||
         Boolean(normalizeMaterialValue(material?.emissive)) ||
-        normalizeNonNegativeValue(material?.emissiveIntensity) !== undefined,
+        normalizeNonNegativeValue(material?.emissiveIntensity) !== undefined ||
+        normalizeUnitIntervalValue(material?.alphaTest) !== undefined,
     ) ?? [];
 
   if (authoredMaterials.length > 1) {
@@ -89,7 +92,8 @@ export function resolveVisualMaterialOverrideFromGeometry(
         normalizeUnitIntervalValue(material?.roughness) !== undefined ||
         normalizeUnitIntervalValue(material?.metalness) !== undefined ||
         Boolean(normalizeMaterialValue(material?.emissive)) ||
-        normalizeNonNegativeValue(material?.emissiveIntensity) !== undefined,
+        normalizeNonNegativeValue(material?.emissiveIntensity) !== undefined ||
+        normalizeUnitIntervalValue(material?.alphaTest) !== undefined,
     ) ?? [];
 
   // A single VisualMaterialOverride can only represent one uniform override.
@@ -104,11 +108,13 @@ export function resolveVisualMaterialOverrideFromGeometry(
   const color =
     normalizeMaterialValue(authoredMaterial?.color) ??
     (texture && isImplicitDefaultVisualColor(geometryColor) ? undefined : geometryColor);
+  const textureRotation = authoredMaterial?.textureRotation;
   const opacity = normalizeUnitIntervalValue(authoredMaterial?.opacity);
   const roughness = normalizeUnitIntervalValue(authoredMaterial?.roughness);
   const metalness = normalizeUnitIntervalValue(authoredMaterial?.metalness);
   const emissive = normalizeMaterialValue(authoredMaterial?.emissive);
   const emissiveIntensity = normalizeNonNegativeValue(authoredMaterial?.emissiveIntensity);
+  const alphaTest = normalizeUnitIntervalValue(authoredMaterial?.alphaTest);
 
   if (
     !color &&
@@ -117,7 +123,8 @@ export function resolveVisualMaterialOverrideFromGeometry(
     roughness === undefined &&
     metalness === undefined &&
     !emissive &&
-    emissiveIntensity === undefined
+    emissiveIntensity === undefined &&
+    alphaTest === undefined
   ) {
     return null;
   }
@@ -125,11 +132,13 @@ export function resolveVisualMaterialOverrideFromGeometry(
   return {
     ...(color ? { color } : {}),
     ...(texture ? { texture } : {}),
+    ...(textureRotation !== undefined ? { textureRotation } : {}),
     ...(opacity !== undefined ? { opacity } : {}),
     ...(roughness !== undefined ? { roughness } : {}),
     ...(metalness !== undefined ? { metalness } : {}),
     ...(emissive ? { emissive } : {}),
     ...(emissiveIntensity !== undefined ? { emissiveIntensity } : {}),
+    ...(alphaTest !== undefined ? { alphaTest } : {}),
   };
 }
 
@@ -145,6 +154,7 @@ export function applyVisualMaterialOverrideToObject(
   const metalnessOverride = normalizeUnitIntervalValue(override?.metalness);
   const emissiveOverride = normalizeMaterialValue(override?.emissive);
   const emissiveIntensityOverride = normalizeNonNegativeValue(override?.emissiveIntensity);
+  const alphaTestOverride = normalizeUnitIntervalValue(override?.alphaTest);
   const parsedColor = parseThreeColorWithOpacity(colorOverride);
   const parsedEmissive = parseThreeColorWithOpacity(emissiveOverride);
   const hasExplicitColor = Boolean(parsedColor);
@@ -161,7 +171,8 @@ export function applyVisualMaterialOverrideToObject(
     roughnessOverride === undefined &&
     metalnessOverride === undefined &&
     !nextEmissive &&
-    emissiveIntensityOverride === undefined
+    emissiveIntensityOverride === undefined &&
+    alphaTestOverride === undefined
   ) {
     return;
   }
@@ -184,6 +195,7 @@ export function applyVisualMaterialOverrideToObject(
         metalness: metalnessOverride,
         emissive: nextEmissive ?? undefined,
         emissiveIntensity: emissiveIntensityOverride,
+        alphaTest: alphaTestOverride,
         name: material.name,
         preserveExactColor: hasExplicitColor || Boolean(texturePath) || hasExplicitEmissive,
       });
@@ -247,6 +259,11 @@ export function applyVisualMaterialOverrideToObject(
     texturePath,
     (texture) => {
       texture.colorSpace = THREE.SRGBColorSpace;
+      const rotation = override?.textureRotation;
+      if (rotation !== undefined && rotation !== 0) {
+        texture.rotation = rotation;
+        texture.center.set(0.5, 0.5);
+      }
       replacementMaterials.forEach((material) => {
         material.map = texture;
         if (!hasExplicitColor && material.color?.isColor) {

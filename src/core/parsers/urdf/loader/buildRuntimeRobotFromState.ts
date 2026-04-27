@@ -13,10 +13,13 @@ import {
   getVisualGeometryEntries,
 } from '@/core/robot';
 import { createBoxFaceMaterialArray } from '@/core/utils/boxFaceMaterialArray';
-import { getCollisionBoxDisplayCylinderTransform } from '@/core/utils/collisionBoxDisplay';
 import { createMatteMaterial } from '@/core/utils/materialFactory';
 import { applyVisualMeshMaterialGroupsToObject } from '@/core/utils/meshMaterialGroups';
 import { createMainThreadYieldController } from '@/core/utils/yieldToMainThread';
+import {
+  createTerrainBlendMaterial,
+  loadTexturesForBlending,
+} from '@/core/utils/heightmapBlendMaterial';
 import {
   GeometryType,
   JointType,
@@ -106,6 +109,101 @@ function shouldAttachLoadedMeshObject(object: THREE.Object3D, isCollisionNode: b
   }
 
   return true;
+}
+
+/**
+ * Extract a named submesh from a loaded Collada/DAE scene object.
+ *
+ * SDF models often reference a single shared DAE file from multiple links,
+ * using `<submesh><name>X</name></submesh>` to select a specific named node.
+ * This function finds the child matching `submeshName` and returns a new
+ * group containing only that subtree.
+ *
+ * The mesh loader may apply a unit-conversion scale (e.g. 0.001 for inch→meter)
+ * to the root scene object.  Because `clone()` only copies the child's own
+ * transform — not the parent's scale — we must carry the parent scale forward
+ * so that the extracted submesh renders at the correct size.
+ *
+ * When `center` is true the extracted geometry is re-centered so that its
+ * bounding-box center sits at the local origin (the SDF convention for
+ * wheels and other symmetric parts).
+ */
+function extractSubmesh(
+  scene: THREE.Object3D,
+  submeshName: string,
+  center: boolean,
+): THREE.Object3D | null {
+  // Search direct children first, then fall back to a deeper search.
+  let match: THREE.Object3D | null =
+    scene.children.find((child) => child.name === submeshName) ?? null;
+
+  if (!match) {
+    scene.traverse((child) => {
+      if (!match && child !== scene && child.name === submeshName) {
+        match = child;
+      }
+    });
+  }
+
+  if (!match) {
+    return null;
+  }
+
+  const extracted = match.clone(true);
+
+  // Remove named children from the clone.  In Collada scene graphs a
+  // parent node like "Body" often contains sibling submeshes as named
+  // children (e.g. Steering_Wheel, Wheels_Rear_Left, …).  Gazebo's
+  // <submesh> element selects only the geometry of the named node —
+  // not its named children — so we strip them to avoid rendering parts
+  // that belong to other links.
+  const namedChildren: THREE.Object3D[] = [];
+  for (const child of extracted.children) {
+    if (child.name) {
+      namedChildren.push(child);
+    }
+  }
+  for (const child of namedChildren) {
+    extracted.remove(child);
+  }
+
+  // The mesh loader may apply a unit-conversion scale (e.g. 0.01 for
+  // cm→meter) on the root scene object, and intermediate DAE nodes may carry
+  // their own <scale> transforms.  Because `clone()` only copies the node's
+  // own local transform — not any ancestor's — we must accumulate the full
+  // parent scale chain from the scene root down to (but excluding) the
+  // matched node, and bake it into the extracted submesh so that position AND
+  // geometry render at the correct size and location.
+  const parentScale = new THREE.Vector3(1, 1, 1);
+  {
+    let current = match.parent;
+    while (current) {
+      parentScale.multiply(current.scale);
+      if (current === scene) break;
+      current = current.parent;
+    }
+  }
+  if (parentScale.x !== 1 || parentScale.y !== 1 || parentScale.z !== 1) {
+    extracted.position.set(
+      extracted.position.x * parentScale.x,
+      extracted.position.y * parentScale.y,
+      extracted.position.z * parentScale.z,
+    );
+    extracted.scale.set(
+      extracted.scale.x * parentScale.x,
+      extracted.scale.y * parentScale.y,
+      extracted.scale.z * parentScale.z,
+    );
+  }
+
+  if (center) {
+    const bbox = new THREE.Box3().setFromObject(extracted);
+    const centerVec = new THREE.Vector3();
+    bbox.getCenter(centerVec);
+    extracted.position.sub(centerVec);
+  }
+
+  return extracted;
 }
 
 function restackLinkVisualRoots(linkTarget: THREE.Object3D): void {
@@ -220,6 +318,166 @@ function createImagePreviewMesh(
   return mesh;
 }
 
+function createHeightfieldMesh(
+  geometry: RobotLink['visual'],
+  isCollision: boolean,
+  manager?: THREE.LoadingManager,
+): THREE.Mesh | null {
+  const hfield = geometry.sdfHeightmap;
+  if (!hfield || !geometry.meshPath) {
+    return null;
+  }
+
+  const heightmapUri = geometry.meshPath;
+
+  const material = createPrimitiveMaterial(isCollision ? undefined : geometry.color);
+  material.side = THREE.DoubleSide;
+
+  const width = hfield.size.x || 1;
+  const height = hfield.size.y || 1;
+  const depth = hfield.size.z || 1;
+
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height, 1, 1), material);
+
+  if (hfield.pos) {
+    mesh.position.set(hfield.pos.x || 0, hfield.pos.y || 0, hfield.pos.z || 0);
+  }
+
+  new THREE.TextureLoader(manager).load(
+    heightmapUri,
+    (texture) => {
+      const image = texture.image;
+      if (!image || !image.width || !image.height) {
+        console.warn('[EditorViewer] Heightmap image has no dimensions:', heightmapUri);
+        texture.dispose();
+        return;
+      }
+
+      const imgWidth = image.width;
+      const imgHeight = image.height;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = imgWidth;
+      canvas.height = imgHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.warn('[EditorViewer] Failed to create canvas for heightmap:', heightmapUri);
+        texture.dispose();
+        return;
+      }
+      ctx.drawImage(image, 0, 0);
+      const imageData = ctx.getImageData(0, 0, imgWidth, imgHeight);
+
+      const segmentsX = Math.min(imgWidth - 1, 512);
+      const segmentsY = Math.min(imgHeight - 1, 512);
+
+      const displacedGeometry = new THREE.PlaneGeometry(width, height, segmentsX, segmentsY);
+      const positions = displacedGeometry.attributes.position;
+
+      const colStep = (imgWidth - 1) / segmentsX;
+      const rowStep = (imgHeight - 1) / segmentsY;
+
+      for (let iy = 0; iy <= segmentsY; iy++) {
+        for (let ix = 0; ix <= segmentsX; ix++) {
+          const vertexIndex = iy * (segmentsX + 1) + ix;
+          const sampleCol = Math.min(Math.round(iy * colStep), imgWidth - 1);
+          const sampleRow = Math.min(Math.round(ix * rowStep), imgHeight - 1);
+          const pixelIndex = (sampleRow * imgWidth + sampleCol) * 4;
+          const elevation = imageData.data[pixelIndex] / 255;
+          positions.setZ(vertexIndex, elevation * depth);
+        }
+      }
+
+      positions.needsUpdate = true;
+      displacedGeometry.computeVertexNormals();
+
+      mesh.geometry.dispose();
+      mesh.geometry = displacedGeometry;
+
+      if (!isCollision && hfield.textures.length > 0) {
+        const diffusePaths = hfield.textures.filter((t) => t.diffuse).map((t) => t.diffuse!);
+
+        if (diffusePaths.length > 1) {
+          // Multi-texture: use elevation-based blending
+          const { material: blendMat, uniforms } = createTerrainBlendMaterial(
+            hfield.textures,
+            hfield.blends,
+            width,
+            height,
+          );
+          loadTexturesForBlending(hfield.textures, manager).then((loadedTextures) => {
+            const diffuseKeys = [
+              'uTerrainDiffuse0',
+              'uTerrainDiffuse1',
+              'uTerrainDiffuse2',
+              'uTerrainDiffuse3',
+            ] as const;
+            for (let i = 0; i < loadedTextures.length; i++) {
+              uniforms[diffuseKeys[i]].value = loadedTextures[i];
+            }
+            material.dispose();
+            mesh.material = blendMat;
+            blendMat.needsUpdate = true;
+          });
+        } else if (diffusePaths.length === 1) {
+          // Single-texture: existing simple behavior
+          const texSize = hfield.textures[0].size;
+          new THREE.TextureLoader(manager).load(diffusePaths[0], (diffuseTex) => {
+            diffuseTex.colorSpace = THREE.SRGBColorSpace;
+            diffuseTex.wrapS = THREE.RepeatWrapping;
+            diffuseTex.wrapT = THREE.RepeatWrapping;
+            if (texSize) {
+              diffuseTex.repeat.set(texSize, texSize);
+            }
+            material.map = diffuseTex;
+            material.needsUpdate = true;
+          });
+        }
+      }
+
+      texture.dispose();
+    },
+    undefined,
+    (error) => {
+      console.error('[EditorViewer] Failed to load heightmap image:', heightmapUri, error);
+    },
+  );
+
+  return mesh;
+}
+
+function createPolylineMesh(
+  geometry: RobotLink['visual'],
+  isCollision: boolean,
+): THREE.Mesh | null {
+  const points = geometry.polylinePoints;
+  const height = geometry.polylineHeight;
+  if (!points || points.length < 3) {
+    return null;
+  }
+
+  const material = createPrimitiveMaterial(isCollision ? undefined : geometry.color);
+  material.side = THREE.DoubleSide;
+
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    shape.lineTo(points[i].x, points[i].y);
+  }
+  shape.closePath();
+
+  const extrudeDepth = Math.max(height, 1e-5);
+  const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+    depth: extrudeDepth,
+    bevelEnabled: false,
+  };
+
+  const geometryBuffer = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+  geometryBuffer.translate(0, 0, -extrudeDepth / 2);
+
+  return new THREE.Mesh(geometryBuffer, material);
+}
+
 function createPrimitiveMesh(
   geometry: RobotLink['visual'],
   isCollision: boolean,
@@ -230,14 +488,6 @@ function createPrimitiveMesh(
   const boxFacePalette = !isCollision ? getBoxFaceMaterialPalette(geometry) : [];
 
   if (geometry.type === GeometryType.BOX) {
-    if (isCollision) {
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 30), material);
-      const { scale, rotation } = getCollisionBoxDisplayCylinderTransform(dimensions);
-      mesh.scale.set(...scale);
-      mesh.rotation.set(...rotation);
-      return mesh;
-    }
-
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
       boxFacePalette.length > 0
@@ -385,24 +635,53 @@ export async function buildRuntimeRobotFromState({
             return;
           }
 
+          // Apply SDF submesh filtering: extract only the named child node
+          // from the loaded Collada scene when the geometry specifies one.
+          let meshObject = object;
+          if (geometry.submeshName) {
+            const submesh = extractSubmesh(
+              object,
+              geometry.submeshName,
+              geometry.submeshCenter === true,
+            );
+            if (submesh) {
+              meshObject = submesh;
+            } else {
+              console.warn(
+                `[EditorViewer] Submesh "${geometry.submeshName}" not found in "${geometry.meshPath}", using full mesh.`,
+              );
+            }
+          }
+
           if (
             !isCollision &&
             visualMaterialOverride &&
-            (hasExplicitMaterialOverride || !loadedObjectShouldPreserveEmbeddedMaterials(object))
+            (hasExplicitMaterialOverride ||
+              !loadedObjectShouldPreserveEmbeddedMaterials(meshObject))
           ) {
-            applyVisualMaterialOverrideToObject(object, visualMaterialOverride, manager);
+            applyVisualMaterialOverrideToObject(meshObject, visualMaterialOverride, manager);
           }
 
           if (!isCollision && hasGeometryMeshMaterialGroups(geometry)) {
-            applyVisualMeshMaterialGroupsToObject(object, geometry, { manager });
+            applyVisualMeshMaterialGroupsToObject(meshObject, geometry, { manager });
           }
 
-          group.add(object);
+          group.add(meshObject);
           if (group.parent && !isCollision) {
             restackLinkVisualRoots(group.parent);
             restackRobotVisualRoots(findVisualRestackRoot(group.parent));
           }
         });
+      }
+    } else if (geometry.type === GeometryType.HFIELD && geometry.sdfHeightmap) {
+      const hfieldMesh = createHeightfieldMesh(geometry, isCollision, manager);
+      if (hfieldMesh) {
+        group.add(hfieldMesh);
+      }
+    } else if (geometry.type === GeometryType.POLYLINE) {
+      const polylineMesh = createPolylineMesh(geometry, isCollision);
+      if (polylineMesh) {
+        group.add(polylineMesh);
       }
     } else {
       const primitiveMesh = createPrimitiveMesh(geometry, isCollision, manager);
@@ -411,6 +690,60 @@ export async function buildRuntimeRobotFromState({
           applyVisualMaterialOverrideToObject(primitiveMesh, visualMaterialOverride, manager);
         }
         group.add(primitiveMesh);
+      }
+
+      // Add overlay meshes for multi-pass Gazebo materials (e.g. alpha-blended
+      // texture layers like field marking lines on a grass carpet).
+      if (!isCollision && geometry.type === GeometryType.PLANE) {
+        const authoredMaterial = geometry.authoredMaterials?.[0];
+        const overlayPasses =
+          authoredMaterial?.passes?.filter(
+            (pass) => pass.texture && pass.sceneBlend === 'alpha_blend',
+          ) ?? [];
+
+        for (const overlayPass of overlayPasses) {
+          if (!overlayPass.texture) {
+            continue;
+          }
+
+          const overlayMat = createMatteMaterial({
+            color: '#ffffff',
+            opacity: 1,
+            transparent: true,
+            preserveExactColor: true,
+          });
+          overlayMat.side = THREE.DoubleSide;
+          overlayMat.depthWrite = false;
+          overlayMat.polygonOffset = true;
+          overlayMat.polygonOffsetFactor = -1;
+          overlayMat.polygonOffsetUnits = -4;
+
+          const dims = geometry.dimensions;
+          const overlayMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), overlayMat);
+          overlayMesh.scale.set(dims.x || 1, dims.y || 1, 1);
+          overlayMesh.renderOrder = 1;
+          group.add(overlayMesh);
+
+          if (manager) {
+            const loader = new THREE.TextureLoader(manager);
+            loader.load(
+              overlayPass.texture,
+              (texture) => {
+                texture.colorSpace = THREE.SRGBColorSpace;
+                overlayMat.map = texture;
+                overlayMat.needsUpdate = true;
+              },
+              undefined,
+              (error) => {
+                console.error(
+                  '[EditorViewer] Failed to load multi-pass overlay texture:',
+                  overlayPass.texture,
+                  error,
+                );
+              },
+            );
+          }
+        }
       }
     }
 

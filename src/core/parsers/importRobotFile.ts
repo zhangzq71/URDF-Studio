@@ -16,7 +16,7 @@ import { rewriteRobotMeshPathsForSource } from './meshPathUtils';
 import { syncRobotVisualColorsFromMaterials } from '@/core/robot/materials';
 import { isImageAssetPath } from '@/core/utils/assetFileTypes';
 import { isSourceOnlyMJCFDocument } from './mjcf/mjcfXml';
-import { validateMJCFImportExternalAssets } from './mjcf/mjcfImportValidation';
+import { inspectMJCFImportExternalAssets } from './mjcf/mjcfImportValidation';
 
 export interface ResolveRobotFileDataOptions {
   availableFiles?: RobotFile[];
@@ -263,6 +263,47 @@ function hasSourceContent(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function hasTextMeshMaterialInputs(allFileContents: Record<string, string>): boolean {
+  for (const assetPath in allFileContents) {
+    if (!Object.prototype.hasOwnProperty.call(allFileContents, assetPath)) {
+      continue;
+    }
+
+    const lowerPath = assetPath.toLowerCase();
+    if (lowerPath.endsWith('.dae') || lowerPath.endsWith('.obj')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildMeshTextMaterialAssetPaths(options: {
+  availableFiles: RobotFile[];
+  assets: Record<string, string>;
+  allFileContents: Record<string, string>;
+}): Set<string> {
+  const paths = new Set<string>();
+
+  Object.keys(options.allFileContents).forEach((assetPath) => {
+    paths.add(assetPath);
+  });
+
+  Object.keys(options.assets).forEach((assetPath) => {
+    if (isImageAssetPath(assetPath)) {
+      paths.add(assetPath);
+    }
+  });
+
+  options.availableFiles.forEach((file) => {
+    if (isImageAssetPath(file.name)) {
+      paths.add(file.name);
+    }
+  });
+
+  return paths;
+}
+
 function findContextFileContent(
   file: RobotFile,
   options: Pick<ResolveRobotFileDataOptions, 'availableFiles' | 'allFileContents'>,
@@ -384,7 +425,7 @@ export function isSourceOnlyXacroDocument(urdfContent: string): boolean {
 
 function shouldValidateMJCFExternalAssets(
   mode: ResolveRobotFileDataOptions['mjcfExternalAssetValidation'],
-  assets: Record<string, string>,
+  resolvedAssetCount: number,
 ): boolean {
   if (mode === 'always') {
     return true;
@@ -394,7 +435,7 @@ function shouldValidateMJCFExternalAssets(
     return false;
   }
 
-  return Object.keys(assets).length > 0;
+  return resolvedAssetCount > 0;
 }
 
 export function resolveRobotFileData(
@@ -409,11 +450,13 @@ export function resolveRobotFileData(
     usdRobotData = null,
     mjcfExternalAssetValidation = 'auto',
   } = options;
-  const importAssetPaths = new Set<string>([
-    ...availableFiles.map((candidate) => candidate.name),
-    ...Object.keys(allFileContents),
-    ...Object.keys(assets),
-  ]);
+  const meshTextMaterialAssetPaths = hasTextMeshMaterialInputs(allFileContents)
+    ? buildMeshTextMaterialAssetPaths({
+        availableFiles,
+        assets,
+        allFileContents,
+      })
+    : null;
 
   try {
     switch (file.format) {
@@ -430,11 +473,11 @@ export function resolveRobotFileData(
               sourceFilePath: resolvedUrdfSource.sourceFilePath ?? file.name,
               resolvedUrdfContent: resolvedUrdfSource.content,
               allFileContents,
-              assetPaths: importAssetPaths,
+              ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
             }
           : {
               allFileContents,
-              assetPaths: importAssetPaths,
+              ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
             };
         if (!parsed) {
           return createErrorImportResult(file, 'parse_failed', buildImportFailureMessage(file));
@@ -459,18 +502,24 @@ export function resolveRobotFileData(
         }
 
         emitRobotImportProgress(reportProgress, 45, 'Checking MJCF external assets');
-        if (shouldValidateMJCFExternalAssets(mjcfExternalAssetValidation, assets)) {
-          const assetIssues = validateMJCFImportExternalAssets(
+        if (mjcfExternalAssetValidation !== 'never') {
+          const assetValidation = inspectMJCFImportExternalAssets(
             resolved.sourceFile.name,
             resolved.content,
             availableFiles,
             assets,
           );
-          if (assetIssues.length > 0) {
+          if (
+            shouldValidateMJCFExternalAssets(
+              mjcfExternalAssetValidation,
+              assetValidation.resolvedAssetCount,
+            ) &&
+            assetValidation.issues.length > 0
+          ) {
             return createErrorImportResult(
               file,
               'parse_failed',
-              buildImportFailureMessage(file, assetIssues[0]?.detail),
+              buildImportFailureMessage(file, assetValidation.issues[0]?.detail),
             );
           }
         }
@@ -485,7 +534,7 @@ export function resolveRobotFileData(
         return createReadyImportResult(file, toRobotData(parsed), {
           sourceFilePath: resolved.sourceFile.name,
           allFileContents,
-          assetPaths: importAssetPaths,
+          ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
         });
       }
       case 'sdf': {
@@ -503,7 +552,7 @@ export function resolveRobotFileData(
         emitRobotImportProgress(reportProgress, 100, 'Finalizing robot document');
         return createReadyImportResult(file, toRobotData(parsed), {
           allFileContents,
-          assetPaths: importAssetPaths,
+          ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
         });
       }
       case 'usd':
@@ -520,7 +569,7 @@ export function resolveRobotFileData(
         return usdRobotData
           ? createReadyImportResult(file, usdRobotData, {
               allFileContents,
-              assetPaths: importAssetPaths,
+              ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
             })
           : {
               status: 'needs_hydration',
@@ -538,7 +587,7 @@ export function resolveRobotFileData(
               sourceFilePath: truthFile.name,
               resolvedUrdfContent: truthFile.content,
               allFileContents,
-              assetPaths: importAssetPaths,
+              ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
             });
           }
         }
@@ -568,7 +617,7 @@ export function resolveRobotFileData(
           return createReadyImportResult(file, toRobotData(parsed), {
             resolvedUrdfContent: urdfContent,
             allFileContents,
-            assetPaths: importAssetPaths,
+            ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
           });
         }
 
@@ -582,7 +631,7 @@ export function resolveRobotFileData(
         emitRobotImportProgress(reportProgress, 100, 'Preparing mesh preview');
         return createReadyImportResult(file, createMeshRobotData(file), {
           allFileContents,
-          assetPaths: importAssetPaths,
+          ...(meshTextMaterialAssetPaths ? { assetPaths: meshTextMaterialAssetPaths } : {}),
         });
       case 'asset':
         return createErrorImportResult(

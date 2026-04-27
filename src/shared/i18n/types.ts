@@ -129,7 +129,6 @@ export interface TranslationKeys {
   originRelativeParentJoint: string;
   linkFrame: string;
   parentJointFrame: string;
-  childLinkFrameMatchesParentJoint: string;
   rootLinkOnlyFrameHint: string;
   position: string;
   rotation: string;
@@ -293,6 +292,13 @@ export interface TranslationKeys {
   minimize: string;
   maximize: string;
   restore: string;
+  inspectionNormalMode: string;
+  inspectionAdvancedMode: string;
+  inspectionConfigureChecks: string;
+  inspectionConfigureChecksDescription: string;
+  inspectionSelectedChecksLabel: string;
+  inspectionSelectAll: string;
+  inspectionClearAll: string;
   inspectionScopeDescription: string;
   inspectionSelectedChecksSummary: string;
   inspectionRobotSnapshot: string;
@@ -334,6 +340,7 @@ export interface TranslationKeys {
   jointControls: string;
   joints: string;
   jointsPanel: string;
+  noJointsYet: string;
   viewOptions: string;
   loadingRobot: string;
   loadingRobotPreparing: string;
@@ -454,6 +461,12 @@ export interface TranslationKeys {
   deleteAllLibraryFilesConfirmMessage: string;
   rightClickToRename: string;
   rightClickForActions: string;
+  simpleModeSwitchDraftConfirmTitle: string;
+  simpleModeSwitchDraftConfirmMessage: string;
+  saveDraftAndOpen: string;
+  discardAndOpen: string;
+  simpleModeDraftSaved: string;
+  simpleModeDraftSaveFailed: string;
   generateWorkspaceUrdf: string;
   generateWorkspaceUrdfConfirmTitle: string;
   generateWorkspaceUrdfConfirmMessage: string;
@@ -516,6 +529,7 @@ export interface TranslationKeys {
   usdPreviewRequiresOpen: string;
   privacyNoticeLocalProcessing: string;
   importPackageAssetBundleHint: string;
+  importPrimitiveGeometryHint: string;
   importUspSuccess: string;
   addedFilesToAssetLibrary: string;
   libraryImportSuccessful: string;
@@ -523,6 +537,7 @@ export interface TranslationKeys {
   noDefinitionFilesFound: string;
   noSupportedImportFilesFound: string;
   importFailedCheckFiles: string;
+  importBackgroundAssetsStillLoadingFailed: string;
   jointName: string;
   motorType: string;
   addedComponent: string;
@@ -537,6 +552,7 @@ export interface TranslationKeys {
   onlyUrdfMjcfExport: string;
   exportFailedParse: string;
   exportClosedLoopUrdfUnsupported: string;
+  exportUrdfBallJointUnsupported: string;
   exportLibraryParseFailed: string;
   exportLibraryUnsupportedFormat: string;
   usdExportRequiresLoadedStage: string;
@@ -590,6 +606,13 @@ export interface TranslationKeys {
   snapshotHideGrid: string;
   snapshotAAMode: string;
   snapshotAdvancedLook: string;
+  snapshotPreviewTitle: string;
+  snapshotPreviewAlt: string;
+  snapshotPreviewLoading: string;
+  snapshotPreviewRefreshing: string;
+  snapshotPreviewReady: string;
+  snapshotPreviewFailed: string;
+  snapshotPreviewRetryingHint: string;
   snapshotCapture: string;
   snapshotCapturing: string;
   failedToProcessFiles: string;

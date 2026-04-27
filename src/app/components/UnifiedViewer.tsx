@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import type { RootState } from '@react-three/fiber';
 import type { Group as ThreeGroup, Object3D as ThreeObject3D } from 'three';
 import type {
   AppMode,
@@ -28,6 +29,7 @@ import {
 } from '@/features/editor';
 import { resolveViewerJointScopeKey } from '@/app/utils/viewerJointScopeKey';
 import { resolveUnifiedViewerForcedSessionState } from '@/app/utils/unifiedViewerForcedSessionState';
+import { resolveUnifiedViewerUsageGuideVisibility } from '@/app/utils/unifiedViewerUsageGuide';
 import {
   captureUnifiedViewerOptionsVisibility,
   shouldRestoreUnifiedViewerOptionsPanel,
@@ -77,13 +79,14 @@ interface UnifiedViewerProps {
   ) => void;
   onUpdate: (type: 'link' | 'joint', id: string, data: any) => void;
   assets: Record<string, string>;
+  allFileContents: Record<string, string>;
   lang: Language;
   theme: Theme;
   showVisual?: boolean;
   setShowVisual?: (show: boolean) => void;
+  showUsageGuide?: boolean;
   snapshotAction?: React.RefObject<SnapshotCaptureAction | null>;
-  showToolbar?: boolean;
-  setShowToolbar?: (show: boolean) => void;
+  onCanvasCreated?: (state: RootState) => void;
   showOptionsPanel?: boolean;
   setShowOptionsPanel?: (show: boolean) => void;
   showJointPanel?: boolean;
@@ -162,13 +165,14 @@ export const UnifiedViewer = React.memo(
     onHover,
     onUpdate,
     assets,
+    allFileContents,
     lang,
     theme,
     showVisual,
     setShowVisual,
+    showUsageGuide,
     snapshotAction,
-    showToolbar = true,
-    setShowToolbar,
+    onCanvasCreated,
     showOptionsPanel = true,
     setShowOptionsPanel,
     showJointPanel = true,
@@ -246,6 +250,7 @@ export const UnifiedViewer = React.memo(
       sourceFilePath,
       sourceFile,
       assets,
+      allFileContents,
       availableFiles,
       assemblyState,
       sourceSceneAssemblyComponentId,
@@ -395,6 +400,10 @@ export const UnifiedViewer = React.memo(
     const showWorldOriginAxesPreference = useUIStore((state) => state.viewOptions.showAxes);
     const showUsageGuidePreference = useUIStore((state) => state.viewOptions.showUsageGuide);
     const showWorldOriginAxes = showWorldOriginAxesPreference && !viewerController.showOrigins;
+    const effectiveShowUsageGuide = resolveUnifiedViewerUsageGuideVisibility(
+      showUsageGuidePreference,
+      showUsageGuide,
+    );
 
     const handleWorkspacePointerDownCapture = React.useCallback(
       (event: React.PointerEvent<HTMLDivElement>) => {
@@ -500,16 +509,9 @@ export const UnifiedViewer = React.memo(
         return;
       }
 
-      setShowToolbar?.(true);
       viewerController.handleToolModeChange(pendingViewerToolMode);
       onConsumePendingViewerToolMode?.();
-    }, [
-      isViewerMode,
-      onConsumePendingViewerToolMode,
-      pendingViewerToolMode,
-      setShowToolbar,
-      viewerController,
-    ]);
+    }, [isViewerMode, onConsumePendingViewerToolMode, pendingViewerToolMode, viewerController]);
 
     useEffect(() => {
       void preloadViewerModeModules().catch((error) => {
@@ -550,6 +552,7 @@ export const UnifiedViewer = React.memo(
         renderKey={`viewer:stable:${viewerReloadKey}`}
         containerRef={viewerController.containerRef}
         snapshotAction={snapshotAction}
+        onCreated={onCanvasCreated}
         onPointerDownCapture={handleWorkspacePointerDownCapture}
         onPointerMissed={handleViewerPointerMissed}
         onMouseMove={viewerController.handleMouseMove}
@@ -572,8 +575,7 @@ export const UnifiedViewer = React.memo(
           },
         }}
         background={WORKSPACE_CANVAS_BACKGROUND}
-        contextLostMessage={t.webglContextRestoring}
-        showUsageGuide={showUsageGuidePreference}
+        showUsageGuide={effectiveShowUsageGuide}
         overlays={
           <UnifiedViewerOverlays
             activePreview={activePreview}
@@ -581,8 +583,6 @@ export const UnifiedViewer = React.memo(
             onClosePreview={onClosePreview}
             viewerController={viewerController}
             onUpdate={onUpdate}
-            showToolbar={showToolbar}
-            setShowToolbar={setShowToolbar}
             showOptionsPanel={showOptionsPanel}
             setShowOptionsPanel={setShowOptionsPanel}
             showJointPanel={showJointPanel}
@@ -614,6 +614,7 @@ export const UnifiedViewer = React.memo(
           selection={selection}
           onHover={onHover}
           onMeshSelect={onMeshSelect}
+          onUpdate={onUpdate}
           robot={robot}
           focusTarget={focusTarget}
           onCollisionTransformPreview={onCollisionTransformPreview}
